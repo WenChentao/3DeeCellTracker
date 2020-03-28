@@ -28,7 +28,7 @@ import scipy.misc
 
 # Import functions in our customized package deepcelltracker
 from CellTracker.preprocess import lcn_gpu
-from CellTracker.unet3d import unet3_f2b, unet3_prediction
+from CellTracker.unet3d import unet3_a, unet3_prediction
 
 #######################################
 # global parameters
@@ -139,7 +139,7 @@ valid_data=(valid_subimage,np.array(valid_subcells,dtype='int32'))
 ################################################
 # train the 3D U-net
 ################################################
-unet_model = unet3_f2b()
+unet_model = unet3_a()
 unet_model.compile(loss='binary_crossentropy', optimizer="adam")
 model_callback=ModelCheckpoint(weights_path+'{epoch:02d}.hdf5',
                                save_best_only=True)
