@@ -29,7 +29,7 @@ from skimage.segmentation import relabel_sequential
 
 # Import functions in our customized package deepcelltracker
 from CellTracker.preprocess import lcn_gpu
-from CellTracker.unet3d import unet3_f2b, unet3_prediction
+from CellTracker.unet3d import unet3_a, unet3_prediction
 from CellTracker.watershed import watershed_2d, watershed_3d, \
     watershed_2d_markers
 from CellTracker.interpolate_labels import gaussian_filter
@@ -79,8 +79,8 @@ config = tf.ConfigProto(gpu_options=tf.GPUOptions(allow_growth=True))
 session = tf.Session(config=config)
 tensorflow_backend.set_session(session)
 
-unet_model = unet3_f2b()
-unet_model.load_weights(os.path.join(folder_path,"models/unet3_f2b_weights.hdf5"))
+unet_model = unet3_a()
+unet_model.load_weights(os.path.join(folder_path,"models/unet3_a_weights.hdf5"))
 
 ############################################
 # generate automatic segmetation of volume 1
