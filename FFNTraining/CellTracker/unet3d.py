@@ -13,7 +13,7 @@ from keras.layers import Conv3D, LeakyReLU, Activation, Input, MaxPooling3D, \
     regularizers
 import math
 
-def unet3_f2b():
+def unet3_a():
     # the structure is the same as the one in fig. 2b
     inputs=Input((160,160,16,1))
     
@@ -91,7 +91,7 @@ def unet3_f2b():
       
     return g_model
 
-def unet3_fS2a():
+def unet3_b():
 
     inputs = Input((96, 96, 8, 1))
 
@@ -139,7 +139,7 @@ def unet3_fS2a():
       
     return g_model
 
-def unet3_fS2b():
+def unet3_c():
 
     inputs=Input((64,64,64,1))
     
