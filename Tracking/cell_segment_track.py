@@ -80,7 +80,7 @@ session = tf.Session(config=config)
 tensorflow_backend.set_session(session)
 
 unet_model = unet3_a()
-unet_model.load_weights(os.path.join(folder_path,"models/unet3_a_weights.hdf5"))
+unet_model.load_weights(os.path.join(folder_path,"models/unet3_f2b_weights.hdf5")) # f2b:structure a; fS2a:b; fS2b:c
 
 ############################################
 # generate automatic segmetation of volume 1
