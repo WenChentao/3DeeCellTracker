@@ -43,8 +43,8 @@ batch_size=32
 
 # paths for saving data
 data_path = os.path.join(folder_path,"data/")
-weights_path = os.path.join(folder_path,"weights/weights.")
-save_prediction_path = os.path.join(folder_path,"prediction/weights")
+weights_path = os.path.join(folder_path,"weights","weights.")
+save_prediction_path = os.path.join(folder_path,"prediction","weights")
 #######################################
 # lood point set data
 #######################################
