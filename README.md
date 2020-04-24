@@ -128,7 +128,7 @@ from CellTracker.unet3d import unet3_a
 unet_model = unet3_a() 
 unet_model.load_weights(os.path.join(folder_path,"models/unet3_f2b_weights.hdf5"))
 ```
-5. Modify global parameters (see the user-guide for setting parameters).
+5. Modify global parameters (see the [user-guide for setting parameters](https://github.com/WenChentao/3DeeCellTracker/blob/master/Guide%20for%20parameters.md)).
 #### 3.1.2 Procedures for tracking:
 ##### 3.1.2.1 Segmentation of volume #1
 Run the code in "cell_segment_track.py" until finishing "automatic segmentation of volume #1". The resulted segmentation is stored into the folder “auto_vol1”
