@@ -51,12 +51,12 @@ datagen = ImageDataGenerator(
     fill_mode='reflect')
 
 # paths for saving images and results
-train_image_path = os.path.join(folder_path,"train_image/train_image")
-train_cells_path = os.path.join(folder_path,"train_cells/train_cells")
-valid_image_path = os.path.join(folder_path,"valid_image/valid_image")
-valid_cells_path = os.path.join(folder_path,"valid_cells/valid_cells")
-weights_path = os.path.join(folder_path,"weights/weights.")
-save_prediction_path = os.path.join(folder_path,"prediction/weights")
+train_image_path = os.path.join(folder_path,"train_image","train_image")
+train_cells_path = os.path.join(folder_path,"train_cells","train_cells")
+valid_image_path = os.path.join(folder_path,"valid_image","valid_image")
+valid_cells_path = os.path.join(folder_path,"valid_cells","valid_cells")
+weights_path = os.path.join(folder_path,"weights","weights.")
+save_prediction_path = os.path.join(folder_path,"prediction","weights")
 
 ###############################################################################
 # load training data and validation data
