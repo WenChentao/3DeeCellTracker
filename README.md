@@ -225,7 +225,7 @@ Red circles: raw point set. Blue crosses: generated point set with simulated mov
 
 #### 3.3.2 Procedures:
 ##### 3.3.2.1 Train the FFN
-Users should run the code "FFNTraining.py" to train the FFN. The default number of epochs for training is 30. Users can increase the epochs to get a more accurate model. We only measured the loss function (binary cross-entropy) on the generated training data (always different in each epoch due to random simulations). 
+Users should run the code "FFNTraining.py" to train the FFN. Please note some parameters used in this demostration are different with the ones used in our paper, in order to make larger movements and to reduce the training time. The default number of epochs for training is 30. Users can increase the epochs to get a more accurate model. We only measured the loss function (binary cross-entropy) on the generated training data (always different in each epoch due to random simulations). 
 
 <img src="/pictures/ffn-loss.svg" width="400">
 
