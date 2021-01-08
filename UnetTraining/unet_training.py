@@ -6,16 +6,9 @@ Created on May 27 2019
 @author: wen
 """
 
-#########################
-# user inputs
-#########################
-folder_path = '/home/ncfgpu3/3DeeCellTracker/UnetTraining/' # replace the path with the real one including the code
-
 #####################################
 # import packages and functions
 #####################################
-import sys
-sys.path.append(folder_path) 
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -24,11 +17,11 @@ from keras.preprocessing.image import ImageDataGenerator
 from keras.callbacks import ModelCheckpoint
 import random
 import scipy.misc
-%matplotlib
 
-# Import functions in our customized package deepcelltracker
 from CellTracker.preprocess import lcn_gpu
 from CellTracker.unet3d import unet3_a, unet3_prediction
+
+%matplotlib qt
 
 #######################################
 # global parameters
@@ -51,6 +44,7 @@ datagen = ImageDataGenerator(
     fill_mode='reflect')
 
 # paths for saving images and results
+folder_path = '/home/ncfgpu3/3DeeCellTracker/UnetTraining/'
 train_image_path = os.path.join(folder_path,"train_image","train_image")
 train_cells_path = os.path.join(folder_path,"train_cells","train_cells")
 valid_image_path = os.path.join(folder_path,"valid_image","valid_image")
