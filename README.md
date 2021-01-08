@@ -112,7 +112,7 @@ $ pip install 3DeeCellTracker
 **Using 3DCT.yml file:**
 Users should download the "3DCT.yml" file from this repository. Then they should open the terminal and change the working directory to the folder contain this yml file using cd command.
 
-Then we can install the enviroment named "3DCT" by following command (~1min):
+Then we can install the environment named "3DCT" by following command (~1min):
 ```
 $ conda env create -f 3DCT.yml
 ```
@@ -132,7 +132,7 @@ We suggest that users should use an IDE such as Spyder to run the "cell_segment_
 - tracking information. 
 2. Put weights files and raw images into the corresponding folder.
 3. Modify paths for folders and file names in "cell_segment_track.py", including: 
-- "folder_path" (containing "cell_segment_track.py"), 
+- "folder_path" (containing following data and results), 
 - "raw_image_path", 
 - "files_name"(of raw images), 
 - "auto_segmentation_vol1_path", 
@@ -173,7 +173,7 @@ Users can use other software for checking the results, such as in IMARIS.
 #### 3.2.1 Preparations: 
 For training 3D U-net, users should run "unet_training.py" under "./UnetTraining/".
 
-Again, users should modify the "folder_path" (containing "unet_training.py") accordingly.
+Again, users should modify the "folder_path" (containing following data and results) accordingly.
 
 Similarly, users should create folders for storing 
 - weights (in folder "weights"), 
@@ -230,7 +230,7 @@ Cell regions (following images are probability maps: black:0, white:1) predicted
 #### 3.3.1 Preparations: 
 For training FFN, users should run "FFNTraining.py" under "./FFNTraining/".
 
-Again, users should modify the "folder_path" (containing "FFNTraining.py") accordingly.
+Again, users should modify the "folder_path" (containing following data and results) accordingly.
 
 Similarly, users should prepare two point sets including the training data and test data (in folder "data" after creating it) and create the folders "weights" and "prediction" for saving results. In the demo data, we have supplied a point set for training and another point set for test. 
 
