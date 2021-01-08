@@ -6,16 +6,9 @@ Created on May 29 2019
 @author: wen
 """
 
-#########################
-# user inputs
-#########################
-folder_path = '/home/ncfgpu3/3DeeCellTracker/FFNTraining/' # replace the path with the real one including the code
-
 #####################################
 # import packages and functions
 #####################################
-import sys
-sys.path.append(folder_path) 
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -24,9 +17,9 @@ import keras
 from keras.models import Model
 from keras.layers import Input, Dense, BatchNormalization
 from keras.callbacks import ModelCheckpoint
-%matplotlib
-
 from CellTracker.track import initial_matching, FFN_matching_plot
+
+%matplotlib qt
 
 #######################################
 # global parameters
@@ -42,6 +35,7 @@ steps_per_epoch=60
 batch_size=32
 
 # paths for saving data
+folder_path = '/home/ncfgpu3/3DeeCellTracker/FFNTraining/' 
 data_path = os.path.join(folder_path,"data/")
 weights_path = os.path.join(folder_path,"weights","weights.")
 save_prediction_path = os.path.join(folder_path,"prediction","weights")
