@@ -40,9 +40,9 @@ Our program was developed under environment #1. To prove its compatibility with 
 #### 1.3.1 Fiji: 
 Fiji is a distribution of ImageJ. We used it for preprocessing (alignment) and confirmation of tracking results. It can be downloaded here: [https://imagej.net/Fiji/Downloads](https://imagej.net/Fiji/Downloads)
 
-For alignment, we also used the plugin “StackReg”, which can be downloaded here: [http://bigwww.epfl.ch/thevenaz/stackreg/](http://bigwww.epfl.ch/thevenaz/stackreg/)
+For alignment, we also used the plugin “StackReg”, which can be downloaded here: [http://bigwww.epfl.ch/thevenaz/stackreg/](http://bigwww.epfl.ch/thevenaz/stackreg/). In most cases, this step (alignment) can be skipped.
 #### 1.3.2 ITK-SNAP: 
-ITK-SNAP was used for manual correction of the segmentation, and for generating 3D movies. It can be downloaded here: [http://www.itksnap.org/](http://www.itksnap.org/)
+ITK-SNAP was used for manual correction of the segmentation, and for generating 3D movies. It can be downloaded here: [http://www.itksnap.org/](http://www.itksnap.org/). Users may use other tools for the correction, such as "napari" package in Python.
 
 ## 2. Installation guide
 Here we describe the procedures for installation of environment #2:
@@ -75,18 +75,22 @@ $ nvidia-smi
 If the driver is correctly installed, the driver version should be displayed:
 ![nvidia-smi](/pictures/nvidia-smi.png)
 ### 2.3 Software/packages for segmentation and tracking
-##### 2.3.1 Choose an appropriate version of Anaconda and download the installer:
+##### 2.3.1 Choose an appropriate version of Anaconda and install it:
 The latest version of the Anaconda installer has included most of the software/packages we need. See here: [https://docs.anaconda.com/anaconda/packages/py3.7_linux-64/](https://docs.anaconda.com/anaconda/packages/py3.7_linux-64/). Other software/packages can also be easily installed from the Anaconda cloud. We therefore recommend users to install the latest Anaconda for convenience.
 
 In this test, we installed Anaconda 2019.03 for linux 64bit with Python 3.7 which included Python, Spyder, numpy, matplotlib, scikit-image, scikit-learn, scipy, pillow, and h5py. The installer can be downloaded here: [https://www.anaconda.com/distribution/](https://www.anaconda.com/distribution/)
-#### 2.3.2 Install Anaconda and other required packages:
+
 After download, we installed Anaconda by a command, and re-started the terminal (~1min): 
 ```
 $ bash ~/Downloads/Anaconda_xxx.sh
 ```
 Users should replace the above path after “bash” with the correct one containing the installer.
 
-(Optional) We recommend users to install and use following software/packages in a virtual Anaconda environment for safety. Here are the commands to create and activate a new environment (replace "yourenvname" with a custom name):
+#### 2.3.2 Install required packages:
+Users can install the required packages manually or using our 3DCT.yml file.
+
+**Manually install:**
+We recommend users to install and use following software/packages in a virtual Anaconda environment for safety. Here are the commands to create and activate a new environment (replace "yourenvname" with a custom name):
 ```
 $ conda create -n yourenvname --clone base
 $ source activate yourenvname
@@ -95,10 +99,24 @@ After installing Anaconda, we can install CUDA, cuDNN, tensorflow-gpu, and keras
 ```
 $ conda install keras-gpu
 ```
-Finally, we can install opencv by another command (~1min):
+We can install opencv by another command (~1min):
 ```
 $ conda install opencv
 ```
+
+Finally, we should install our 3DeeCellTracker package by following command (~1min):
+```
+$ pip install 3DeeCellTracker
+```
+
+**Using 3DCT.yml file:**
+Users should download the "3DCT.yml" file from this repository. Then they should open the terminal and change the working directory to the folder contain this yml file using cd command.
+
+Then we can install the enviroment named "3DCT" by following command (~1min):
+```
+$ conda env create -f 3DCT.yml
+```
+
 ## 3. Use 3DeeCellTracker (explained by a demo dataset)
 We have compressed the demo data, the weights of pre-trained 3D U-net/FFN models, and the segmentation/tracking results into "Demos190610.zip" which can be downloaded from: [http://ssbd.qbic.riken.jp/set/20190602/](http://ssbd.qbic.riken.jp/set/20190602/)
 ### 3.1 Tracking 
