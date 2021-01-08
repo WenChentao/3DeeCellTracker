@@ -7,16 +7,9 @@ Created on Mon Apr 22 2019
 
 """
 
-#########################
-# user inputs
-#########################
-folder_path = '/home/ncfgpu3/3DeeCellTracker/Tracking/' # replace the path with the real one including this program
-
 #####################################
 # import packages and functions
 #####################################
-import sys
-sys.path.append(folder_path) 
 import os
 import time
 import matplotlib.pyplot as plt
@@ -26,8 +19,9 @@ import scipy.ndimage.measurements as snm
 from keras.models import Model, load_model
 from PIL import Image
 from skimage.segmentation import relabel_sequential
+import tensorflow as tf
+from keras.backend import tensorflow_backend
 
-# Import functions in our customized package deepcelltracker
 from CellTracker.preprocess import lcn_gpu
 from CellTracker.unet3d import unet3_a, unet3_prediction
 from CellTracker.watershed import watershed_2d, watershed_3d, \
@@ -61,8 +55,9 @@ LAMBDA = 0.1 # control coherence by adding a loss of incoherence, large LAMBDA
 max_iteration = 20 # maximum number of iterations; large values generate more accurate tracking.
         
 # paths for saving images and results
+folder_path = '/home/wen/Downloads/Demos190610/Demos190610/Demo1/'
 raw_image_path = os.path.join(folder_path,"data/")
-files_name = "aligned_t%03i_z%03i_c001.tif"
+files_name = "aligned_t%03i_z%03i.tif"
 auto_segmentation_vol1_path = os.path.join(folder_path,"auto_vol1/auto_R_")
 manual_segmentation_vol1_path = os.path.join(folder_path,"manual_vol1/")
 manual_name = "manual_labels%03i.tif"
@@ -72,9 +67,6 @@ track_information_path = os.path.join(folder_path,"track_information/")
 #######################################
 # load the pre-trained 3D U-net model
 #######################################
-
-import tensorflow as tf
-from keras.backend import tensorflow_backend
 config = tf.ConfigProto(gpu_options=tf.GPUOptions(allow_growth=True))
 session = tf.Session(config=config)
 tensorflow_backend.set_session(session)
@@ -117,8 +109,9 @@ def segmentation(vol):
     
     # segment connected cell-like regions using watershed
     [image_watershed2d_wo_border, border]=watershed_2d(image_cell_bg[0,:,:,:,0],z_range=z_siz, min_distance=7)
-    [image_watershed3d_wo_border, image_watershed3d_wi_border] = watershed_3d(image_watershed2d_wo_border,
-                    samplingrate=[1,1,z_xy_resolution_ratio], min_size=min_size)
+    image_watershed3d_wo_border, image_watershed3d_wi_border, _, _ = watershed_3d(image_watershed2d_wo_border,
+                    samplingrate=[1,1,z_xy_resolution_ratio], method="min_size", 
+                    min_size=min_size, neuron_num=0, min_distance=1)
     segmentation_auto, fw, inv = relabel_sequential(image_watershed3d_wi_border)
     
     # calculate coordinates of the centers of each segmented cell
@@ -164,8 +157,9 @@ def test_tracking(vol1, vol2):
     tracking_plot(coordinates_pre_real, coordinates_post_real, pre_transformation)
     tracking_plot_zx(coordinates_pre_real, coordinates_post_real, pre_transformation)
     
+"""
 test_tracking(1,2) # choose two neighboring time points with challenging (large) movements
-
+"""
 ######################################################################################
 # users should manually correct the automatic segmentation of volume 1 in other soft, 
 # e.g. in ITK-SNAP
@@ -346,6 +340,3 @@ print('tracking all volumes took %.1f s'%elapsed)
 np.save(track_information_path+"displacements",displacements)
 np.save(track_information_path+"segmented_coordinates",segmented_coordinates)
 np.save(track_information_path+"tracked_coordinates",tracked_coordinates)
-
-
-
