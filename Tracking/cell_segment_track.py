@@ -79,7 +79,7 @@ unet_model.load_weights(os.path.join(folder_path,"models/unet3_f2b_weights.hdf5"
 ############################################
     
 def segmentation(vol):
-        """
+    """
     Make segmentation (unet + watershed)
     Input:
         vol: a specific volume
