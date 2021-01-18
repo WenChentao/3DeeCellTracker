@@ -79,7 +79,17 @@ unet_model.load_weights(os.path.join(folder_path,"models/unet3_f2b_weights.hdf5"
 ############################################
     
 def segmentation(vol):
-    
+        """
+    Make segmentation (unet + watershed)
+    Input:
+        vol: a specific volume
+    Gloabal variables:
+        center_coordinates: center coordinates of segmented cells by watershed
+        image_cell_bg: the cell/background regions obtained by unet.
+        layer_num: number of the layers in the 3D image
+        segmentation_auto: individual cells segmented by watershed
+        image_gcn: raw image / 65536
+    """
     global center_coordinates, image_cell_bg, layer_num, segmentation_auto, image_gcn
     
     # read raw 3D image of a specific volume
@@ -138,6 +148,11 @@ coordinates_pre_real[:,2]=coordinates_pre[:,2]*z_xy_resolution_ratio
 FNN_model = load_model(os.path.join(folder_path,"models/FNN_model.h5"))
 
 def test_tracking(vol1, vol2):
+    """
+    Test whether the parameters for tracking are proper (generating figures for the transformation)
+    Input: 
+        vol1, vol2: the numbers of two volumes for testing the registration between them
+    """
     segmentation(vol1)
     coordinates_pre = np.asarray(center_coordinates)
     coordinates_pre_real=coordinates_pre.copy()
