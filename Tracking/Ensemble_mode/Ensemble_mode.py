@@ -128,10 +128,10 @@ def segmentation(vol, method, min_size, neuron_num):
     # predict cell-like regions using 3D U-net
     t = time.time()
     try:
-        image_cell_bg = np.load(folder_path+"unet/t%04i.npy"%(vol), allow_pickle=True)
+        image_cell_bg = np.load(folder_path+"t%04i.npy"%(vol), allow_pickle=True)
     except OSError:
         image_cell_bg = unet3_prediction(image_norm,unet_model,shrink=shrink)
-        np.save(unet_path+"unet/t%04i.npy"%(vol), np.array(image_cell_bg,dtype="float16"))
+        np.save(unet_path+"t%04i.npy"%(vol), np.array(image_cell_bg,dtype="float16"))
     
     # segment connected cell-like regions using watershed
     [image_watershed2d_wo_border, border]=watershed_2d(image_cell_bg[0,:,:,:,0],z_range=z_siz, min_distance=7)
