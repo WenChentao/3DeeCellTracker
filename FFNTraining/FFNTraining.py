@@ -34,11 +34,26 @@ epochs=30
 steps_per_epoch=60
 batch_size=32
 
-# paths for saving data
-folder_path = '/home/ncfgpu3/3DeeCellTracker/FFNTraining/' 
+###################################
+# folder path, file names
+###################################
+folder_path = './Projects/3DeeCellTracker-master/Demo_FFNTraining' # path of the folder storing related files
+
+####################################################
+# Create folders for storing data and results
+####################################################
 data_path = os.path.join(folder_path,"data/")
-weights_path = os.path.join(folder_path,"weights","weights.")
-save_prediction_path = os.path.join(folder_path,"prediction","weights")
+if not os.path.exists(data_path):
+    os.makedirs(data_path)
+
+weights_path = os.path.join(folder_path,"weights")
+if not os.path.exists(weights_path):
+    os.mkdir(weights_path)
+
+save_prediction_path = os.path.join(folder_path,"prediction")
+if not os.path.exists(save_prediction_path):
+    os.mkdir(save_prediction_path)
+    
 #######################################
 # lood point set data
 #######################################
@@ -156,7 +171,7 @@ FNN_model.compile(optimizer='adam',
 ###############################################
 #            Train the FNN model              
 ###############################################
-model_callback=ModelCheckpoint(weights_path+'{epoch:02d}.hdf5', monitor='loss',
+model_callback=ModelCheckpoint(weights_path+'weights.{epoch:02d}.hdf5', monitor='loss',
                                save_best_only=True)
 history = FNN_model.fit_generator(gen_train, callbacks=[model_callback], class_weight={0:0.5, 1:0.5}, 
                     epochs=epochs,steps_per_epoch=steps_per_epoch)
@@ -174,7 +189,7 @@ plt.show()
 
 # load weights and predict initial matching in test data
 weight = 1
-FNN_model.load_weights(weights_path+'%02d.hdf5'%weight)
+FNN_model.load_weights(weights_path+'weights.%02d.hdf5'%weight)
 init_match = initial_matching(FNN_model, train, test, k_ptrs)
 fig = FFN_matching_plot(train,test,init_match)
-fig.savefig(save_prediction_path+'%02d_test.tif'%weight)
+fig.savefig(save_prediction_path+'weights%02d_test.tif'%weight)
