@@ -58,18 +58,48 @@ LAMBDA = 0.00001 # control coherence by adding a loss of incoherence, large LAMB
              # generates larger penalty for incoherence.
 max_iteration = 10 # maximum number of iterations; large values generate more accurate tracking.
 ensemble = 20 # how many predictions to make for making averaged prediction
-  
-# paths for saving images and results
-folder_path = '/home/wen/eLife_revision/Leifer/Tracking/' 
-raw_image_path = os.path.join(folder_path,"data/")
-files_name = "aligned_t%04i_z%04i.tif"
-auto_segmentation_vol1_path = os.path.join(folder_path,"auto_vol1/auto_R_")
-unet_path = os.path.join(folder_path,"unet/")
-manual_segmentation_vol1_path = os.path.join(folder_path,"manual_vol1/")
-manual_name = "manual_labels%04i.tif"
-track_results_path = os.path.join(folder_path,"track_results/track_results_")
-track_information_path = os.path.join(folder_path,"track_information_ensembleWide_correctionIter/")
 
+###################################
+# folder path, file names
+###################################
+folder_path = './Projects/3DeeCellTracker-master/Demo_Tracking_Ensemble' # path of the folder storing related files
+files_name = "aligned_t%04i_z%04i.tif" # file names for the raw image files
+unet_weight_file = "unet3_fS2a_Leifer_0.0086.hdf5" # weight file of the trained 3D U-Net. f2b:structure a; fS2a:b; fS2b:c
+FFN_weight_file = "FNN_model.h5" # weight file of the trained FFN model
+
+####################################################
+# Create folders for storing data and results
+####################################################
+raw_image_path = os.path.join(folder_path,"data/")
+if not os.path.exists(raw_image_path):
+    os.makedirs(raw_image_path)
+
+auto_segmentation_vol1_path = os.path.join(folder_path,"auto_vol1/")
+if not os.path.exists(auto_segmentation_vol1_path):
+    os.mkdir(auto_segmentation_vol1_path)
+
+manual_segmentation_vol1_path = os.path.join(folder_path,"manual_vol1/")
+if not os.path.exists(manual_segmentation_vol1_path):
+    os.mkdir(manual_segmentation_vol1_path)
+    
+manual_name = "manual_labels%03i.tif"
+
+track_results_path = os.path.join(folder_path,"track_results/")
+if not os.path.exists(track_results_path):
+    os.mkdir(track_results_path)
+    
+track_information_path = os.path.join(folder_path,"track_information/")
+if not os.path.exists(track_information_path):
+    os.mkdir(track_information_path)
+
+models_path = os.path.join(folder_path,"models/")
+if not os.path.exists(models_path):
+    os.mkdir(models_path)
+
+unet_path = os.path.join(folder_path,"unet/")
+if not os.path.exists(unet_path):
+    os.mkdir(unet_path)
+    
 ######################
 # functions 
 ######################
@@ -332,7 +362,7 @@ session = tf.Session(config=config)
 tensorflow_backend.set_session(session)
 
 unet_model = unet3_b()
-unet_model.load_weights(os.path.join(folder_path,"models/unet3_fS2a_Leifer_0.0086.hdf5"))
+unet_model.load_weights(os.path.join(models_path,unet_weight_file))
 
 ############################################
 # generate automatic segmetation of volume 1
@@ -348,7 +378,7 @@ for i in range(1, volume_num+1):
 # save the segmented cells of volume #1
 for z in range(1,z_siz+1):
     auto_segmentation = segmentation_auto[:,:,z-1].astype(np.uint8)
-    Image.fromarray(auto_segmentation).save(auto_segmentation_vol1_path+"t%04i_z%04i.tif"%(1,z))   
+    Image.fromarray(auto_segmentation).save(auto_segmentation_vol1_path+"auto_t%04i_z%04i.tif"%(1,z))   
     
 # calculate coordinates of the current "previous" volume (here is #1) 
 coordinates_pre = np.asarray(center_coordinates)
@@ -389,7 +419,7 @@ seg_cells_interpolated_corrected = seg_cells_interpolated_corrected[5:x_siz+5,5:
 # save labels in the first volume (interpolated)
 for z in range((z_scaling+1)//2,seg_cells_interpolated_corrected.shape[2]+1,z_scaling):
     cells_vol1 = (seg_cells_interpolated_corrected[:,:,z-1]).astype(np.uint8)
-    Image.fromarray(cells_vol1).save(track_results_path+"t%04i_z%04i.tif"%(1,z/z_scaling))    
+    Image.fromarray(cells_vol1).save(track_results_path+"track_results_t%04i_z%04i.tif"%(1,z/z_scaling))    
     
 
 # calculate coordinates of centers (the corrected coordinates of cells in the first volume)
@@ -406,7 +436,7 @@ coordinates_tracked_real_vol1 = coordinates_tracked_real.copy()
 # tracking following volumes
 ###############################################################################
 # load weights of the feedforward network 
-FNN_model = load_model(os.path.join(folder_path,"models/FNN_model.h5"))
+FNN_model = load_model(os.path.join(models_path,FFN_weight_file))
 
 # initialize all variables
 displacement_from_vol1 = coordinates_tracked_real*0
@@ -428,7 +458,7 @@ for volume in range(2,volume_num+1):
         tracked_coordinates.append(coordinates_tracked_real)
         for z in range(1,layer_num+1):
             tracked_cells = (label_T_watershed[:,:,z-1]).astype(np.uint8)
-            Image.fromarray(tracked_cells).save(track_results_path+"t%04i_z%04i.tif"%(volume,z))
+            Image.fromarray(tracked_cells).save(track_results_path+"track_results_t%04i_z%04i.tif"%(volume,z))
         continue
 
     ########################################################
@@ -492,7 +522,7 @@ for volume in range(2,volume_num+1):
     ####################################################
     for z in range(1,layer_num+1):
         tracked_cells = (label_T_watershed[:,:,z-1]).astype(np.uint8)
-        Image.fromarray(tracked_cells).save(track_results_path+"t%04i_z%04i.tif"%(volume,z))
+        Image.fromarray(tracked_cells).save(track_results_path+"track_results_t%04i_z%04i.tif"%(volume,z))
     
     # update and save points locations
     coordinates_pre_real = coordinates_post_real.copy()
