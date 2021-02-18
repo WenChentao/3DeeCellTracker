@@ -123,30 +123,13 @@ We have compressed the demo data, the weights of pre-trained 3D U-net/FFN models
 #### 3.1.1 Preparations: 
 We suggest that users should use an IDE such as Spyder to run the "cell_segment_track.py" under "./Tracking/".
 
-1. Create folders for storing: 
-- weights of models, 
-- raw images, 
-- automatic segmentation (vol1), 
-- manual segmentation (vol1), 
-- tracking results,
-- tracking information. 
-2. Put weights files and raw images into the corresponding folder.
-3. Modify paths for folders and file names in "cell_segment_track.py", including: 
-- "folder_path" (containing following data and results), 
-- "raw_image_path", 
+1. Modify following path and file names in "cell_segment_track.py", including: 
+- "folder_path" (containing raw images and segmetation/tracking results),  
 - "files_name"(of raw images), 
-- "auto_segmentation_vol1_path", 
-- "manual_segmentation_vol1_path",  
-- "manual_name" (of manual segmentation), 
-- "track_results_path", 
-- "track_information_path". 
-4. Modify the name of the pre-trained 3D U-net and its weights. For example, to use 3D U-net “A” (previously called “f2b”) we should run following codes:
-```
-from CellTracker.unet3d import unet3_a
-unet_model = unet3_a() 
-unet_model.load_weights(os.path.join(folder_path,"models/unet3_f2b_weights.hdf5"))
-```
-5. Modify global parameters (see the [user-guide for setting parameters](https://github.com/WenChentao/3DeeCellTracker/blob/master/Guide%20for%20parameters.md)).
+- "unet_weight_file" (name of 3D U-net weight file)
+- "FFN_weight_file" (name of FFN weight file)
+2. Put weights files and raw images into the corresponding folder.
+3. Modify global parameters (see the [user-guide for setting parameters](https://github.com/WenChentao/3DeeCellTracker/blob/master/Guide%20for%20parameters.md)).
 #### 3.1.2 Procedures for tracking:
 ##### 3.1.2.1 Segmentation of volume #1
 Run the code in "cell_segment_track.py" until finishing "automatic segmentation of volume #1". The resulted segmentation is stored into the folder “auto_vol1”
