@@ -53,16 +53,46 @@ BETA = 300 # control coherence using a weighted average of movements of nearby p
 LAMBDA = 0.1 # control coherence by adding a loss of incoherence, large LAMBDA 
              # generates larger penalty for incoherence.
 max_iteration = 20 # maximum number of iterations; large values generate more accurate tracking.
-        
-# paths for saving images and results
-folder_path = '/home/wen/Downloads/Demos190610/Demos190610/Demo1/'
+
+# folder path, file names
+folder_path = './Projects/3DeeCellTracker-master/Demo_Tracking' # path of the folder storing related files
+files_name = "aligned_t%03i_z%03i.tif" # file names for the raw image files
+unet_weight_file = "unet3_f2b_weights.hdf5" # weight file of the trained 3D U-Net. f2b:structure a; fS2a:b; fS2b:c
+FFN_weight_file = "FNN_model.h5" # weight file of the trained FFN model
+
+####################################################
+# Create folders for storing data and results
+####################################################
 raw_image_path = os.path.join(folder_path,"data/")
-files_name = "aligned_t%03i_z%03i.tif"
-auto_segmentation_vol1_path = os.path.join(folder_path,"auto_vol1/auto_R_")
+if not os.path.exists(raw_image_path):
+    os.makedirs(raw_image_path)
+
+auto_segmentation_vol1_path = os.path.join(folder_path,"auto_vol1/")
+if not os.path.exists(auto_segmentation_vol1_path):
+    os.mkdir(auto_segmentation_vol1_path)
+
 manual_segmentation_vol1_path = os.path.join(folder_path,"manual_vol1/")
+if not os.path.exists(manual_segmentation_vol1_path):
+    os.mkdir(manual_segmentation_vol1_path)
+    
 manual_name = "manual_labels%03i.tif"
-track_results_path = os.path.join(folder_path,"track_results/track_results_")
+
+track_results_path = os.path.join(folder_path,"track_results/")
+if not os.path.exists(track_results_path):
+    os.mkdir(track_results_path)
+    
 track_information_path = os.path.join(folder_path,"track_information/")
+if not os.path.exists(track_information_path):
+    os.mkdir(track_information_path)
+
+models_path = os.path.join(folder_path,"models/")
+if not os.path.exists(models_path):
+    os.mkdir(models_path)
+    
+########################################################################################################
+# users should move raw image files to the "data" folder created above with names defined in files_name,
+# and move trained u-net model weight and FFN model weight files to the "models" folder
+########################################################################################################
 
 #######################################
 # load the pre-trained 3D U-net model
@@ -72,7 +102,7 @@ session = tf.Session(config=config)
 tensorflow_backend.set_session(session)
 
 unet_model = unet3_a()
-unet_model.load_weights(os.path.join(folder_path,"models/unet3_f2b_weights.hdf5")) # f2b:structure a; fS2a:b; fS2b:c
+unet_model.load_weights(os.path.join(models_path,unet_weight_file))
 
 ############################################
 # generate automatic segmetation of volume 1
@@ -134,7 +164,7 @@ segmentation(1)
 # save the segmented cells of volume #1
 for z in range(1,layer_num+1):
     auto_segmentation = (segmentation_auto[:,:,z-1]).astype(np.uint8)
-    Image.fromarray(auto_segmentation).save(auto_segmentation_vol1_path+"t%04i_z%04i.tif"%(1,z))   
+    Image.fromarray(auto_segmentation).save(auto_segmentation_vol1_path+"auto_R_t%04i_z%04i.tif"%(1,z))   
     
 # calculate coordinates of the current "previous" volume (here is #1) 
 coordinates_pre = np.asarray(center_coordinates)
@@ -145,7 +175,7 @@ coordinates_pre_real[:,2]=coordinates_pre[:,2]*z_xy_resolution_ratio
 # test tracking parameters
 #################################
 # load weights of the feedforward network 
-FNN_model = load_model(os.path.join(folder_path,"models/FNN_model.h5"))
+FNN_model = load_model(os.path.join(models_path,FFN_weight_file))
 
 def test_tracking(vol1, vol2):
     """
@@ -205,7 +235,7 @@ seg_cells_interpolated_corrected = seg_cells_interpolated_corrected[5:x_siz+5,5:
 # save labels in the first volume (interpolated)
 for z in range((z_scaling+1)//2,seg_cells_interpolated_corrected.shape[2]+1,z_scaling):
     cells_vol1 = (seg_cells_interpolated_corrected[:,:,z-1]).astype(np.uint8)
-    Image.fromarray(cells_vol1).save(track_results_path+"t%03i_z%03i.tif"%(1,z/z_scaling))    
+    Image.fromarray(cells_vol1).save(track_results_path+"track_results_t%03i_z%03i.tif"%(1,z/z_scaling))    
     
 # calculate coordinates of centers (the corrected coordinates of cells in the first volume)
 center_points0 = snm.center_of_mass(segmentation_manual_relabels>0,segmentation_manual_relabels, 
@@ -338,7 +368,7 @@ for volume in range(2,volume_num+1):
     ####################################################
     for z in range(1,layer_num+1):
         tracked_cells = (label_T_watershed[:,:,z-1]).astype(np.uint8)
-        Image.fromarray(tracked_cells).save(track_results_path+"t%04i_z%04i.tif"%(volume,z))
+        Image.fromarray(tracked_cells).save(track_results_path+"track_results_t%04i_z%04i.tif"%(volume,z))
     
     # update and save points locations
     coordinates_pre_real = coordinates_post_real.copy()
