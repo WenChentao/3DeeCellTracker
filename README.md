@@ -128,7 +128,7 @@ We suggest that users should use an IDE such as Spyder to run the "cell_segment_
 - "files_name"(of raw images), 
 - "unet_weight_file" (name of 3D U-net weight file)
 - "FFN_weight_file" (name of FFN weight file)
-2. Put weights files and raw images into the corresponding folder.
+2. Put unet and FFN weight files into "data" folder and raw images into "models" folder.
 3. Modify global parameters (see the [user-guide for setting parameters](https://github.com/WenChentao/3DeeCellTracker/blob/master/Guide%20for%20parameters.md)).
 #### 3.1.2 Procedures for tracking:
 ##### 3.1.2.1 Segmentation of volume #1
