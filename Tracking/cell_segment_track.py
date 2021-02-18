@@ -54,7 +54,9 @@ LAMBDA = 0.1 # control coherence by adding a loss of incoherence, large LAMBDA
              # generates larger penalty for incoherence.
 max_iteration = 20 # maximum number of iterations; large values generate more accurate tracking.
 
+#####################################
 # folder path, file names
+#####################################
 folder_path = './Projects/3DeeCellTracker-master/Demo_Tracking' # path of the folder storing related files
 files_name = "aligned_t%03i_z%03i.tif" # file names for the raw image files
 unet_weight_file = "unet3_f2b_weights.hdf5" # weight file of the trained 3D U-Net. f2b:structure a; fS2a:b; fS2b:c
