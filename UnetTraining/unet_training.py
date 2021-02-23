@@ -53,27 +53,27 @@ folder_path = './Projects/3DeeCellTracker-master/Demo_UnetTraining' # path of th
 ####################################################
 train_image_path = os.path.join(folder_path,"train_image","train_image")
 if not os.path.exists(os.path.dirname(train_image_path)):
-    os.makedirs(train_image_path)
+    os.makedirs(os.path.dirname(train_image_path))
 
 train_cells_path = os.path.join(folder_path,"train_cells","train_cells")
 if not os.path.exists(os.path.dirname(train_cells_path)):
-    os.makedirs(train_cells_path)
+    os.makedirs(os.path.dirname(train_cells_path))
     
 valid_image_path = os.path.join(folder_path,"valid_image","valid_image")
 if not os.path.exists(os.path.dirname(valid_image_path)):
-    os.makedirs(valid_image_path)
+    os.makedirs(os.path.dirname(valid_image_path))
     
 valid_cells_path = os.path.join(folder_path,"valid_cells","valid_cells")
 if not os.path.exists(os.path.dirname(valid_cells_path)):
-    os.makedirs(valid_cells_path)
+    os.makedirs(os.path.dirname(valid_cells_path))
 
 weights_path = os.path.join(folder_path,"weights","weights.")
 if not os.path.exists(os.path.dirname(weights_path)):
-    os.makedirs(weights_path)
+    os.makedirs(os.path.dirname(weights_path))
 
 save_prediction_path = os.path.join(folder_path,"prediction","weights")
 if not os.path.exists(os.path.dirname(save_prediction_path)):
-    os.makedirs(save_prediction_path)
+    os.makedirs(os.path.dirname(save_prediction_path))
 
 ###############################################################################
 # load training data and validation data
