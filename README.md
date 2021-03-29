@@ -5,7 +5,7 @@ The data for demonstration and the previous demo codes can be found in: http://s
 
 ## Update:
 ### 2021.03.29
-The tracking speed of our program has been remarkably reduced using vectorization.
+We have improved our program and the tracking speed is now remarkably reduced (the FFN + PR-GLS + accurate correction part has been optimized by using vectorization).
 See an example in the jupyter notebook: [Single mode/worm1](Tracking_notebooks/single_mode_worm1.ipynb)
 
 ## 1 System requirements
