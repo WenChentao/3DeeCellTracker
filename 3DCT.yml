@@ -11,9 +11,7 @@ dependencies:
   - scikit-image=0.15.0=py37he6710b0_0
   - scikit-learn=0.20.2=py37hd81dba3_0
   - spyder=3.3.6=py37_0
+  - notebook
   - pip:
     - opencv-python==4.1.1.26
     - 3DeeCellTracker==0.2
-
-
-
