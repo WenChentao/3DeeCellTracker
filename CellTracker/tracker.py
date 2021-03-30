@@ -154,7 +154,8 @@ def watershed(image_cell_bg, method, neuron_num, par_image, par_tracker):
                                           min_size=par_tracker["min_size"], neuron_num=neuron_num, min_distance=3)
     segmentation_auto, fw, inv = relabel_sequential(image_watershed3d_wi_border)
     par_tracker["min_size"] = min_size
-    par_tracker["neuron_num"] = neuron_num
+    if method=="min_size":
+        par_tracker["neuron_num"] = neuron_num
     return segmentation_auto
 
 
@@ -439,9 +440,9 @@ def correction_once_interp(i_displacement_from_vol1, par_image, par_subregions, 
     # calculate the corrected displacement from vol #1
     r_displacement_from_vol1 = i_displacement_from_vol1 * np.array(
         [1, 1, par_image["z_xy_ratio"] / par_image["z_scaling"]]) + r_displacement_correction
-    i_displacement_from_vol1 = displacement_real_to_interpolatedimage(r_displacement_from_vol1, par_image)
+    i_displacement_from_vol1_new = displacement_real_to_interpolatedimage(r_displacement_from_vol1, par_image)
 
-    return r_displacement_from_vol1, i_displacement_from_vol1, r_displacement_correction
+    return r_displacement_from_vol1, i_displacement_from_vol1_new, r_displacement_correction
 
 
 def transform_cells_quick(par_subregions, vectors3d, print_seq=True):
@@ -524,13 +525,13 @@ def displacement_real_to_interpolatedimage(real_disp, par_image):
     return np.rint(i_displacement_from_vol1).astype(int)
 
 
-def match(volume2, par_image, par_tracker, par_path, par_subregions, r_coor_segment_pre, r_coor_tracked_pre,
-          r_coor_confirmed_vol1, cells_on_boundary, unet_model, FFN_model, r_disp_from_vol1,
-          seg_cells_interp, cell_t1, seg_t1):
+def match(volume1, volume2, par_image, par_tracker, par_path, par_subregions, r_coor_segment_pre, r_coor_tracked_pre,
+          r_coor_confirmed_vol1, cells_on_boundary, unet_model, FFN_model, r_disp_from_vol1_input,
+          seg_cells_interp, cell_t1, seg_t1, method="min_size"):
     """
     Match current volume and another volume2
     Input:
-        volume2: the new volume to be tested for tracking
+        volume1, volume2: the two volume to be tested for tracking
         r_coor_segment_pre, r_coor_tracked_pre: the coordinates of cells from segmentation or tracking in previous volume
         r_coor_confirmed_vol1: coordinates of cells in volume #1
         r_disp_from_vol1: displacement (from vol1) of cells in previous volume
@@ -551,7 +552,7 @@ def match(volume2, par_image, par_tracker, par_path, par_subregions, r_coor_segm
     ########################################################
     image_cell_bg, l_center_coordinates, _, image_gcn = \
         segmentation(volume2, par_image, par_tracker, par_path, unet_model,
-                     method="min_size", neuron_num=par_tracker["neuron_num"])
+                     method=method, neuron_num=par_tracker["neuron_num"])
 
     t = time.time()
     r_coordinates_segment_post = displacement_image_to_real(l_center_coordinates, par_image)
@@ -576,7 +577,7 @@ def match(volume2, par_image, par_tracker, par_path, par_subregions, r_coor_segm
     t = time.time()
     # calculate r_displacements from the first volume
     # r_displacement_from_vol1: accurate displacement; i_disp_from_vol1: displacement using voxels numbers as unit
-    r_disp_from_vol1 += r_coor_prgls - r_coor_tracked_pre
+    r_disp_from_vol1 = r_disp_from_vol1_input + r_coor_prgls - r_coor_tracked_pre
     i_disp_from_vol1 = displacement_real_to_interpolatedimage(r_disp_from_vol1, par_image)
 
     i_cumulated_disp = i_disp_from_vol1 * 0.0
@@ -584,7 +585,6 @@ def match(volume2, par_image, par_tracker, par_path, par_subregions, r_coor_segm
     print("FFN + PR-GLS: Left: x-y; Right: x-z")
     plt.pause(10)
     print("Accurate correction:")
-    plt.figure(figsize=(16,2))
     rep_correction = 5
     for i in range(rep_correction):
         # update positions (from vol1) by correction
@@ -620,18 +620,23 @@ def match(volume2, par_image, par_tracker, par_path, par_subregions, r_coor_segm
                                                        i_overlap_corrected[:, :, z_range],
                                                        z_range=par_image["z_siz"])
 
+            plt.pause(10)
+            print("current volume: t=",volume1)
             plt.figure(figsize=(16, 10))
             plt.subplot(1, 2, 1)
             fig = plt.imshow(cell_t1, cmap="gray")
             plt.subplot(1, 2, 2)
             fig = plt.imshow(seg_t1, cmap="tab20b")
 
+            plt.pause(10)
+            print("target volume: t=",volume2)
             plt.figure(figsize=(16, 10))
             plt.subplot(1, 2, 1)
             fig = plt.imshow(
                 np.max(image_cell_bg[0, :, :, :, 0], axis=2) > 0.5, cmap="gray")
             plt.subplot(1, 2, 2)
             fig = plt.imshow(np.max(l_label_T_watershed, axis=2), cmap="tab20b")
+            break
 
     return None
 
@@ -779,8 +784,8 @@ def initial_matching_quick(fnn_model, ref, tgt, k_ptrs):
 
 
 def track_one_vol(volume, par_image, par_tracker, par_path, par_subregions, unet_model, FFN_model, r_segmented_list_pre,
-                  r_tracked_list_pre, r_disp_from_vol1, r_coor_confirmed_vol1, seg_cells_interp,
-                  cells_on_boundary):
+                  r_tracked_list_pre, r_disp_from_vol1_input, r_coor_confirmed_vol1, seg_cells_interp,
+                  cells_on_boundary, method="min_size", rep_correction=20):
     """
     Track on volume
     """
@@ -790,7 +795,7 @@ def track_one_vol(volume, par_image, par_tracker, par_path, par_subregions, unet
     ########################################################
     image_cell_bg, l_center_coordinates, _, image_gcn = \
         segmentation(volume, par_image, par_tracker, par_path, unet_model,
-                     method="min_size", neuron_num=par_tracker["neuron_num"])
+                     method=method, neuron_num=par_tracker["neuron_num"])
     t = time.time()
     r_coor_segment_post = displacement_image_to_real(l_center_coordinates, par_image)
     #######################################
@@ -823,11 +828,10 @@ def track_one_vol(volume, par_image, par_tracker, par_path, par_subregions, unet
     ###################################
     t = time.time()
     # get positions (from vol1) before correction
-    i_cumulated_disp, i_disp_from_vol1, r_disp_from_vol1 = \
+    i_cumulated_disp, i_disp_from_vol1, _ = \
         get_pos_before_correction(par_image, r_coordinates_prgls,
-                                  r_coor_tracked_pre, r_disp_from_vol1)
+                                  r_coor_tracked_pre, r_disp_from_vol1_input)
 
-    rep_correction = 5
     for i in range(rep_correction):
         # update positions (from vol1) by correction
         r_disp_from_vol1, i_disp_from_vol1, r_disp_correction = \
