@@ -128,7 +128,7 @@ We have compressed the demo data(worm1), the weights of pre-trained 3D U-net/FFN
 #### 3.1.1 Using Jupyter notebook:
 See examples in [Single mode/worm1](Tracking_notebooks/single_mode_worm1.ipynb) and [Ensemble mode/worm4](Tracking_notebooks/ensemble_mode_worm4.ipynb)
 #### 3.1.2 Using IDE (Spyder):
-Two old version of our programs using Spyder were also supplied. See instrouctions [here](Tracking/README.md). These old programs are corresponding to the results described in our original paper (Wen et al. eLife, 2021) but slower than the updated programs in the two notebooks above.
+Two old version of our programs using Spyder were also supplied. See instructions [here](Tracking/README.md). These old programs are corresponding to the results described in our original paper (Wen et al. eLife, 2021) but slower than the updated programs in the two notebooks above.
 
 ### 3.2 Training 3D U-net (in Spyder)
 #### 3.2.1 Preparations: 
