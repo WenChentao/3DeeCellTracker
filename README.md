@@ -125,39 +125,12 @@ $ conda env create -f 3DCT.yml
 ## 3. Use 3DeeCellTracker (explained by a demo dataset)
 We have compressed the demo data, the weights of pre-trained 3D U-net/FFN models, and the segmentation/tracking results into "Demos190610.zip" which can be downloaded from: [http://ssbd.qbic.riken.jp/set/20190602/](http://ssbd.qbic.riken.jp/set/20190602/)
 ### 3.1 Tracking 
-#### 3.1.1 Preparations: 
-We suggest that users should use an IDE such as Spyder to run the "cell_segment_track.py" under "./Tracking/".
+#### 3.1.1 Using Jupyter notebook:
+See examples in [Single mode/worm1](Tracking_notebooks/single_mode_worm1.ipynb) and [Ensemble mode/worm4](Tracking_notebooks/ensemble_mode_worm4.ipynb)
+#### 3.1.2 Using IDE (Spyder):
+Two old version of our programs using Spyder were also supplied. They are corresponding to the results described in our original paper (Wen et al. eLife, 2021) but was slower. See instrouctions [here](Tracking/README.md)
 
-1. Modify following path and file names in "cell_segment_track.py", including: 
-- "folder_path" (containing data, models and segmetation/tracking results),  
-- "files_name"(of raw images), 
-- "unet_weight_file" (name of 3D U-net weight file)
-- "FFN_weight_file" (name of FFN weight file)
-2. Put raw images into "data" folder and unet and FFN weight files into "models" folder.
-3. Modify global parameters (see the [user-guide for setting parameters](https://github.com/WenChentao/3DeeCellTracker/blob/master/Guide%20for%20parameters.md)).
-#### 3.1.2 Procedures for tracking:
-##### 3.1.2.1 Segmentation of volume #1
-Run the code in "cell_segment_track.py" until finishing "automatic segmentation of volume #1". The resulted segmentation is stored into the folder “auto_vol1”
-
-| Raw image | Segmentation result |
-| ------------- | ------------- | 
-| ![raw-worm1](/pictures/raw-worm1.png) | ![autoseg-worm1](/pictures/autoseg-worm1.png) |
-
- (Optional) Users can check the segmentation in Fiji. Here are the 2D projected raw images in volume #1 (left, color = “fire”; images 1-21) and segmentation results (right, color = “3-3-2 RGB”): 
- 
-##### 3.1.2.2 Manually correct the segmentation in volume #1 
-Users should correct the segmentation in other software such as ITK-SNAP. For the demo data, we have included the corrected segmentation in folder “manual_vol1”. Here is the 2D projection of our corrected segmentation:
-<img src="/pictures/manualseg-worm1.png" width="400">
-##### 3.1.2.3 Track cells in all volumes
-Run "cell_segment_track.py" to the end. The tracked labels are stored into the folder “track_results”. 
-
-<img src="/pictures/track-worm1.gif" width="400">
-
-(Optional) Users can check the tracking results in Fiji by comparing the raw images and tracked labels:
-
-Users can use other software for checking the results, such as in IMARIS.
-
-### 3.2 Training 3D U-net
+### 3.2 Training 3D U-net (in Spyder)
 #### 3.2.1 Preparations: 
 For training 3D U-net, users should run "unet_training.py" under "./UnetTraining/".
 
@@ -208,7 +181,7 @@ Cell regions (following images are probability maps: black:0, white:1) predicted
 | ------------- | ------------- | ------------- | 
 | ![unet-epoch1-valid](/pictures/unet-epoch1-valid.png) | ![unet-epoch2-valid](/pictures/unet-epoch2-valid.png) | ![unet-epoch28-valid](/pictures/unet-epoch28-valid.png) |
 
-### 3.3 Training the feedforward network (FFN)
+### 3.3 Training the feedforward network (FFN) (in Spyder)
 #### 3.3.1 Preparations: 
 For training FFN, users should run "FFNTraining.py" under "./FFNTraining/".
 
