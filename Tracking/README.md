@@ -21,7 +21,9 @@ Run the code in "cell_segment_track.py" until finishing "automatic segmentation 
  
 ##### 2.2 Manually correct the segmentation in volume #1 
 Users should correct the segmentation in other software such as ITK-SNAP. For the demo data, we have included the corrected segmentation in folder “manual_vol1”. Here is the 2D projection of our corrected segmentation:
+
 <img src="/pictures/manualseg-worm1.png" width="400">
+
 ##### 2.3 Track cells in all volumes
 Run "cell_segment_track.py" to the end. The tracked labels are stored into the folder “track_results”. 
 
