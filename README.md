@@ -122,13 +122,13 @@ Then we can install the environment named "3DCT" by following command (~1min):
 $ conda env create -f 3DCT.yml
 ```
 
-## 3. Use 3DeeCellTracker (explained by a demo dataset)
-We have compressed the demo data, the weights of pre-trained 3D U-net/FFN models, and the segmentation/tracking results into "Demos190610.zip" which can be downloaded from: [http://ssbd.qbic.riken.jp/set/20190602/](http://ssbd.qbic.riken.jp/set/20190602/)
+## 3. Use 3DeeCellTracker
+We have compressed the demo data(worm1), the weights of pre-trained 3D U-net/FFN models, and the segmentation/tracking results into "Demos190610.zip" which can be downloaded from: [http://ssbd.qbic.riken.jp/set/20190602/](http://ssbd.qbic.riken.jp/set/20190602/). Dataset worm4 can be downloaded from [https://ieee-dataport.org/open-access/tracking-neurons-moving-and-deforming-brain-dataset](https://ieee-dataport.org/open-access/tracking-neurons-moving-and-deforming-brain-dataset)
 ### 3.1 Tracking 
 #### 3.1.1 Using Jupyter notebook:
 See examples in [Single mode/worm1](Tracking_notebooks/single_mode_worm1.ipynb) and [Ensemble mode/worm4](Tracking_notebooks/ensemble_mode_worm4.ipynb)
 #### 3.1.2 Using IDE (Spyder):
-Two old version of our programs using Spyder were also supplied. They are corresponding to the results described in our original paper (Wen et al. eLife, 2021) but was slower. See instrouctions [here](Tracking/README.md)
+Two old version of our programs using Spyder were also supplied. See instrouctions [here](Tracking/README.md). These old programs are corresponding to the results described in our original paper (Wen et al. eLife, 2021) but slower than the updated programs in the two notebooks above.
 
 ### 3.2 Training 3D U-net (in Spyder)
 #### 3.2.1 Preparations: 
