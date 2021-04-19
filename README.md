@@ -3,17 +3,17 @@
 This pipeline was designed for segmenting and tracking cells in 3D + T images in deforming organs. The methods have been explained in [Wen et al. bioRxiv 2018]( https://doi.org/10.1101/385567) and in [Wen et al. eLife, 2021](https://elifesciences.org/articles/59187).
 The data for demonstration and the previous demo codes can be found in the [SSBD database](http://ssbd.qbic.riken.jp/set/20190602/)
 
-Overall procedures of our method ([Wen et al. eLife, 2021–Figure 1](https://elifesciences.org/articles/59187/figures#content))
+**Overall procedures of our method** ([Wen et al. eLife, 2021–Figure 1](https://elifesciences.org/articles/59187/figures#content))
 
 <img src="https://iiif.elifesciences.org/lax:59187%2Felife-59187-fig1-v1.tif/full/1500,/0/default.jpg" width="400">
 
-Examples of tracking results ([Wen et al. eLife, 2021–Videos](https://elifesciences.org/articles/59187/figures#content))
+**Examples of tracking results** ([Wen et al. eLife, 2021–Videos](https://elifesciences.org/articles/59187/figures#content))
 
 | [Neurons in a ‘straightened’ <br />freely moving worm](https://static-movie-usa.glencoesoftware.com/mp4/10.7554/5/4ce9eaa4a84bf7847c99c81a13ccafd797b40218/elife-59187-fig6-video1.mp4)| [Cardiac cells in a zebrafish larva](https://static-movie-usa.glencoesoftware.com/mp4/10.7554/5/4ce9eaa4a84bf7847c99c81a13ccafd797b40218/elife-59187-fig7-video2.mp4) | [Cells in a 3D tumor spheriod](https://static-movie-usa.glencoesoftware.com/mp4/10.7554/5/4ce9eaa4a84bf7847c99c81a13ccafd797b40218/elife-59187-fig8-video2.mp4) |
 | ------------- | ------------- | ------------- | 
 | <img src="https://user-images.githubusercontent.com/27986173/115169952-63b4e600-a0fa-11eb-9b85-91292bc9d419.gif" width="340">| <img src="https://user-images.githubusercontent.com/27986173/115170418-90b5c880-a0fb-11eb-9382-13690c3375dc.gif" width="400">| <img src="https://user-images.githubusercontent.com/27986173/115170434-9ad7c700-a0fb-11eb-9004-2e4cff86f7ab.gif" width="200">|
 
-
+## Table of contents
 - [3DeeCellTracker - A quick guide](#3deecelltracker---a-quick-guide)
   * [Update:](#update)
     + [2021.03.29](#20210329)
@@ -43,8 +43,6 @@ Examples of tracking results ([Wen et al. eLife, 2021–Videos](https://elifesci
       - [3.3.2 Procedures](#332-procedures)
         * [3.3.2.1 Train the FFN](#3321-train-the-ffn)
         * [3.3.2.2 Check the prediction of FFN on test data](#3322-check-the-prediction-of-ffn-on-test-data)
-
-<small><i><a href='http://ecotrust-canada.github.io/markdown-toc/'>Table of contents generated with markdown-toc</a></i></small>
 
 
 ## Update:
