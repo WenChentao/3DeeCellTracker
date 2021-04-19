@@ -15,32 +15,32 @@ Examples of tracking results ([Wen et al. eLife, 2021–Videos](https://elifesci
 
 
 - [3DeeCellTracker - A quick guide](#3deecelltracker---a-quick-guide)
-  * [Update:](#update-)
+  * [Update:](#update)
     + [2021.03.29](#20210329)
   * [1 System requirements](#1-system-requirements)
     + [1.1 Hardware Requirements](#11-hardware-requirements)
-    + [1.2 Software Requirements](#12-software-requirements-)
-    + [1.3 Other software required](#13-other-software-required--for-preprocessing-and-confirmation-correction-of-results--)
+    + [1.2 Software Requirements](#12-software-requirements)
+    + [1.3 Other software required](#13-other-software-required)
   * [2. Installation guide](#2-installation-guide)
-    + [2.1 Ubuntu (~15 mins)](#21-ubuntu---15-mins-)
+    + [2.1 Ubuntu](#21-ubuntu)
     + [2.2 Driver for a NVIDIA GPU](#22-driver-for-a-nvidia-gpu)
-      - [2.2.1 Choose an appropriate driver version](#221-choose-an-appropriate-driver-version-)
-      - [2.2.2 Install the driver using PPA](#222-install-the-driver-using-ppa---10-mins--)
-    + [2.3 Software/packages for segmentation and tracking](#23-software-packages-for-segmentation-and-tracking)
-        * [2.3.1 Choose an appropriate version of Anaconda and install it](#231-choose-an-appropriate-version-of-anaconda-and-install-it-)
-      - [2.3.2 Install required packages](#232-install-required-packages-)
+      - [2.2.1 Choose an appropriate driver version](#221-choose-an-appropriate-driver-version)
+      - [2.2.2 Install the driver using PPA](#222-install-the-driver-using-ppa)
+    + [2.3 Software or packages for segmentation and tracking](#23-software-or-packages-for-segmentation-and-tracking)
+       - [2.3.1 Choose an appropriate version of Anaconda and install it](#231-choose-an-appropriate-version-of-anaconda-and-install-it)
+       - [2.3.2 Install required packages](#232-install-required-packages)
   * [3. Use 3DeeCellTracker](#3-use-3deecelltracker)
     + [3.1 Tracking](#31-tracking)
-      - [3.1.1 Using Jupyter notebook](#311-using-jupyter-notebook-)
-      - [3.1.2 Using IDE (Spyder)](#312-using-ide--spyder--)
-    + [3.2 Training 3D U-net (in Spyder)](#32-training-3d-u-net--in-spyder-)
-      - [3.2.1 Preparations](#321-preparations-)
-      - [3.2.2 Procedures for training 3D U-net](#322-procedures-for-training-3d-u-net-)
+      - [3.1.1 Using Jupyter notebook](#311-using-jupyter-notebook)
+      - [3.1.2 Using IDE Spyder](#312-using-ide-spyder)
+    + [3.2 Training 3D U-net in Spyder](#32-training-3d-u-net-in-spyder)
+      - [3.2.1 Preparations](#321-preparations)
+      - [3.2.2 Procedures for training 3D U-net](#322-procedures-for-training-3d-u-net)
         * [3.2.2.1 Train the 3D U-net](#3221-train-the-3d-u-net)
         * [3.2.2.2 Check the prediction of the U-net](#3222-check-the-prediction-of-the-u-net)
-    + [3.3 Training the feedforward network (FFN) (in Spyder)](#33-training-the-feedforward-network--ffn---in-spyder-)
-      - [3.3.1 Preparations](#331-preparations-)
-      - [3.3.2 Procedures](#332-procedures-)
+    + [3.3 Training the feedforward network in Spyder](#33-training-the-feedforward-network-in-spyder)
+      - [3.3.1 Preparations](#331-preparations)
+      - [3.3.2 Procedures](#332-procedures)
         * [3.3.2.1 Train the FFN](#3321-train-the-ffn)
         * [3.3.2.2 Check the prediction of FFN on test data](#3322-check-the-prediction-of-ffn-on-test-data)
 
@@ -85,7 +85,7 @@ Our program was developed under environment #1. To prove its compatibility with 
 | IDE | Spyder 3.2.4 | Spyder 3.3.3 |
 | Prerequired Python packages | keras 2.0.8<br>tensorflow-gpu 1.4.0rc0<br>numpy 1.13.0<br>opencv 3.1.0<br>matplotlib 2.1.0<br>scikit-image 0.13.1<br>scikit-learn 0.19.1<br>scipy 1.0.0rc2<br>pillow 4.3.0<br>h5py 2.7.1 |keras 2.2.4<br>tensorflow-gpu 1.13.1<br>numpy 1.16.2<br>opencv 3.4.2<br>matplotlib 3.0.3<br>scikit-image 0.14.2<br>scikit-learn 0.20.3<br>scipy 1.2.1<br>pillow 5.4.1<br>h5py 2.8.0|
 
-### 1.3 Other software required (for preprocessing and confirmation/correction of results):
+### 1.3 Other software required:
 #### 1.3.1 Fiji: 
 Fiji is a distribution of ImageJ. We used it for preprocessing (alignment) and confirmation of tracking results. It can be downloaded here: [https://imagej.net/Fiji/Downloads](https://imagej.net/Fiji/Downloads)
 
@@ -95,7 +95,7 @@ ITK-SNAP was used for manual correction of the segmentation, and for generating 
 
 ## 2. Installation guide
 Here we describe the procedures for installation of environment #2:
-### 2.1 Ubuntu (~15 mins)
+### 2.1 Ubuntu
 The installers for the latest version and for older releases can be downloaded here: [https://www.ubuntu.com/#download](https://www.ubuntu.com/#download). The link to tutorials for installing Ubuntu can be found on the same page. 
 
 In this test, we installed Ubuntu 16.04 from a bootable USB.
@@ -109,7 +109,7 @@ Drivers for different CUDA version: (Table 1) [https://docs.nvidia.com/cuda/cuda
 
 In our test, we installed nvidia-418.56, which supports our GPU GTX 1080 in Linux, and supports the latest CUDA10 which we installed afterwards (See below). An easy way to install the driver under Ubuntu is to use the Personal Package Archives (PPA). Users should confirm that the required driver is in the following list supported by PPA: [https://launchpad.net/~graphics-drivers/+archive/ubuntu/ppa](https://launchpad.net/~graphics-drivers/+archive/ubuntu/ppa)
 
-#### 2.2.2 Install the driver using PPA (~10 mins):
+#### 2.2.2 Install the driver using PPA:
 The nvidia-418.56 were installed by running the following commands in the terminal:
 ```
 $ sudo add-apt-repository ppa:graphics-drivers
@@ -123,7 +123,7 @@ $ nvidia-smi
 ```
 If the driver is correctly installed, the driver version should be displayed:
 ![nvidia-smi](/pictures/nvidia-smi.png)
-### 2.3 Software/packages for segmentation and tracking
+### 2.3 Software or packages for segmentation and tracking
 ##### 2.3.1 Choose an appropriate version of Anaconda and install it:
 The latest version of the Anaconda installer has included most of the software/packages we need. See here: [https://docs.anaconda.com/anaconda/packages/py3.7_linux-64/](https://docs.anaconda.com/anaconda/packages/py3.7_linux-64/). Other software/packages can also be easily installed from the Anaconda cloud. We therefore recommend users to install the latest Anaconda for convenience.
 
@@ -171,10 +171,10 @@ We have compressed the demo data(worm1), the weights of pre-trained 3D U-net/FFN
 ### 3.1 Tracking 
 #### 3.1.1 Using Jupyter notebook:
 See examples in [Single mode/worm1](Tracking_notebooks/single_mode_worm1.ipynb) and [Ensemble mode/worm4](Tracking_notebooks/ensemble_mode_worm4.ipynb)
-#### 3.1.2 Using IDE (Spyder):
+#### 3.1.2 Using IDE Spyder:
 Two old version of our programs using Spyder were also supplied. See instructions [here](Tracking/README.md). These old programs are corresponding to the results described in our original paper (Wen et al. eLife, 2021) but slower than the updated programs in the two notebooks above.
 
-### 3.2 Training 3D U-net (in Spyder)
+### 3.2 Training 3D U-net in Spyder
 #### 3.2.1 Preparations: 
 For training 3D U-net, users should run "unet_training.py" under "./UnetTraining/".
 
@@ -225,7 +225,7 @@ Cell regions (following images are probability maps: black:0, white:1) predicted
 | ------------- | ------------- | ------------- | 
 | ![unet-epoch1-valid](/pictures/unet-epoch1-valid.png) | ![unet-epoch2-valid](/pictures/unet-epoch2-valid.png) | ![unet-epoch28-valid](/pictures/unet-epoch28-valid.png) |
 
-### 3.3 Training the feedforward network (FFN) (in Spyder)
+### 3.3 Training the feedforward network in Spyder
 #### 3.3.1 Preparations: 
 For training FFN, users should run "FFNTraining.py" under "./FFNTraining/".
 
