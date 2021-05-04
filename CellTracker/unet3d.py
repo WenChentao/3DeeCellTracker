@@ -8,9 +8,8 @@ Created on Fri Oct 13 10:37:20 2017
 
 import numpy as np
 from keras.models import Model
-from keras.layers import Conv3D, LeakyReLU, Activation, Input, MaxPooling3D, \
-    UpSampling3D, concatenate, BatchNormalization, Dense, Flatten, Dropout, \
-    regularizers
+from keras.layers import Conv3D, LeakyReLU, Input, MaxPooling3D, \
+    UpSampling3D, concatenate, BatchNormalization
 import math
 
 
