@@ -1,4 +1,5 @@
 # 3DeeCellTracker - A quick guide
+![PyPI](https://img.shields.io/pypi/v/3DeeCellTracker) ![PyPI - Downloads](https://img.shields.io/pypi/dm/3DeeCellTracker) ![GitHub](https://img.shields.io/github/license/WenChentao/3DeeCellTracker)
 
 This pipeline was designed for segmenting and tracking cells in 3D + T images in deforming organs. The methods have been explained in [Wen et al. bioRxiv 2018]( https://doi.org/10.1101/385567) and in [Wen et al. eLife, 2021](https://elifesciences.org/articles/59187).
 The data for demonstration and the previous demo codes can be found in the [SSBD database](http://ssbd.qbic.riken.jp/set/20190602/)
