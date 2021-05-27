@@ -425,13 +425,17 @@ class Segmentation:
     #                 self.draw_prediction(step)
     #             self.val_losses.append(loss)
 
-    def set_segmentation(self, noise_level, min_size):
+    def set_segmentation(self, noise_level, min_size, reset_=False):
         if self.noise_level == noise_level and self.min_size == min_size:
             print("Segmentation parameters were not modified")
         else:
             self.noise_level = noise_level
             self.min_size = min_size
             print(f"Parameters were modified: noise_level={self.noise_level}, min_size={self.min_size}")
+            for f in os.listdir(self.unet_path):
+                os.remove(os.path.join(self.unet_path, f))
+            print(f"All files under /unet folder were deleted")
+        if reset_:
             for f in os.listdir(self.unet_path):
                 os.remove(os.path.join(self.unet_path, f))
             print(f"All files under /unet folder were deleted")
