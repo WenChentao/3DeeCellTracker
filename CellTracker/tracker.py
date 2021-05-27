@@ -4,59 +4,126 @@ by Chentao Wen
 2021.March
 
 Resolution of variables on z axis:
-* layer-based (l_, extracted from 3D image: i/scaling, or r/ratio):
-* interpolated-layer-based (i_, required by accurate correction: scaling x l, or scaling/ratio * r):
-* real-resolution (r_, required by fnn + prgls: ratio x l, or ratio/scaling * i):
+* layer-based (l_, extracted from 3D image: = i_/z_scaling, or r_/z_xy_ratio):
+* interpolated-layer-based (i_, required by accurate correction: = l_ * z_scaling, or r_ * z_scaling/z_xy_ratio):
+* real-resolution (r_, required by fnn + prgls: = l_ * z_xy_ratio, or i_ * z_xy_ratio/z_scaling):
 """
 
+import bz2
 import os
+import pickle
 import time
 from functools import reduce
 
 import cv2
-import matplotlib.pyplot as plt
+import matplotlib as mpl
+import matplotlib.image as mgimg
 import numpy as np
 import scipy.ndimage.measurements as snm
 from PIL import Image
-from numpy import unravel_index
+from keras.models import load_model
+from keras.preprocessing.image import ImageDataGenerator
+from matplotlib import animation
+from matplotlib import pyplot as plt
+from matplotlib.gridspec import GridSpec
 from scipy.stats import trim_mean
-from skimage.segmentation import relabel_sequential
-from sklearn.neighbors import NearestNeighbors
+from skimage.measure import label
+from skimage.segmentation import relabel_sequential, find_boundaries
 
-from CellTracker.interpolate_labels import gaussian_filter
-from CellTracker.preprocess import lcn_gpu
-from CellTracker.track import tracking_plot, tracking_plot_zx
-from CellTracker.unet3d import unet3_prediction
-from CellTracker.watershed import watershed_2d, watershed_3d, watershed_2d_markers
+from .interpolate_labels import gaussian_filter
+from .preprocess import _make_folder, _normalize_image, _normalize_label, load_image
+from .track import pr_gls_quick, initial_matching_quick, \
+    get_reference_vols, get_subregions, tracking_plot_xy, tracking_plot_zx
+from .unet3d import unet3_prediction, _divide_img, _augmentation_generator
+from .watershed import watershed_2d, watershed_3d, watershed_2d_markers
+
+mpl.rcParams['image.interpolation'] = 'none'
+
+TITLE_STYLE1 = {'fontsize': 16, 'verticalalignment': 'bottom'}
+
+REP_NUM_PRGLS = 5
+REP_NUM_CORRECTION = 20
+BOUNDARY_XY = 6
+ALPHA_BLEND = 0.5
 
 
-def make_folders(par_path, ensemble, adjacent):
+def timer(func):
     """
-    make folders for storing data and results
+    A decorators to display runtime of a function
     """
-    folder_path = par_path["folder_path"]
-    make_folder(os.path.join(folder_path, "data/"), "raw_image_path", par_path)
-    make_folder(os.path.join(folder_path, "auto_vol1/"), "auto_segmentation_vol1_path", par_path)
-    make_folder(os.path.join(folder_path, "manual_vol1/"), "manual_segmentation_vol1_path", par_path)
-    make_folder(os.path.join(folder_path, "track_information/"), "track_information_path", par_path)
-    make_folder(os.path.join(folder_path, "models/"), "models_path", par_path)
-    make_folder(os.path.join(folder_path, "unet/"), "unet_path", par_path)
-    track_results_path = get_tracking_path(adjacent, ensemble, folder_path)
-    make_folder(track_results_path, "track_results_path", par_path)
+
+    def wrapper_timer(*args, **kwargs):
+        tic = time.perf_counter()
+        value = func(*args, **kwargs)
+        toc = time.perf_counter()
+        elapsed_time = toc - tic
+        print(f"{func.__name__} took {elapsed_time:0.2f} seconds")
+        return value
+
+    return wrapper_timer
 
 
-def make_folder(path_i, path_name, par_path):
+def save_tracker(obj, filename, bz2_=True):
     """
-    make a folder
+    Save the tracker as a pickle file
+    Args:
+        obj: (obj, Tracker), the instance to be saved
+        filename: (str), the location to save the obj
+        bz2_:(bool), whether compress the file into a .bz2 file or not
     """
-    if not os.path.exists(path_i):
-        os.makedirs(path_i)
-    par_path[path_name] = path_i
+    if not bz2_:
+        with open(filename, 'wb') as file_pi:
+            pickle.dump(obj, file_pi)
+    else:
+        sfile = bz2.BZ2File(filename, 'wb')
+        pickle.dump(obj, sfile)
+
+
+def load_tracker(filename, bz2_=True):
+    """
+    Load the tracker from a pickle file
+    Args:
+        filename: (str), the location to save the obj
+        bz2_:(bool), whether compress the file into a .bz2 file or not
+    Returns:
+        obj, Tracker: the saved file
+    """
+    if not bz2_:
+        with open(filename, 'rb') as file_pi:
+            return pickle.load(file_pi)
+    else:
+        sfile = bz2.BZ2File(filename, 'rb')
+        return pickle.load(sfile)
+
+
+def get_random_cmap(num, seed=1):
+    """
+    Generate a random cmap
+    Args:
+        num: (int), the number of colors to be generated
+        seed: (int), use the same value to get the same cmap
+    Returns:
+        obj, matplotlib.colors.Colormap
+    """
+    vals = np.linspace(0, 1, num + 1)
+    np.random.seed(seed)
+    np.random.shuffle(vals)
+    vals = np.concatenate(([0], vals[1:]))
+    cmap = plt.cm.colors.ListedColormap(plt.cm.rainbow(vals))
+    cmap.colors[0, :3] = 0
+    return cmap
 
 
 def get_tracking_path(adjacent, ensemble, folder_path):
     """
-    generate path for storing tracking results according to tracking mode
+    Generate path for storing tracking results according to tracking mode
+    Args:
+        adjacent:
+        ensemble:
+        folder_path:
+
+    Returns:
+
     """
     if not ensemble:
         track_results_path = os.path.join(folder_path, "track_results_SingleMode/")
@@ -67,113 +134,24 @@ def get_tracking_path(adjacent, ensemble, folder_path):
     return track_results_path
 
 
-def read_image(vol, path, name, z_range):
+def read_image_ts(vol, path, name, z_range, print_=False):
     """
-    Read a raw 3D image
+    Load a single volume of the 3D+T sub_images
     Input:
-        vol: a specific volume
-        path: path
-        name: file name
-        z_range: range of layers
+        vol: (int), a specific volume
+        path: (str), folder path
+        name: (str), file name
+        z_range: (tuple), range of layers
     Return:
-        an array of the image
+        obj, numpy.ndarray: an array of the image with shape (x, y, z)
     """
     image_raw = []
     for z in range(z_range[0], z_range[1]):
         image_raw.append(cv2.imread(path + name % (vol, z), -1))
-    return np.array(image_raw)
-
-
-def read_segmentation(path, name, z_range):
-    """
-    Read the image of segmentation
-    Input:
-        vol: a specific volume
-    Return:
-        an array of the image
-    """
-    segm = []
-    for z in range(z_range[0], z_range[1]):
-        segm.append(cv2.imread(path + name %z, -1))
-    return np.array(segm).transpose(1,2,0)
-
-def segmentation(vol, par_image, par_tracker, par_path, unet_model, method, neuron_num):
-    """
-    Make segmentation (unet + watershed)
-    Input:
-        vol: a specific volume
-        method: used for watershed_3d(). "neuron_num" or "min_size"
-        neuron_num: used for watershed_3d()
-    Return:
-        image_cell_bg: the cell/background regions obtained by unet.
-        l_center_coordinates: center coordinates of segmented cells by watershed
-        segmentation_auto: individual cells segmented by watershed
-        image_gcn: raw image / 65536
-    """
-    t = time.time()
-    image_norm = read_image(vol, par_path["raw_image_path"], par_path["files_name"], [1, par_image["z_siz"] + 1])
-    image_gcn = (image_norm.copy() / 65536.0).transpose(1, 2, 0)  # image_gcn will be used to correct tracking results
-    image_cell_bg = save_unet_result(image_norm, par_image, par_path, par_tracker, unet_model, vol)
-
-    # segment connected cell-like regions using watershed
-    segmentation_auto = watershed(image_cell_bg, method, neuron_num, par_image, par_tracker)
-
-    # calculate coordinates of the centers of each segmented cell
-    l_center_coordinates = snm.center_of_mass(segmentation_auto > 0, segmentation_auto,
-                                              range(1, segmentation_auto.max() + 1))
-    elapsed = time.time() - t
-    print('segmentation took %.1f s' % elapsed)
-    return image_cell_bg, l_center_coordinates, segmentation_auto, image_gcn
-
-
-def save_unet_result(image_norm, par_image, par_path, par_tracker, unet_model, vol):
-    """
-    predict cell regions and save the results
-    """
-    try:
-        image_cell_bg = np.load(par_path["unet_path"] + "t%04i.npy" % (vol), allow_pickle=True)
-    except OSError:
-        # pre-processing: local contrast normalization
-        image_norm = normalize_image(image_norm, par_image, par_tracker)
-
-        # predict cell-like regions using 3D U-net
-        image_cell_bg = unet3_prediction(image_norm, unet_model, shrink=par_image["shrink"])
-        np.save(par_path["unet_path"] + "t%04i.npy" % (vol), np.array(image_cell_bg, dtype="float16"))
-    return image_cell_bg
-
-
-def watershed(image_cell_bg, method, neuron_num, par_image, par_tracker):
-    """
-    segment cells by watershed
-    """
-    [image_watershed2d_wo_border, _] = watershed_2d(image_cell_bg[0, :, :, :, 0], z_range=par_image["z_siz"],
-                                                    min_distance=7)
-    [_, image_watershed3d_wi_border,
-     min_size, neuron_num] = watershed_3d(image_watershed2d_wo_border,
-                                          samplingrate=[1, 1, par_image["z_xy_ratio"]], method=method,
-                                          min_size=par_tracker["min_size"], neuron_num=neuron_num, min_distance=3)
-    segmentation_auto, fw, inv = relabel_sequential(image_watershed3d_wi_border)
-    par_tracker["min_size"] = min_size
-    if method=="min_size":
-        par_tracker["neuron_num"] = neuron_num
-    return segmentation_auto
-
-
-def normalize_image(image_norm, par_image, par_tracker):
-    """
-    normalize an image by local contrast normalization
-    """
-    t = time.time()
-    background_pixels = np.where(image_norm < np.median(image_norm))
-    image_norm = image_norm - np.median(image_norm)
-    image_norm[background_pixels] = 0
-    image_norm = lcn_gpu(image_norm, par_tracker["noise_level"], filter_size=(1, 27, 27),
-                         img3d_siz=(par_image["x_siz"], par_image["y_siz"], par_image["z_siz"]))
-    image_norm = image_norm.reshape(1, par_image["z_siz"], par_image["x_siz"], par_image["y_siz"], 1)
-    image_norm = image_norm.transpose(0, 2, 3, 1, 4)
-    elapsed = time.time() - t
-    print('pre-processing took %.1f s' % elapsed)
-    return image_norm
+    img_array = np.array(image_raw).transpose((1, 2, 0))
+    if print_:
+        print("Load images with shape:", img_array.shape)
+    return img_array
 
 
 def save_img3(z_siz_, img, path):
@@ -193,729 +171,909 @@ def save_img3ts(z_range, img, path, t):
         img2d = (img[:, :, z - 1]).astype(np.uint8)
         Image.fromarray(img2d).save(path % (t, i + 1))
 
-def a(segmentation_manual, par_image, par_path):
-    # relabeling indexes of manually corrected neurons
-    segmentation_manual_relabels, fw, inv = relabel_sequential(segmentation_manual)
 
-    # interpolate layers in z axis
-    seg_cells_interpolated_corrected = interpolate(par_image, segmentation_manual_relabels)
+class Draw:
+    def __init__(self):
+        self.history_r_tracked_coordinates = None
+        self.r_coordinates_tracked_t0 = None
+        self.segresult = None
+        self.vol = None
+        self.x_siz = None
+        self.y_siz = None
+        self.z_siz = None
+        self.cell_num = None
+        self.seg_cells_interpolated_corrected = None
+        self.cell_num_t0 = None
+        self.z_scaling = None
+        self.z_xy_ratio = None
+        self.Z_RANGE_INTERP = None
+        self.tracked_labels = None
 
-    # save labels in the first volume (interpolated)
-    save_img3ts(range((par_image["z_scaling"] + 1) // 2,
-                      seg_cells_interpolated_corrected.shape[2] + 1,
-                      par_image["z_scaling"]),
-                seg_cells_interpolated_corrected,
-                par_path["track_results_path"] + "track_results_t%04i_z%04i.tif",1)
+    def draw_segresult(self, percentile_high=99.9):
+        axs, figs = self._make_3subplots()
+        axs[0].set_title(f"Raw image at t={self.vol}", fontdict=TITLE_STYLE1)
+        axs[1].set_title(f"Cell regions at t={self.vol} by U-Net", fontdict=TITLE_STYLE1)
+        axs[2].set_title(f"Auto-_segment at t={self.vol}", fontdict=TITLE_STYLE1)
+        anim_obj = []
+        vmax = np.percentile(self.segresult.image_gcn, percentile_high)
+        for z in range(self.z_siz):
+            obj1 = axs[0].imshow(self.segresult.image_gcn[:, :, z],
+                                 vmin=0, vmax=vmax, cmap="gray")
+            obj2 = axs[1].imshow(self.segresult.image_cell_bg[0, :, :, z, 0] > 0.5, cmap="gray")
+            obj3 = axs[2].imshow(self.segresult.segmentation_auto[:, :, z],
+                                 cmap=get_random_cmap(num=self.cell_num))
+            anim_obj.append([obj1, obj2, obj3])
+        anim = animation.ArtistAnimation(figs, anim_obj, interval=200).to_jshtml()
 
-    # calculate coordinates of centers (the corrected coordinates of cells in the first volume)
-    center_points0 = snm.center_of_mass(segmentation_manual_relabels > 0, segmentation_manual_relabels,
-                                        range(1, segmentation_manual_relabels.max() + 1))
-    coordinates_tracked = np.asarray(center_points0)
-    r_coordinates_tracked_real = coordinates_tracked.copy()
-    r_coordinates_tracked_real[:, 2] = coordinates_tracked[:, 2] * par_image["z_xy_ratio"]
+        axs[0].imshow(np.max(self.segresult.image_gcn, axis=2), vmin=0, vmax=vmax, cmap="gray")
+        axs[1].imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0] > 0.5, axis=2), cmap="gray")
+        axs[2].imshow(np.max(self.segresult.segmentation_auto, axis=2),
+                      cmap=get_random_cmap(num=self.cell_num))
+        print("Segmentation results (max projection):")
+        return anim
 
-    # save a copy of the coordinates in volume 1
-    r_coordinates_tracked_real_vol1 = r_coordinates_tracked_real.copy()
-    return r_coordinates_tracked_real
+    def draw_manual_seg1(self):
+        axm, figm = self._make_horizontal_2subplots()
+        axm[0].imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0], axis=2) > 0.5, cmap="gray")
+        axm[0].set_title(f"Cell regions at t={self.vol} by U-Net", fontdict=TITLE_STYLE1)
+        axm[1].imshow(np.max(self.seg_cells_interpolated_corrected, axis=2),
+                      cmap=get_random_cmap(num=self.cell_num_t0))
+        axm[1].set_title(f"Manual _segment at t=1", fontdict=TITLE_STYLE1)
 
+    def _get_tracking_anim(self, ax, r_coordinates_predicted_pre, r_coordinates_segmented_post,
+                           r_coordinates_predicted_post, layercoord, draw_point=True):
+        element1 = tracking_plot_xy(
+            ax[0], r_coordinates_predicted_pre, r_coordinates_segmented_post, r_coordinates_predicted_post,
+            (self.y_siz, self.x_siz), draw_point, layercoord)
+        element2 = tracking_plot_zx(
+            ax[1], r_coordinates_predicted_pre, r_coordinates_segmented_post, r_coordinates_predicted_post,
+            (self.y_siz, self.z_siz), draw_point, layercoord)
+        if layercoord:
+            ax[0].set_aspect('equal', 'box')
+            ax[1].set_aspect('equal', 'box')
+        return element1 + element2
 
-def interpolate(par_image, segmentation_manual_relabels):
-    print("interpolating...")
-    seg_cells_interpolated, seg_cell_or_bg = gaussian_filter(segmentation_manual_relabels,
-                                                             z_scaling=par_image["z_scaling"],
-                                                             smooth_sigma=2.5)
-    seg_cells_interpolated_corrected = watershed_2d_markers(seg_cells_interpolated, seg_cell_or_bg,
-                                                            z_range=par_image["z_siz"] * par_image["z_scaling"] + 10)
-    seg_cells_interpolated_corrected = seg_cells_interpolated_corrected[5:par_image["x_siz"] + 5,
-                                       5:par_image["y_siz"] + 5, 5:par_image["z_siz"] * par_image["z_scaling"] + 5]
-    return seg_cells_interpolated_corrected
-
-
-def get_subregions(label_image, num):
-    """
-    Get individual regions of segmented cells
-    Input:
-        label_image: image of segmented cells
-        num: number of cells
-    Return:
-        region_list: list, cropped images of each cell
-        region_width: list, width of each cell in x,y,and z axis
-        region_coord_min: list, minimum coordinates of each element in region list
-    """
-    region_list = []
-    region_width = []
-    region_coord_min = []
-    for label in range(1, num + 1):
-        print(label, end=" ")
-        x_max, x_min, y_max, y_min, z_max, z_min = get_coordinates(label, label_image)
-        region_list.append(label_image[x_min:x_max + 1, y_min:y_max + 1, z_min:z_max + 1] == label)
-        region_width.append([x_max + 1 - x_min, y_max + 1 - y_min, z_max + 1 - z_min])
-        region_coord_min.append([x_min, y_min, z_min])
-    return region_list, region_width, region_coord_min
-
-
-def get_coordinates(label, label_image):
-    region = np.where(label_image == label)
-    x_max, x_min = np.max(region[0]), np.min(region[0])
-    y_max, y_min = np.max(region[1]), np.min(region[1])
-    z_max, z_min = np.max(region[2]), np.min(region[2])
-    return x_max, x_min, y_max, y_min, z_max, z_min
-
-
-def fit_ffn_prgls(r_coordinates_segment_pre, r_coordinates_segment_post, rep, par_tracker, FFN_model, draw=True):
-    """
-    Appliy FFN + PR-GLS from t1 to t2 (multiple times) to get transformation
-        parameters to predict cell coordinates
-    Input:
-        r_coordinates_segment_pre, r_coordinates_segment_post: segmented cell coordinates from two volumes
-        rep: the number of repetitions of (FFN + max_iteration times of PR-GLS)
-        draw: if True, draw predicted coordinates from t1 and segmented coordinates of cells at t2
-    Return:
-        C_t: list of C in each repetition (to predict the transformed coordinates)
-        BETA_t: list of the parameter beta used in each repetition (to predict coordinates)
-        coor_real_t: list of the pre-transformed coordinates of automatically
-            segmented cells in each repetition (to predict coordinates)
-    """
-    pre_transformation = r_coordinates_segment_pre.copy()
-    C_t = []
-    BETA_t = []
-    coor_real_t = []
-    for i in range(rep):
-        coor_real_t.append(pre_transformation)
-        C, pre_transformation, pre_transformation_pre = ffn_prgls_once(FFN_model, i, par_tracker, pre_transformation,
-                                                                       r_coordinates_segment_post)
-        C_t.append(C)
-        BETA_t.append(par_tracker["BETA"] * (0.8 ** i))
-        if draw:
-            draw_tracking_results(i, pre_transformation_pre, r_coordinates_segment_post, pre_transformation, rep)
-    return C_t, BETA_t, coor_real_t
-
-
-def draw_tracking_results(i, pre_transformation_pre, r_coordinates_post_real, pre_transformation, rep):
-    plt.figure(figsize=(16,16))
-    plt.subplot(rep, 2, i * 2 + 1)
-    tracking_plot(pre_transformation_pre, r_coordinates_post_real, pre_transformation)
-    plt.subplot(rep, 2, i * 2 + 2)
-    tracking_plot_zx(pre_transformation_pre, r_coordinates_post_real, pre_transformation)
-
-
-def ffn_prgls_once(ffn_model, i, par_tracker, pre_transformation, r_coordinates_post_real):
-    init_match = initial_matching_quick(ffn_model, pre_transformation, r_coordinates_post_real, 20)
-    pre_transformation_pre = pre_transformation.copy()
-    P, pre_transformation, C = pr_gls_quick(pre_transformation,
-                                            r_coordinates_post_real, init_match,
-                                            BETA=par_tracker["BETA"] * (0.8 ** i),
-                                            max_iteration=par_tracker["max_iteration"],
-                                            LAMBDA=par_tracker["LAMBDA"])
-    return C, pre_transformation, pre_transformation_pre
-
-
-def predict_one_rep(r_coordinates_prgls, coor_pre_real_t, BETA_t, C_t, i, rep,
-                    r_coordinates_post_real, draw=True):
-    """
-    Predict cell coordinates using one set of the transformation parameters
-        from fnn_prgls()
-    Input:
-        r_coordinates_prgls: the coordinates before transformation
-        coor_pre_real_t, BETA_t, C_t: one set of the transformation parameters
-        i: the number of the repetition the set of parameters come from (used if draw==True)
-        rep: the total number of repetition (used if draw==True)
-        r_coordinates_segment_post: used when drawing is True
-        draw: whether draw the intermediate results or not
-    Return:
-        r_coordinates_prgls_2: the coordinates after transformation
-    """
-
-    length_cells = np.size(r_coordinates_prgls, axis=0)
-    length_auto_segmentation = np.size(coor_pre_real_t, axis=0)
-
-    r_coordinates_prgls_tile = np.tile(r_coordinates_prgls, (length_auto_segmentation, 1, 1))
-    coor_pre_real_t_tile = np.tile(coor_pre_real_t, (length_cells, 1, 1)).transpose(1, 0, 2)
-    Gram_matrix = np.exp(-np.sum(np.square(r_coordinates_prgls_tile - coor_pre_real_t_tile),
-                                 axis=2) / (2 * BETA_t * BETA_t))
-
-    r_coordinates_prgls_2 = np.matrix.transpose(np.matrix.transpose(
-        r_coordinates_prgls) + np.dot(C_t, Gram_matrix))
-
-    if draw:
-        draw_tracking_results(i, r_coordinates_prgls, r_coordinates_post_real, r_coordinates_prgls_2, rep)
-
-    return r_coordinates_prgls_2
-
-
-def predict_pos_once(r_coordinates_segment_pre, r_coordinates_segment_post, r_coordinates_tracked_pre, par_tracker,
-                     FFN_model, draw=False):
-    """
-    Predict cell coordinates using the transformation parameters in all repetitions
-        from fnn_prgls()
-    Input:
-        r_coordinates_segment_pre, r_coordinates_segment_post: coordinates of the automatically
-            segmented cells at t1 and t2
-        r_coordinates_tracked_pre: the coordinates of the confirmed cells tracked at t1 (from vol=1)
-    Return:
-        r_coordinates_prgls: the predicted coordinates of the confirmed cells at t2
-    """
-
-    C_t, BETA_t, coor_real_t = fit_ffn_prgls(r_coordinates_segment_pre, r_coordinates_segment_post, 5,
-                                             par_tracker, FFN_model, draw=False)
-
-    # apply the transformation function to calculate new coordinates of points set in previous volume (tracked coordinates)
-    r_coordinates_prgls = r_coordinates_tracked_pre.copy()
-
-    for i in range(len(C_t)):
-        r_coordinates_prgls = predict_one_rep(r_coordinates_prgls, coor_real_t[i],
-                                              BETA_t[i], C_t[i], i, len(C_t), r_coordinates_segment_post, draw=draw)
-
-    return r_coordinates_prgls
-
-
-def get_reference_vols(ensemble, vol, adjacent=False):
-    """
-    Get the reference volumes to calculate multiple prediction from which
-    Input:
-        ensemble: the maximum number of predictions
-        vol: the current volume number at which the prediction was made
-    Return:
-        vols_list: the list of the reference volume numbers
-    """
-    if not ensemble:
-        return [vol - 2]
-    if vol - 1 < ensemble:
-        vols_list = list(range(vol - 1))
-    else:
-        if adjacent:
-            vols_list = list(range(vol - ensemble - 1, vol - 1))
-        else:
-            vols_list = get_remote_vols(ensemble, vol)
-    return vols_list
-
-
-def get_remote_vols(ensemble, vol):
-    interval = (vol - 1) // ensemble
-    start = np.mod(vol - 1, ensemble)
-    vols_list = list(range(start, vol - interval, interval))
-    return vols_list
-
-
-def correction_once_interp(i_displacement_from_vol1, par_image, par_subregions, cell_on_bound,
-                           r_coordinates_tracked_real_vol1, image_cell_bg, image_gcn, seg_cells_interpolated_corrected):
-    """
-    i_displacement_from_vol1: scale in interpolated image
-    i_l_tracked_cells_prgls_0, i_l_overlap_prgls_0: transformed image, scale in interpolated image
-    l_tracked_cells_prgls, l_overlap_prgls: transformed image, scale in raw image
-    l_coordinates_prgls_int_move, l_centers_prgls: predicted (prgls) coordinates
-    l_centers_unet_x_prgls : unet prgls overlapping centers
-    r_displacement_correction: par_image["z_xy_ratio"] times
-
-    """
-    # generate current image of labels from the manually corrected segmentation in volume 1
-    i_l_tracked_cells_prgls_0, i_l_overlap_prgls_0 = transform_cells_quick(par_subregions, i_displacement_from_vol1,
-                                                                           print_seq=False)
-    l_tracked_cells_prgls = i_l_tracked_cells_prgls_0[:, :,
-                            par_image["z_scaling"] // 2:par_image["z_siz"] * par_image["z_scaling"]:par_image[
-                                "z_scaling"]]
-    l_overlap_prgls = i_l_overlap_prgls_0[:, :,
-                      par_image["z_scaling"] // 2:par_image["z_siz"] * par_image["z_scaling"]:par_image["z_scaling"]]
-
-    # overlapping regions of multiple cells are discarded before correction to avoid cells merging
-    l_tracked_cells_prgls[np.where(l_overlap_prgls > 1)] = 0
-
-    for i in np.where(cell_on_bound == 1)[0]:
-        l_tracked_cells_prgls[np.where(l_tracked_cells_prgls == (i + 1))] = 0
-
-    # accurate correction of displacement
-    l_coordinates_prgls_int_move = r_coordinates_tracked_real_vol1 * np.array(
-        [1, 1, 1 / par_image["z_xy_ratio"]]) + i_displacement_from_vol1 * np.array([1, 1, 1 / par_image["z_scaling"]])
-    l_centers_unet_x_prgls = snm.center_of_mass(image_cell_bg[0, :, :, :, 0] + image_gcn, l_tracked_cells_prgls,
-                                                range(1, seg_cells_interpolated_corrected.max() + 1))
-    l_centers_unet_x_prgls = np.asarray(l_centers_unet_x_prgls)
-    l_centers_prgls = np.asarray(l_coordinates_prgls_int_move)
-
-    lost_cells = np.where(np.isnan(l_centers_unet_x_prgls)[:, 0])
-
-    r_displacement_correction = l_centers_unet_x_prgls - l_centers_prgls
-    r_displacement_correction[lost_cells, :] = 0
-    r_displacement_correction[:, 2] = r_displacement_correction[:, 2] * par_image["z_xy_ratio"]
-
-    # calculate the corrected displacement from vol #1
-    r_displacement_from_vol1 = i_displacement_from_vol1 * np.array(
-        [1, 1, par_image["z_xy_ratio"] / par_image["z_scaling"]]) + r_displacement_correction
-    i_displacement_from_vol1_new = displacement_real_to_interpolatedimage(r_displacement_from_vol1, par_image)
-
-    return r_displacement_from_vol1, i_displacement_from_vol1_new, r_displacement_correction
-
-
-def transform_cells_quick(par_subregions, vectors3d, print_seq=True):
-    """
-    Move cells according to vectors3d
-    Input:
-        img3d_padding: padded cell image
-        pad_x, pad_y, pad_z, region_list, region_width, region_xyz_min: pad setting and cell region information
-        vectors3d: sequence (int), movement of each cell
-    Return:
-        output: transformed image
-        mask: overlap between different labels (if value>1)
-    """
-    label_moved = par_subregions["label_padding"].copy() * 0
-    mask = label_moved.copy()
-    for label in range(0, len(par_subregions["region_list"])):
-        if print_seq:
-            print(label, end=" ")
-        new_x_min = par_subregions["region_xyz_min"][label][0] + vectors3d[label, 0] + par_subregions["pad_x"]
-        new_y_min = par_subregions["region_xyz_min"][label][1] + vectors3d[label, 1] + par_subregions["pad_y"]
-        new_z_min = par_subregions["region_xyz_min"][label][2] + vectors3d[label, 2] + par_subregions["pad_z"]
-        subregion_previous = label_moved[new_x_min:new_x_min + par_subregions["region_width"][label][0],
-                             new_y_min:new_y_min + par_subregions["region_width"][label][1],
-                             new_z_min:new_z_min + par_subregions["region_width"][label][2]]
-        if len(subregion_previous.flatten()) == 0:
-            continue
-        subregion_new = subregion_previous * (1 - par_subregions["region_list"][label]) + par_subregions["region_list"][
-            label] * (label + 1)
-        label_moved[new_x_min:new_x_min + par_subregions["region_width"][label][0],
-        new_y_min:new_y_min + par_subregions["region_width"][label][1],
-        new_z_min:new_z_min + par_subregions["region_width"][label][2]] = subregion_new
-        mask[new_x_min:new_x_min + par_subregions["region_width"][label][0],
-        new_y_min:new_y_min + par_subregions["region_width"][label][1],
-        new_z_min:new_z_min + par_subregions["region_width"][label][2]] += (
-                    par_subregions["region_list"][label] > 0).astype("int8")
-    output = label_moved[par_subregions["pad_x"]:-par_subregions["pad_x"],
-             par_subregions["pad_y"]:-par_subregions["pad_y"], par_subregions["pad_z"]:-par_subregions["pad_z"]]
-    mask = mask[par_subregions["pad_x"]:-par_subregions["pad_x"], par_subregions["pad_y"]:-par_subregions["pad_y"],
-           par_subregions["pad_z"]:-par_subregions["pad_z"]]
-
-    return [output, mask]
-
-
-def displacement_real_to_image(real_disp, i_displacement_from_vol1, par_image):
-    """
-    Transform the coordinates from real to voxel
-    Input:
-        real_disp: coordinates in real scale
-    Return:
-        coordinates in voxel
-    """
-    l_displacement_from_vol1 = real_disp.copy()
-    l_displacement_from_vol1[:, 2] = i_displacement_from_vol1[:, 2] / par_image["z_xy_ratio"]
-    return np.rint(l_displacement_from_vol1).astype(int)
-
-
-def displacement_image_to_real(voxel_disp, par_image):
-    """
-    Transform the coordinates from voxel to real
-    Input:
-        real_disp: coordinates in real scale
-    Return:
-        coordinates in voxel
-    """
-    real_disp = np.array(voxel_disp)
-    real_disp[:, 2] = real_disp[:, 2] * par_image["z_xy_ratio"]
-    return real_disp
-
-
-def displacement_real_to_interpolatedimage(real_disp, par_image):
-    """
-    Transform the coordinates from real to voxel in the interpolated image
-    Input:
-        real_disp: coordinates in real scale
-    Return:
-        coordinates in voxel
-    """
-    i_displacement_from_vol1 = real_disp.copy()
-    i_displacement_from_vol1[:, 2] = i_displacement_from_vol1[:, 2] * par_image["z_scaling"] / par_image["z_xy_ratio"]
-    return np.rint(i_displacement_from_vol1).astype(int)
-
-
-def match(volume1, volume2, par_image, par_tracker, par_path, par_subregions, r_coor_segment_pre, r_coor_tracked_pre,
-          r_coor_confirmed_vol1, cells_on_boundary, unet_model, FFN_model, r_disp_from_vol1_input,
-          seg_cells_interp, cell_t1, seg_t1, method="min_size"):
-    """
-    Match current volume and another volume2
-    Input:
-        volume1, volume2: the two volume to be tested for tracking
-        r_coor_segment_pre, r_coor_tracked_pre: the coordinates of cells from segmentation or tracking in previous volume
-        r_coor_confirmed_vol1: coordinates of cells in volume #1
-        r_disp_from_vol1: displacement (from vol1) of cells in previous volume
-        seg_cells_interp: segmentation (interpolated)
-        cell_t1, seg_t1: cell-regions/segmentation in vol1
-    """
-    print('t=%i' % volume2)
-
-    #######################################################
-    # skip frames that cannot be tracked
-    #######################################################
-    if volume2 in par_image["miss_frame"]:
-        print("volume2 is a miss_frame")
+    def draw_correction(self, i_disp_from_vol1_updated, r_coor_predicted):
+        ax, fig = self._make_horizontal_2subplots()
+        plt.suptitle("Accurate Correction", size=16)
+        self._draw_correction(ax, r_coor_predicted, i_disp_from_vol1_updated)
         return None
 
-    ########################################################
-    # generate automatic segmentation in current volume
-    ########################################################
-    image_cell_bg, l_center_coordinates, _, image_gcn = \
-        segmentation(volume2, par_image, par_tracker, par_path, unet_model,
-                     method=method, neuron_num=par_tracker["neuron_num"])
+    def _draw_correction(self, ax, r_coor_predicted, i_disp_from_vol1_updated):
+        _ = self._get_tracking_anim(
+            [ax[0], ax[1]],
+            self._transform_real_to_layer(r_coor_predicted),
+            self._transform_real_to_layer(self.segresult.r_coordinates_segment),
+            self._transform_real_to_layer(self.r_coordinates_tracked_t0) +
+            self._transform_interpolated_to_layer(i_disp_from_vol1_updated),
+            layercoord=True, draw_point=False)
+        ax[0].imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0], axis=2) > 0.5, cmap="gray",
+                     extent=(0, self.y_siz - 1, self.x_siz - 1, 0))
+        ax[1].imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0], axis=0).T > 0.5, aspect=self.z_xy_ratio,
+                     cmap="gray", extent=(0, self.y_siz - 1, self.z_siz - 1, 0))
 
-    t = time.time()
-    r_coordinates_segment_post = displacement_image_to_real(l_center_coordinates, par_image)
-    #######################################
-    # track by fnn + prgls
-    #######################################
-    # calculate the mean predictions of each cell locations
-    r_coor_prgls = predict_pos_once(r_coor_segment_pre, r_coordinates_segment_post,
-                                    r_coor_tracked_pre, par_tracker, FFN_model, draw=True)
-    print('fnn + pr-gls took %.1f s' % (time.time() - t))
-    #####################
-    # boundary cells
-    #####################
-    cells_bd = get_cells_onBoundary(r_coor_prgls, par_image)
-    print("cells on boundary:", cells_bd[0] + 1)
-    cells_on_boundary_local = cells_on_boundary.copy()
-    cells_on_boundary_local[cells_bd] = 1
+        return None
 
-    ###################################
-    # accurate correction
-    ###################################
-    t = time.time()
-    # calculate r_displacements from the first volume
-    # r_displacement_from_vol1: accurate displacement; i_disp_from_vol1: displacement using voxels numbers as unit
-    r_disp_from_vol1 = r_disp_from_vol1_input + r_coor_prgls - r_coor_tracked_pre
-    i_disp_from_vol1 = displacement_real_to_interpolatedimage(r_disp_from_vol1, par_image)
+    def draw_overlapping(self, cells_on_boundary_local, volume2, i_disp_from_vol1_updated):
+        # generate current image of labels (more accurate)
+        self.tracked_labels = self._transform_motion_to_image(cells_on_boundary_local, i_disp_from_vol1_updated)
+        self._draw_matching(volume2)
+        plt.pause(0.1)
+        return None
 
-    i_cumulated_disp = i_disp_from_vol1 * 0.0
+    def _draw_matching(self, volume2):
+        axc, figc = self._make_4subplots()
+        self._draw_before_matching(axc[0], axc[1], volume2)
+        self._draw_after_matching(axc[2], axc[3], volume2)
+        plt.tight_layout()
+        return None
 
-    print("FFN + PR-GLS: Left: x-y; Right: x-z")
-    plt.pause(10)
-    print("Accurate correction:")
-    rep_correction = 5
-    for i in range(rep_correction):
-        # update positions (from vol1) by correction
-        r_disp_from_vol1, i_disp_from_vol1, r_disp_correction = \
-            correction_once_interp(
-            i_disp_from_vol1, par_image, par_subregions, cells_on_boundary_local,
-            r_coor_confirmed_vol1, image_cell_bg, image_gcn, seg_cells_interp
+    def _draw_matching_6panel(self, target_volume, ax, r_coor_predicted_mean, i_disp_from_vol1_updated):
+        for ax_i in ax:
+            ax_i.cla()
+        plt.suptitle(f"Tracking results at vol {target_volume}", size=16)
+
+        _ = self._get_tracking_anim([ax[0], ax[1]], self.history_r_tracked_coordinates[target_volume - 2],
+                                    self.segresult.r_coordinates_segment, r_coor_predicted_mean, layercoord=False)
+        self._draw_correction([ax[2], ax[3]], r_coor_predicted_mean, i_disp_from_vol1_updated)
+        self._draw_after_matching(ax[4], ax[5], target_volume, legend=False)
+        self._set_layout_anim()
+        for axi in ax:
+            plt.setp(axi.get_xticklabels(), visible=False)
+            plt.setp(axi.get_yticklabels(), visible=False)
+            axi.tick_params(axis='both', which='both', length=0)
+            axi.axis("off")
+        return None
+
+    def _draw_before_matching(self, ax1, ax2, volume2):
+        ax1.imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0], axis=2) > 0.5, cmap="gray")
+        ax1.imshow(np.max(self.seg_cells_interpolated_corrected[:, :, self.Z_RANGE_INTERP], axis=2),
+                   cmap=get_random_cmap(num=self.cell_num_t0), alpha=ALPHA_BLEND)
+        ax1.set_title(f"Before matching: Cells at vol {volume2} + Labels at vol {self.vol}",
+                      fontdict=TITLE_STYLE1)
+        ax1.set_ylabel("x", fontdict=TITLE_STYLE1)
+
+        ax2.imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0], axis=0).T > 0.5, aspect=self.z_xy_ratio,
+                   cmap="gray")
+        ax2.imshow(np.max(self.seg_cells_interpolated_corrected[:, :, self.Z_RANGE_INTERP], axis=0).T,
+                   cmap=get_random_cmap(num=self.cell_num_t0), aspect=self.z_xy_ratio, alpha=ALPHA_BLEND)
+        ax2.set_ylabel("z", fontdict=TITLE_STYLE1)
+        ax2.set_xlabel("y", labelpad=24, fontdict=TITLE_STYLE1)
+
+    def _draw_after_matching(self, ax1, ax2, volume2, legend=True):
+        ax1.imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0], axis=2) > 0.5, cmap="gray")
+        ax1.imshow(np.max(self.tracked_labels, axis=2),
+                   cmap=get_random_cmap(num=self.cell_num_t0), alpha=ALPHA_BLEND)
+
+        ax2.imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0], axis=0).T > 0.5, aspect=self.z_xy_ratio,
+                   cmap="gray")
+        ax2.imshow(np.max(self.tracked_labels, axis=0).T, cmap=get_random_cmap(num=self.cell_num_t0),
+                   aspect=self.z_xy_ratio, alpha=ALPHA_BLEND)
+        if legend:
+            ax1.set_title(f"After matching: Cells at vol {volume2} + Labels at vol {volume2}",
+                          fontdict=TITLE_STYLE1)
+            ax1.set_ylabel("x", fontdict=TITLE_STYLE1)
+            ax2.set_ylabel("z", fontdict=TITLE_STYLE1)
+            ax2.set_xlabel("y", labelpad=24, fontdict=TITLE_STYLE1)
+        return None
+
+    def _prepare_tracking_animation(self):
+        ax, fig = self._make_horizontal_2subplots()
+        ax[0].set_title("Matching by FFN + PR-GLS (y-x plane)", fontdict=TITLE_STYLE1)
+        ax[1].set_title("Matching by FFN + PR-GLS (y-z plane)", fontdict=TITLE_STYLE1)
+        plt.tight_layout()
+        plt.close(fig)
+        return ax, fig
+
+    def _make_horizontal_2subplots(self):
+        fig, ax = plt.subplots(1, 2, figsize=(20, int(12 * self.x_siz / self.y_siz)))
+        plt.tight_layout()
+        return ax, fig
+
+    def _make_vertical_2subplots(self):
+        height_z = self.z_siz * self.z_xy_ratio
+        fig1 = plt.figure(figsize=(10, int(12 * (self.x_siz / self.y_siz + height_z / self.y_siz))))
+        gs = GridSpec(10, 1, figure=fig1)
+        h1 = int(10 * (self.x_siz / (self.x_siz + height_z)))
+        ax = fig1.add_subplot(gs[:h1]), fig1.add_subplot(gs[h1:, 0])
+        plt.tight_layout()
+        return ax, fig1
+
+    def _make_3subplots(self):
+        fig = plt.figure(figsize=(20, int(24 * self.x_siz / self.y_siz)))
+        ax = plt.subplot(221), plt.subplot(222), plt.subplot(223)
+        plt.tight_layout()
+        return ax, fig
+
+    def _make_4subplots(self):
+        fig, axs = plt.subplots(2, 2, figsize=(20, int(24 * self.x_siz / self.y_siz)))
+        ax = axs[0, 0], axs[0, 1], axs[1, 0], axs[1, 1]
+        plt.tight_layout()
+        return ax, fig
+
+    def _make_6subplots(self):
+        fig, axs = plt.subplots(3, 2, figsize=(14, int(21 * self.x_siz / self.y_siz)))
+        ax = axs[0, 0], axs[0, 1], axs[1, 0], axs[1, 1], axs[2, 0], axs[2, 1]
+        return ax, fig
+
+    @staticmethod
+    def _set_layout_anim():
+        plt.tight_layout()
+        plt.subplots_adjust(right=0.9, bottom=0.1)
+
+    def _transform_interpolated_to_layer(self, i_disp_from_vol1_updated):
+        raise NotImplementedError("Must override this method")
+
+    def _transform_motion_to_image(self, cells_on_boundary_local, i_disp_from_vol1_updated):
+        raise NotImplementedError("Must override this method")
+
+    def _transform_real_to_layer(self, r_coor_predicted):
+        raise NotImplementedError("Must override this method")
+
+
+class Segmentation:
+    class SegResults:
+        def __init__(self):
+            self.image_cell_bg = None
+            self.l_center_coordinates = None
+            self.segmentation_auto = None
+            self.image_gcn = None
+            self.r_coordinates_segment = None
+
+        def _update_results(self, image_cell_bg, l_center_coordinates, segmentation_auto,
+                            image_gcn, r_coordinates_segment):
+            self.image_cell_bg = image_cell_bg
+            self.l_center_coordinates = l_center_coordinates
+            self.segmentation_auto = segmentation_auto
+            self.image_gcn = image_gcn
+            self.r_coordinates_segment = r_coordinates_segment
+
+    def __init__(self, volume_num, siz_xyz: tuple, z_xy_ratio, z_scaling,
+                 image_name, unet_model_file, shrink):
+        self.volume_num = volume_num  # number of volumes the 3D + T image
+        self.x_siz = siz_xyz[0]  # size of each 3D image
+        self.y_siz = siz_xyz[1]  # size of each 3D image
+        self.z_siz = siz_xyz[2]  # size of each 3D image
+        self.z_xy_ratio = z_xy_ratio  # the (rough) resolution ratio between the z axis and the x-y plane
+        self.z_scaling = z_scaling  # (integer; >=1) for interpolating images along z. z_scaling = 1 makes no interpolation.
+        self.shrink = shrink  # <(input sizes of u-net)/2, pad and shrink for u-net prediction
+        self.image_name = image_name  # file names for the raw image files
+        # file names for the manaul _segment files at t=1
+        # weight file of the trained 3D U-Net. f2b:structure a; fS2a:b; fS2b:c
+        self.unet_model_file = unet_model_file
+        self.unet_path = None
+        self.models_path = None
+        self.auto_segmentation_vol1_path = None
+        self.raw_image_path = None
+        self.recalculate_unet = False
+        self.segresult = self.SegResults()
+
+    # def retrain(self, iteration=10, weights_name="weights_training_"):
+    #     self.unet_model.load_weights(os.path.join(self.models_path,'weights_initial.h5'))
+    #     for step in range(1, iteration+1):
+    #         self.unet_model.fit_generator(self.train_generator, validation_data=self.valid_data, epochs=1, steps_per_epoch=60)
+    #         if step == 1:
+    #             self.val_losses = [self.unet_model.history.history["val_loss"]]
+    #             print("val_loss at step 1: ", min(self.val_losses))
+    #             self.unet_model.save_weights(os.path.join(self.models_path, weights_name + f"step{step}.h5"))
+    #             self.draw_prediction(step)
+    #         else:
+    #             loss = self.unet_model.history.history["val_loss"]
+    #             if loss<min(self.val_losses):
+    #                 print("val_loss updated from ", min(self.val_losses)," to ", loss)
+    #                 self.unet_model.save_weights(os.path.join(self.models_path, weights_name + f"step{step}.h5"))
+    #                 self.draw_prediction(step)
+    #             self.val_losses.append(loss)
+
+    def set_segmentation(self, noise_level, min_size):
+        if self.noise_level == noise_level and self.min_size == min_size:
+            print("Segmentation parameters were not modified")
+        else:
+            self.noise_level = noise_level
+            self.min_size = min_size
+            print(f"Parameters were modified: noise_level={self.noise_level}, min_size={self.min_size}")
+            for f in os.listdir(self.unet_path):
+                os.remove(os.path.join(self.unet_path, f))
+            print(f"All files under /unet folder were deleted")
+
+    @staticmethod
+    def _transform_disps(disp, factor):
+        new_disp = np.array(disp).copy()
+        new_disp[:, 2] = new_disp[:, 2] * factor
+        return new_disp
+
+    def _transform_layer_to_real(self, voxel_disp):
+        """Transform the coordinates from voxel to real"""
+        return self._transform_disps(voxel_disp, self.z_xy_ratio)
+
+    def _transform_real_to_interpolated(self, r_disp):
+        """Transform the coordinates from real to voxel in the interpolated image"""
+        return np.rint(self._transform_disps(r_disp, self.z_scaling / self.z_xy_ratio)).astype(int)
+
+    def _transform_real_to_layer(self, r_disp):
+        """Transform the coordinates from real to voxel in the raw image"""
+        return np.rint(self._transform_disps(r_disp, 1 / self.z_xy_ratio)).astype(int)
+
+    def _transform_interpolated_to_layer(self, r_disp):
+        """Transform the coordinates from real to voxel in the raw image"""
+        return np.rint(self._transform_disps(r_disp, 1 / self.z_scaling)).astype(int)
+
+    def load_unet(self):
+        """
+        load weights of the trained unet model
+        """
+        self.unet_model = load_model(os.path.join(self.models_path, self.unet_model_file))
+        self.unet_model.save_weights(os.path.join(self.unet_weights_path, 'weights_initial.h5'))
+        print("Loaded the 3D U-Net model")
+
+    def segment_vol1(self, method="min_size"):
+        self.vol = 1
+        self.segresult._update_results(*self._segment(self.vol, method=method, print_shape=True))
+        self.r_coordinates_segment_t0 = self.segresult.r_coordinates_segment.copy()
+
+        # save the segmented cells of volume #1
+        save_img3(z_siz_=self.z_siz, img=self.segresult.segmentation_auto,
+                  path=self.auto_segmentation_vol1_path + "auto_t%04i_z%04i.tif")
+        print(f"Segmented volume 1 and saved it")
+
+    def _segment(self, vol, method, print_shape=False):
+        """
+        Make _segment (unet + _watershed)
+        Input:
+            vol: a specific volume
+            method: used for watershed_3d(). "cell_num" or "min_size"
+        Return:
+            image_cell_bg: the cell/background regions obtained by unet.
+            l_center_coordinates: center coordinates of segmented cells by _watershed
+            segmentation_auto: individual cells segmented by _watershed
+            image_gcn: raw image / 65536
+            r_coordinates_segment: l_center_coordinates transformed to real scale
+        """
+        image_raw = read_image_ts(vol, self.raw_image_path, self.image_name, (1, self.z_siz + 1), print_=print_shape)
+        # image_gcn will be used to correct tracking results
+        image_gcn = (image_raw.copy() / 65536.0)
+        image_cell_bg = self._predict_cellregions(image_raw, vol)
+
+        # segment connected cell-like regions using _watershed
+        segmentation_auto = self._watershed(image_cell_bg, method)
+
+        # calculate coordinates of the centers of each segmented cell
+        l_center_coordinates = snm.center_of_mass(segmentation_auto > 0, segmentation_auto,
+                                                  range(1, segmentation_auto.max() + 1))
+        r_coordinates_segment = self._transform_layer_to_real(l_center_coordinates)
+
+        return image_cell_bg, l_center_coordinates, segmentation_auto, image_gcn, r_coordinates_segment
+
+    def _predict_cellregions(self, image_raw, vol):
+        """
+        predict cell regions and save the results
+        """
+        if self.recalculate_unet:
+            image_cell_bg = self._save_unet_regions(image_raw, vol)
+        else:
+            try:
+                image_cell_bg = np.load(self.unet_path + "t%04i.npy" % vol, allow_pickle=True)
+            except OSError:
+                image_cell_bg = self._save_unet_regions(image_raw, vol)
+        return image_cell_bg
+
+    def _save_unet_regions(self, image_raw, vol):
+        # pre-processing: local contrast normalization
+        image_norm = np.expand_dims(_normalize_image(image_raw, self.noise_level), axis=(0, 4))
+        # predict cell-like regions using 3D U-net
+        image_cell_bg = unet3_prediction(image_norm, self.unet_model, shrink=self.shrink)
+        np.save(self.unet_path + "t%04i.npy" % vol, np.array(image_cell_bg, dtype="float16"))
+        return image_cell_bg
+
+    def _watershed(self, image_cell_bg, method):
+        """
+        segment cells by _watershed
+        """
+        image_watershed2d_wo_border, _ = watershed_2d(image_cell_bg[0, :, :, :, 0], z_range=self.z_siz,
+                                                      min_distance=7)
+        _, image_watershed3d_wi_border, min_size, cell_num = watershed_3d(
+            image_watershed2d_wo_border, samplingrate=[1, 1, self.z_xy_ratio], method=method,
+            min_size=self.min_size, cell_num=self.cell_num, min_distance=3)
+        segmentation_auto, fw, inv = relabel_sequential(image_watershed3d_wi_border)
+        self.min_size = min_size
+        if method == "min_size":
+            self.cell_num = cell_num
+        return segmentation_auto
+
+
+class Tracker(Segmentation, Draw):
+
+    def __init__(self,
+                 volume_num, siz_xyz: tuple, z_xy_ratio, z_scaling, noise_level, min_size, beta_tk,
+                 lambda_tk, maxiter_tk, folder_path, image_name, unet_model_file,
+                 ffn_model_file, cell_num=0, ensemble=False, adjacent=False,
+                 shrink=(24, 24, 2), miss_frame=None
+                 ):
+        Segmentation.__init__(self, volume_num, siz_xyz, z_xy_ratio, z_scaling,
+                              image_name, unet_model_file, shrink)
+
+        if not miss_frame:
+            self.miss_frame = []
+        else:
+            self.miss_frame = miss_frame
+        self.noise_level = noise_level  # a threshold to discriminate noise/artifacts from cells
+        self.min_size = min_size  # a threshold to remove small objects which may be noise/artifacts
+        self.beta_tk = beta_tk  # control coherence using a weighted average of movements of nearby points;
+        # larger BETA includes more points, thus generates more coherent movements
+        self.lambda_tk = lambda_tk  # control coherence by adding a loss of incoherence, large LAMBDA
+        # generates larger penalty for incoherence.
+        # maximum number of iterations; large values generate more accurate tracking.
+        self.max_iteration = maxiter_tk
+        self.ensemble = ensemble
+        # use ensemble mode (False: single mode; value: number of predictions to make)
+        self.adjacent = adjacent  # irrelevant in single mode
+        self.folder_path = folder_path  # path of the folder storing related files
+        self.ffn_model_file = ffn_model_file  # weight file of the trained FFN model
+        self.manual_segmentation_vol1_path = None
+        self.track_results_path = None
+        self.track_information_path = None
+        self.cell_num = cell_num
+        self.cell_num_t0 = None
+        self.Z_RANGE_INTERP = None
+
+    def set_tracking(self, beta_tk, lambda_tk, maxiter_tk):
+        if self.beta_tk == beta_tk and self.lambda_tk == lambda_tk and self.max_iteration == maxiter_tk:
+            print("Tracking parameters were not modified")
+        else:
+            self.beta_tk = beta_tk
+            self.lambda_tk = lambda_tk
+            self.max_iteration = maxiter_tk
+            print(f"Parameters were modified: beta_tk={self.beta_tk}, "
+                  f"lambda_tk={self.lambda_tk}, maxiter_tk={self.max_iteration}")
+
+    def make_folders(self):
+        """
+        make folders for storing data and results
+        """
+        print("Following folders were made under:", os.getcwd())
+        folder_path = self.folder_path
+        self.raw_image_path = _make_folder(os.path.join(folder_path, "data/"))
+        self.auto_segmentation_vol1_path = _make_folder(os.path.join(folder_path, "auto_vol1/"))
+        self.manual_segmentation_vol1_path = _make_folder(os.path.join(folder_path, "manual_vol1/"))
+        self.track_information_path = _make_folder(os.path.join(folder_path, "track_information/"))
+        self.models_path = _make_folder(os.path.join(folder_path, "models/"))
+        self.unet_path = _make_folder(os.path.join(folder_path, "unet/"))
+        track_results_path = get_tracking_path(self.adjacent, self.ensemble, folder_path)
+        self.track_results_path = _make_folder(track_results_path)
+        self.anim_path = _make_folder(os.path.join(folder_path, "anim/"))
+        self.unet_weights_path = _make_folder(os.path.join(self.models_path, "unet_weights/"))
+
+    def load_manual_seg(self):
+        # load manually corrected _segment
+        segmentation_manual = load_image(self.manual_segmentation_vol1_path, print_=False)
+        # relabel cells sequentially
+        self.segmentation_manual_relabels, _, _ = relabel_sequential(segmentation_manual)
+        print("Loaded manual _segment at vol 1")
+
+    def _retrain_preprocess(self):
+        self.image_raw_vol1 = read_image_ts(1, self.raw_image_path, self.image_name, (1, self.z_siz + 1))
+        self.train_image_norm = _normalize_image(self.image_raw_vol1, self.noise_level)
+        self.label_vol1 = self.remove_2d_boundary(self.segmentation_manual_relabels) > 0
+        self.train_label_norm = _normalize_label(self.label_vol1)
+        print("Images were normalized")
+
+        self.train_subimage = _divide_img(self.train_image_norm, self.unet_model.input_shape[1:4])
+        self.train_subcells = _divide_img(self.train_label_norm, self.unet_model.input_shape[1:4])
+        print("Images were divided")
+
+        image_gen = ImageDataGenerator(rotation_range=90, width_shift_range=0.2, height_shift_range=0.2,
+                                       shear_range=0.2, horizontal_flip=True, fill_mode='reflect')
+
+        self.train_generator = _augmentation_generator(self.train_subimage, self.train_subcells, image_gen, batch_siz=8)
+        self.valid_data = (self.train_subimage, self.train_subcells)
+        print("Data for training 3D U-Net were prepared")
+
+    def remove_2d_boundary(self, labels3d):
+        labels_new = labels3d.copy()
+        for z in range(self.z_siz):
+            labels = labels_new[:,:,z]
+            labels[find_boundaries(labels, mode='outer') == 1] = 0
+        return labels_new
+
+    def retrain_unet(self, iteration=10, weights_name="unet_weights_retrain_"):
+        self._retrain_preprocess()
+
+        self.unet_model.compile(loss='binary_crossentropy', optimizer="adam")
+        self.unet_model.load_weights(os.path.join(self.unet_weights_path, 'weights_initial.h5'))
+
+        # evaluate model prediction before retraining
+        val_loss = self.unet_model.evaluate(self.train_subimage, self.train_subcells)
+        print("val_loss before retraining: ", val_loss)
+        self.val_losses = [val_loss]
+        self.draw_retrain(step="before retrain")
+
+        for step in range(1, iteration + 1):
+            self.unet_model.fit_generator(self.train_generator, validation_data=self.valid_data, epochs=1,
+                                          steps_per_epoch=60)
+            loss = self.unet_model.history.history["val_loss"]
+            if loss < min(self.val_losses):
+                print("val_loss updated from ", min(self.val_losses), " to ", loss)
+                self.unet_model.save_weights(os.path.join(self.unet_weights_path, weights_name + f"step{step}.h5"))
+                self.draw_retrain(step)
+            self.val_losses.append(loss)
+
+    def draw_retrain(self, step, percentile_top=99.9, percentile_bottom=10):
+        train_prediction = np.squeeze(
+            unet3_prediction(np.expand_dims(self.train_image_norm, axis=(0, 4)), self.unet_model))
+        fig, axs = plt.subplots(1, 2, figsize=(20, int(12 * self.x_siz / self.y_siz)))
+        axs[0].imshow(np.max(self.label_vol1, axis=2), cmap="gray")
+        axs[1].imshow(np.max(train_prediction, axis=2) > 0.5, cmap="gray")
+        axs[0].set_title("Image (vol 1)")
+        axs[1].set_title(f"Cell prediction at step {step} (vol 1)")
+        plt.tight_layout()
+        plt.pause(0.1)
+
+    def _select_weights(self, step, weights_name="unet_weights_retrain_"):
+        if step==0:
+            self.unet_model.load_weights(os.path.join(self.unet_weights_path, 'weights_initial.h5'))
+        elif step > 0:
+            self.unet_model.load_weights((os.path.join(self.unet_weights_path, weights_name + f"step{step}.h5")))
+            self.unet_model.save(os.path.join(self.unet_weights_path, "unet3_retrained.h5"))
+        else:
+            raise ValueError("step should be an interger >= 0")
+
+    def interpolate_seg(self):
+        # _interpolate layers in z axis
+        self.seg_cells_interpolated_corrected = self._interpolate()
+        self.Z_RANGE_INTERP = range(self.z_scaling // 2, self.seg_cells_interpolated_corrected.shape[2],
+                                    self.z_scaling)
+        # save labels in the first volume (interpolated)
+        save_img3ts(self.Z_RANGE_INTERP, self.seg_cells_interpolated_corrected,
+                    self.track_results_path + "track_results_t%04i_z%04i.tif", t=1)
+
+        # calculate coordinates of cell centers at t=1
+        center_points_t1 = snm.center_of_mass(self.segmentation_manual_relabels > 0,
+                                              self.segmentation_manual_relabels,
+                                              range(1, self.segmentation_manual_relabels.max() + 1))
+        r_coordinates_manual_vol1 = self._transform_layer_to_real(center_points_t1)
+        self.r_coordinates_tracked_t0 = r_coordinates_manual_vol1.copy()
+        self.cell_num_t0 = r_coordinates_manual_vol1.shape[0]
+
+    def _interpolate(self):
+        seg_cells_interpolated, seg_cell_or_bg = gaussian_filter(
+            self.segmentation_manual_relabels, z_scaling=self.z_scaling, smooth_sigma=2.5)
+        seg_cells_interpolated_corrected = watershed_2d_markers(
+            seg_cells_interpolated, seg_cell_or_bg, z_range=self.z_siz * self.z_scaling + 10)
+        return seg_cells_interpolated_corrected[5:self.x_siz + 5,
+               5:self.y_siz + 5, 5:self.z_siz * self.z_scaling + 5]
+
+    def cal_subregions(self):
+        # Compute subregions of each cells for quick "accurate correction"
+        seg_16 = self.seg_cells_interpolated_corrected.astype("int16")
+
+        self.region_list, self.region_width, self.region_xyz_min = get_subregions(seg_16, seg_16.max())
+        self.pad_x, self.pad_y, self.pad_z = np.max(self.region_width, axis=0)
+        self.label_padding = np.pad(seg_16,
+                                    pad_width=((self.pad_x, self.pad_x),
+                                               (self.pad_y, self.pad_y),
+                                               (self.pad_z, self.pad_z)),
+                                    mode='constant') * 0
+
+    def check_multicells(self):
+        # test if there are multiple cells marked as a single region
+        for i, region in enumerate(self.region_list):
+            assert np.sum(np.unique(label(region))) == 1, f"more than one cell in region {i + 1}"
+        print("Checked mistakes of multiple cells as one: Correct!")
+
+    def load_ffn(self):
+        # load FFN model
+        self.ffn_model = load_model(os.path.join(self.models_path, self.ffn_model_file))
+        print("Loaded the FFN model")
+
+    def initiate_tracking(self):
+        # initiate all coordinates from vol=1 (t0)
+        self.cells_on_boundary = np.zeros(self.cell_num_t0).astype(int)
+        self.history_r_displacements = []
+        self.history_r_displacements.append(np.zeros((self.cell_num_t0, 3)))
+        self.history_r_segmented_coordinates = []
+        self.history_r_segmented_coordinates.append(self.r_coordinates_segment_t0)
+        self.history_r_tracked_coordinates = []
+        self.history_r_tracked_coordinates.append(self.r_coordinates_tracked_t0)
+        self.history_anim = []
+        print("Initiated coordinates for tracking (from vol 1)")
+
+    def match(self, target_volume, method="min_size"):
+        """
+        Match current volume and another target_volume
+        Input:
+            target_volume: the target volume to be matched
+        """
+        # skip frames that cannot be tracked
+        if target_volume in self.miss_frame:
+            print("target_volume is a miss_frame")
+            return None
+
+        # generate automatic _segment in current volume
+        self.segresult._update_results(*self._segment(target_volume, method=method))
+
+        # track by fnn + prgls
+        r_coor_predicted, anim = self._predict_pos_once(source_volume=1, draw=True)
+
+        # boundary cells
+        cells_bd = self._get_cells_onBoundary(r_coor_predicted, self.ensemble)
+        cells_on_boundary_local = self.cells_on_boundary.copy()
+        cells_on_boundary_local[cells_bd] = 1
+
+        # accurate correction
+        _, i_disp_from_vol1_updated = \
+            self._accurate_correction(cells_on_boundary_local, r_coor_predicted)
+        print(f"Matching between vol 1 and vol {target_volume} was computed")
+        return anim, [cells_on_boundary_local, target_volume, i_disp_from_vol1_updated, r_coor_predicted]
+
+    def _accurate_correction(self, cells_on_boundary_local, r_coor_predicted):
+        r_disp_from_vol1_updated = self.history_r_displacements[-1] + \
+                                   (r_coor_predicted - self.history_r_tracked_coordinates[-1])
+        i_disp_from_vol1_updated = self._transform_real_to_interpolated(r_disp_from_vol1_updated)
+        for i in range(REP_NUM_CORRECTION):
+            # update positions (from vol1) by correction
+            r_disp_from_vol1_updated, i_disp_from_vol1_updated, r_disp_correction = \
+                self._correction_once_interp(i_disp_from_vol1_updated, cells_on_boundary_local)
+
+            # stop the repetition if correction converged
+            stop_flag = self._evaluate_correction(r_disp_correction)
+            if i == REP_NUM_CORRECTION - 1 or stop_flag:
+                break
+        return r_disp_from_vol1_updated, i_disp_from_vol1_updated
+
+    def _predict_pos_once(self, source_volume, draw=False):
+        """
+        Predict cell coordinates using the transformation parameters in all repetitions
+            from fnn_prgls()
+        """
+        # fitting the parameters for transformation
+        C_t, BETA_t, coor_intermediate_list = self._fit_ffn_prgls(
+            REP_NUM_PRGLS, self.history_r_segmented_coordinates[source_volume - 1])
+
+        # Transform the coordinates
+        r_coordinates_predicted = self.history_r_tracked_coordinates[source_volume - 1].copy()
+
+        if draw:
+            ax, fig = self._prepare_tracking_animation()
+            plt_objs = []
+            for i in range(len(C_t)):
+                r_coordinates_predicted, r_coordinates_predicted_pre = self._predict_one_rep(
+                    r_coordinates_predicted, coor_intermediate_list[i], BETA_t[i], C_t[i])
+                plt_obj = self._get_tracking_anim(
+                    ax, r_coordinates_predicted_pre, self.segresult.r_coordinates_segment,
+                    r_coordinates_predicted, layercoord=False)
+                plt_objs.append(plt_obj)
+            anim = animation.ArtistAnimation(fig, plt_objs, interval=200).to_jshtml()
+        else:
+            for i in range(len(C_t)):
+                r_coordinates_predicted, r_coordinates_predicted_pre = self._predict_one_rep(
+                    r_coordinates_predicted, coor_intermediate_list[i], BETA_t[i], C_t[i])
+            anim = None
+
+        return r_coordinates_predicted, anim
+
+    def _fit_ffn_prgls(self, rep, r_coordinates_segment_pre):
+        """
+        Appliy FFN + PR-GLS from t1 to t2 (multiple times) to get transformation
+            parameters to predict cell coordinates
+        Input:
+            rep: the number of repetitions of (FFN + max_iteration times of PR-GLS)
+        Return:
+            C_t: list of C in each repetition (to predict the transformed coordinates)
+            BETA_t: list of the parameter beta used in each repetition (to predict coordinates)
+            coor_intermediate_list: list of the pre-transformed coordinates of automatically
+                segmented cells in each repetition (to predict coordinates)
+        """
+        corr_intermediate = r_coordinates_segment_pre.copy()
+        C_t = []
+        BETA_t = []
+        coor_intermediate_list = []
+        for i in range(rep):
+            coor_intermediate_list.append(corr_intermediate)
+            C, corr_intermediate = self._ffn_prgls_once(i, corr_intermediate)
+            C_t.append(C)
+            BETA_t.append(self.beta_tk * (0.8 ** i))
+        return C_t, BETA_t, coor_intermediate_list
+
+    def _ffn_prgls_once(self, i, r_coordinates_segment_pre):
+        init_match = initial_matching_quick(self.ffn_model, r_coordinates_segment_pre,
+                                            self.segresult.r_coordinates_segment, 20)
+        pre_transformation_pre = r_coordinates_segment_pre.copy()
+        P, r_coordinates_segment_post, C = pr_gls_quick(pre_transformation_pre,
+                                                        self.segresult.r_coordinates_segment,
+                                                        init_match,
+                                                        BETA=self.beta_tk * (0.8 ** i),
+                                                        max_iteration=self.max_iteration,
+                                                        LAMBDA=self.lambda_tk)
+        return C, r_coordinates_segment_post
+
+    def _predict_one_rep(self, r_coordinates_predicted_pre, coor_intermediate_list, BETA_t, C_t):
+        """
+        Predict cell coordinates using one set of the transformation parameters
+            from fnn_prgls()
+        Input:
+            r_coordinates_predicted_pre: the coordinates before transformation
+            coor_intermediate_list, BETA_t, C_t: one set of the transformation parameters
+        Return:
+            r_coordinates_predicted_post: the coordinates after transformation
+        """
+
+        length_auto_segmentation = np.size(coor_intermediate_list, axis=0)
+
+        r_coordinates_predicted_tile = np.tile(r_coordinates_predicted_pre, (length_auto_segmentation, 1, 1))
+        coor_intermediate_tile = np.tile(coor_intermediate_list, (self.cell_num_t0, 1, 1)).transpose((1, 0, 2))
+        Gram_matrix = np.exp(-np.sum(np.square(r_coordinates_predicted_tile - coor_intermediate_tile),
+                                     axis=2) / (2 * BETA_t * BETA_t))
+
+        r_coordinates_predicted_post = r_coordinates_predicted_pre + np.dot(C_t, Gram_matrix).T
+
+        return r_coordinates_predicted_post, r_coordinates_predicted_pre
+
+    def _get_cells_onBoundary(self, r_coordinates_prgls, emsemble):
+        """
+        get cell near the boundary of the image
+        """
+        if emsemble:
+            boundary_xy = 0
+        else:
+            boundary_xy = BOUNDARY_XY
+        cells_bd = np.where(reduce(
+            np.logical_or,
+            [r_coordinates_prgls[:, 0] < boundary_xy,
+             r_coordinates_prgls[:, 1] < boundary_xy,
+             r_coordinates_prgls[:, 0] > self.x_siz - boundary_xy,
+             r_coordinates_prgls[:, 1] > self.y_siz - boundary_xy,
+             r_coordinates_prgls[:, 2] / self.z_xy_ratio < 0,
+             r_coordinates_prgls[:, 2] / self.z_xy_ratio > self.z_siz])
         )
-        # stop the repetition if correction converged
-        stop_flag = evaluate_correction(r_disp_correction, i_cumulated_disp, i, par_image)
+        return cells_bd
 
-        # draw correction
-        if i == rep_correction-1 or stop_flag:
-            r_coordinates_correction = r_coor_confirmed_vol1 + r_disp_from_vol1
-            plt.figure(figsize=(16, 4))
-            plt.subplot(1, 2, 1)
-            tracking_plot(r_coor_prgls, r_coordinates_segment_post, r_coordinates_correction)
-            plt.subplot(1, 2, 2)
-            tracking_plot_zx(r_coor_prgls, r_coordinates_segment_post, r_coordinates_correction)
+    def _correction_once_interp(self, i_displacement_from_vol1, cell_on_bound):
+        """
+        Correct the tracking for once (in interpolated image)
+        """
+        # generate current image of labels from the manually corrected _segment in volume 1
+        i_l_tracked_cells_prgls_0, i_l_overlap_prgls_0 = self._transform_cells_quick(i_displacement_from_vol1)
+        l_tracked_cells_prgls = i_l_tracked_cells_prgls_0[:, :,
+                                self.z_scaling // 2:self.z_siz * self.z_scaling:self.z_scaling]
+        l_overlap_prgls = i_l_overlap_prgls_0[:, :,
+                          self.z_scaling // 2:self.z_siz * self.z_scaling:self.z_scaling]
 
-            # generate current image of labels (more accurate)
-            i_tracked_cells_corrected, i_overlap_corrected = transform_cells_quick(
-                par_subregions, i_disp_from_vol1, print_seq=False)
+        # overlapping regions of multiple cells are discarded before correction to avoid cells merging
+        l_tracked_cells_prgls[np.where(l_overlap_prgls > 1)] = 0
 
-            # re-calculate boundaries by watershed
-            i_tracked_cells_corrected[np.where(i_overlap_corrected > 1)] = 0
-            for i in np.where(cells_on_boundary_local == 1)[0]:
-                i_tracked_cells_corrected[np.where(i_tracked_cells_corrected == (i + 1))] = 0
+        for i in np.where(cell_on_bound == 1)[0]:
+            l_tracked_cells_prgls[l_tracked_cells_prgls == (i + 1)] = 0
 
-            z_range = range(par_image["z_scaling"] // 2, par_image["z_siz"] * par_image["z_scaling"],
-                            par_image["z_scaling"])
-            l_label_T_watershed = watershed_2d_markers(i_tracked_cells_corrected[:, :, z_range],
-                                                       i_overlap_corrected[:, :, z_range],
-                                                       z_range=par_image["z_siz"])
+        # accurate correction of displacement
+        l_coordinates_prgls_int_move = \
+            self.r_coordinates_tracked_t0 * np.array([1, 1, 1 / self.z_xy_ratio]) + \
+            i_displacement_from_vol1 * np.array([1, 1, 1 / self.z_scaling])
+        l_centers_unet_x_prgls = snm.center_of_mass(
+            self.segresult.image_cell_bg[0, :, :, :, 0] + self.segresult.image_gcn, l_tracked_cells_prgls,
+            range(1, self.seg_cells_interpolated_corrected.max() + 1))
+        l_centers_unet_x_prgls = np.asarray(l_centers_unet_x_prgls)
+        l_centers_prgls = np.asarray(l_coordinates_prgls_int_move)
 
-            plt.pause(10)
-            print("current volume: t=",volume1)
-            plt.figure(figsize=(16, 10))
-            plt.subplot(1, 2, 1)
-            fig = plt.imshow(cell_t1, cmap="gray")
-            plt.subplot(1, 2, 2)
-            fig = plt.imshow(seg_t1, cmap="tab20b")
+        lost_cells = np.where(np.isnan(l_centers_unet_x_prgls)[:, 0])
 
-            plt.pause(10)
-            print("target volume: t=",volume2)
-            plt.figure(figsize=(16, 10))
-            plt.subplot(1, 2, 1)
-            fig = plt.imshow(
-                np.max(image_cell_bg[0, :, :, :, 0], axis=2) > 0.5, cmap="gray")
-            plt.subplot(1, 2, 2)
-            fig = plt.imshow(np.max(l_label_T_watershed, axis=2), cmap="tab20b")
-            break
+        r_displacement_correction = l_centers_unet_x_prgls - l_centers_prgls
+        r_displacement_correction[lost_cells, :] = 0
+        r_displacement_correction[:, 2] = r_displacement_correction[:, 2] * self.z_xy_ratio
 
-    return None
+        # calculate the corrected displacement from vol #1
+        r_displacement_from_vol1 = i_displacement_from_vol1 * np.array(
+            [1, 1, self.z_xy_ratio / self.z_scaling]) + r_displacement_correction
+        i_displacement_from_vol1_new = self._transform_real_to_interpolated(r_displacement_from_vol1)
 
+        return r_displacement_from_vol1, i_displacement_from_vol1_new, r_displacement_correction
 
-def pr_gls_quick(X, Y, corr, BETA=300, max_iteration=20, LAMBDA=0.1, vol=1E8):
-    """
-    Get coherent movements from the initial matching by PR-GLS algorithm
-    Input:
-        X,Y: positions of two point sets
-        corr: initial matching
-        BETA, max_iteration, LAMBDA, vol: parameters of PR-GLS
-    Return:
-        P: updated matching
-        T_X: transformed positions of X
-        C: coefficients for transforming positions other than X.
-    """
-    ############################################################
-    # initiate Gram matrix, C, sigma_square, init_match, T_X, P
-    ############################################################
-    # set parameters
-    gamma = 0.1
+    def _transform_cells_quick(self, vectors3d, print_seq=False):
+        """
+        Move cells according to vectors3d
+        Input:
+            vectors3d: sequence (int), movement of each cell
+        Return:
+            output: transformed image
+            mask: overlap between different labels (if value>1)
+        """
+        label_moved = self.label_padding.copy() * 0
+        mask = label_moved.copy()
+        for label in range(0, len(self.region_list)):
+            if print_seq:
+                print(label, end=" ")
+            new_x_min = self.region_xyz_min[label][0] + vectors3d[label, 0] + self.pad_x
+            new_y_min = self.region_xyz_min[label][1] + vectors3d[label, 1] + self.pad_y
+            new_z_min = self.region_xyz_min[label][2] + vectors3d[label, 2] + self.pad_z
+            subregion_previous = label_moved[new_x_min:new_x_min + self.region_width[label][0],
+                                 new_y_min:new_y_min + self.region_width[label][1],
+                                 new_z_min:new_z_min + self.region_width[label][2]]
+            if len(subregion_previous.flatten()) == 0:
+                continue
+            subregion_new = subregion_previous * (1 - self.region_list[label]) + \
+                            self.region_list[label] * (label + 1)
+            label_moved[new_x_min:new_x_min + self.region_width[label][0],
+            new_y_min:new_y_min + self.region_width[label][1],
+            new_z_min:new_z_min + self.region_width[label][2]] = subregion_new
+            mask[new_x_min:new_x_min + self.region_width[label][0],
+            new_y_min:new_y_min + self.region_width[label][1],
+            new_z_min:new_z_min + self.region_width[label][2]] += \
+                (self.region_list[label] > 0).astype("int8")
+        output = label_moved[self.pad_x:-self.pad_x, self.pad_y:-self.pad_y, self.pad_z:-self.pad_z]
+        mask = mask[self.pad_x:-self.pad_x, self.pad_y:-self.pad_y, self.pad_z:-self.pad_z]
 
-    # Gram matrix quick (represents basis functions for transformation)
-    length_X = np.size(X, axis=0)
-    X_tile = np.tile(X, (length_X, 1, 1))
-    Gram_matrix = np.exp(-np.sum(np.square(X_tile - X_tile.transpose(1, 0, 2)), axis=2) / (2 * BETA * BETA))
+        return output, mask
 
-    # Vector C includes weights for each basis function
-    C = np.zeros((3, length_X))
+    def _transform_motion_to_image(self, cells_on_boundary_local, i_disp_from_vol1_updated):
+        i_tracked_cells_corrected, i_overlap_corrected = self._transform_cells_quick(i_disp_from_vol1_updated)
+        # re-calculate boundaries by _watershed
+        i_tracked_cells_corrected[i_overlap_corrected > 1] = 0
+        for i in np.where(cells_on_boundary_local == 1)[0]:
+            i_tracked_cells_corrected[i_tracked_cells_corrected == (i + 1)] = 0
+        z_range = range(self.z_scaling // 2, self.z_siz * self.z_scaling, self.z_scaling)
+        tracked_labels = watershed_2d_markers(
+            i_tracked_cells_corrected[:, :, z_range], i_overlap_corrected[:, :, z_range],
+            z_range=self.z_siz)
+        return tracked_labels
 
-    # sigma square (quick): relates to the variance of differences between
-    # corresponding points in T_X and Y.
-    length_Y = np.size(Y, axis=0)
-    X_tile = np.tile(X, (length_Y, 1, 1))
-    Y_tile = np.tile(Y, (length_X, 1, 1)).transpose(1, 0, 2)
-    sigma_square = np.sum(np.sum(np.square(X_tile - Y_tile), axis=2)) / (3 * length_X * length_Y)
+    def _evaluate_correction(self, r_displacement_correction):
+        """
+        evaluate if the accurate correction should be stopped
+        """
+        i_disp_test = r_displacement_correction.copy()
+        i_disp_test[:, 2] *= self.z_scaling / self.z_xy_ratio
+        if np.nanmax(np.abs(i_disp_test)) >= 0.5:
+            # print(np.nanmax(np.abs(i_disp_test)), end=",")
+            return False
+        else:
+            # print(np.nanmax(np.abs(i_disp_test)))
+            return True
 
-    # set initial matching
-    # only the most possible pairs are set with probalility of 0.9
-    init_match = np.ones((length_Y, length_X)) / length_X
-    cc_ref_tgt_temp = np.copy(corr)
-    for ptr_num in range(length_X):
-        cc_max = cc_ref_tgt_temp.max()
-        if cc_max < 0.5:
-            break
-        cc_max_idx = unravel_index(cc_ref_tgt_temp.argmax(), cc_ref_tgt_temp.shape)
-        init_match[cc_max_idx[0], :] = 0.1 / (length_X - 1)
-        init_match[cc_max_idx[0], cc_max_idx[1]] = 0.9
-        cc_ref_tgt_temp[cc_max_idx[0], :] = 0;
-        cc_ref_tgt_temp[:, cc_max_idx[1]] = 0;
+    def track_animation(self, from_volume):
+        self._reset_tracking_state(from_volume)
+        ax, fig = self._make_6subplots()
+        return ax, fig
 
-    # initiate T_X, which equals to X+v(X).
-    T_X = X.copy()
+    def track_and_confirm(self, from_volume, fig, ax):
+        for vol in range(from_volume, self.volume_num + 1):
+            self.track_one_vol(vol, fig, ax)
+        return None
 
-    ############################################################################
-    # iteratively update T_X, gamma, sigma_square, and P. Plot and save results
-    ############################################################################
-    for iteration in range(1, max_iteration):
+    def track_animation_replay(self, from_volume):
+        fig, ax = plt.subplots(figsize=(14, int(21 * self.x_siz / self.y_siz)), tight_layout=True)
+        plt.close(fig)
+        ax.axis('off')
+        track_process_images = []
+        for volume in range(from_volume, self.volume_num + 1):
+            try:
+                im = mgimg.imread(self.anim_path + "track_anim_t%04i.png" % volume)
+            except FileNotFoundError:
+                continue
+            implot = ax.imshow(im)
+            track_process_images.append([implot])
 
-        # calculate P (quick)
-        T_X_tile = np.tile(T_X, (length_Y, 1, 1))
-        Y_tile = np.tile(Y, (length_X, 1, 1)).transpose(1, 0, 2)
-        dist_square = np.sum(np.square(T_X_tile - Y_tile), axis=2)
-        exp_dist_square = np.exp(-dist_square / (2 * sigma_square))
-        P1 = init_match * exp_dist_square
-        denominator = np.sum(P1, axis=1) + gamma * (2 * np.pi * sigma_square) ** 1.5 / ((1 - gamma) * vol)
-        denominator_tile = np.tile(denominator, (length_X, 1)).transpose()
-        P = P1 / denominator_tile
+        track_anim = animation.ArtistAnimation(fig, track_process_images, interval=200, repeat=False).to_jshtml()
+        return track_anim
 
-        # solve the linear equations for vector C
-        diag_P = np.diag(np.reshape(np.dot(np.ones((1, length_Y)), P), (length_X)))
-        a = np.dot(Gram_matrix, diag_P) + LAMBDA * sigma_square * np.identity(length_X)
-        b = np.dot(np.matrix.transpose(Y), P) - np.dot(np.matrix.transpose(X), diag_P)
+    def _reset_tracking_state(self, from_volume):
+        assert from_volume >= 2, "from_volume should >= 2"
+        current_vol = len(self.history_r_displacements)
+        del self.history_r_displacements[from_volume - 1:]
+        del self.history_r_segmented_coordinates[from_volume - 1:]
+        del self.history_r_tracked_coordinates[from_volume - 1:]
+        assert len(self.history_r_displacements) == from_volume - 1, \
+            f"Currently data has been tracked until vol {current_vol}, the program cannot start from {from_volume}"
+        # print(f"Currently data has been tracked until vol {current_vol}, start from vol {from_volume}")
 
-        a = np.matrix.transpose(a)
-        b = np.matrix.transpose(b)
-        C = np.matrix.transpose(np.linalg.solve(a, b))
+    def track_one_vol(self, target_volume, fig, axc6, method="min_size"):
+        """
+        Track on volume
+        """
+        # skip frames that cannot be tracked
+        if target_volume in self.miss_frame:
+            save_img3ts(range(1, self.z_siz + 1), self.tracked_labels,
+                        self.track_results_path + "track_results_t%04i_z%04i.tif", target_volume)
+            self.history_r_displacements.append(self.history_r_displacements[-1])
+            self.history_r_segmented_coordinates.append(self.segresult.r_coordinates_segment)
+            self.history_r_tracked_coordinates.append(
+                self.r_coordinates_tracked_t0 + self.history_r_displacements[-1])
+            return None
 
-        # calculate T_X
-        T_X = np.matrix.transpose(np.matrix.transpose(X) + np.dot(C, Gram_matrix))
+        # make _segment of target volume
+        self.segresult._update_results(*self._segment(target_volume, method=method))
 
-        # update gamma and sigma square (quick)
-        M_P = np.sum(P)
-        gamma = 1 - M_P / length_Y
+        # FFN + PR-GLS predictions (single or ensemble)
+        source_vols_list = get_reference_vols(self.ensemble, target_volume, adjacent=self.adjacent)
+        list_predictions = []
+        for source_vol in source_vols_list:
+            r_coor_predicted, _ = self._predict_pos_once(source_volume=source_vol, draw=False)
+            list_predictions.append(r_coor_predicted)
+        r_coor_predicted_mean = trim_mean(list_predictions, 0.1, axis=0)
 
-        T_X_tile = np.tile(T_X, (length_Y, 1, 1))
-        dist_square = np.sum(np.square(T_X_tile - Y_tile), axis=2)
-        sigma_square = np.sum(P * dist_square) / (3 * M_P)
+        # remove cells moved to the boundaries of the 3D image
+        cells_bd = self._get_cells_onBoundary(r_coor_predicted_mean, self.ensemble)
+        self.cells_on_boundary[cells_bd] = 1
 
-        # avoid using too small values of sigma_square (the sample error should be
-        # >=1 pixel)
-        if sigma_square < 1:
-            sigma_square = 1
+        # accurate correction to get more accurate positions
+        r_disp_from_vol1_updated, i_disp_from_vol1_updated = \
+            self._accurate_correction(self.cells_on_boundary, r_coor_predicted_mean)
 
-    return P, T_X, C
+        # transform positions into images
+        self.tracked_labels = self._transform_motion_to_image(self.cells_on_boundary, i_disp_from_vol1_updated)
 
+        # save tracked labels
+        save_img3ts(range(1, self.z_siz + 1), self.tracked_labels,
+                    self.track_results_path + "track_results_t%04i_z%04i.tif", target_volume)
 
-def initial_matching_quick(fnn_model, ref, tgt, k_ptrs):
-    """
-    this function compute initial matching between all pairs of points
-    in reference and target points set
-    """
-    nbors_ref = NearestNeighbors(n_neighbors=k_ptrs + 1).fit(ref)
-    nbors_tgt = NearestNeighbors(n_neighbors=k_ptrs + 1).fit(tgt)
+        self._draw_matching_6panel(target_volume, axc6, r_coor_predicted_mean, i_disp_from_vol1_updated)
+        fig.canvas.draw()
+        plt.savefig(self.anim_path + "track_anim_t%04i.png" % target_volume, bbox_inches='tight')
 
-    ref_x_flat_batch = np.zeros((ref.shape[0], k_ptrs * 3 + 1), dtype='float32')
-    tgt_x_flat_batch = np.zeros((tgt.shape[0], k_ptrs * 3 + 1), dtype='float32')
+        # update and save points locations
+        if self.ensemble:
+            self.cells_on_boundary = \
+                np.zeros((self.cell_num_t0)).astype(int)  # in ensemble mode, cells on boundary are not deleted forever
+        self.history_r_displacements.append(r_disp_from_vol1_updated)
+        self.history_r_segmented_coordinates.append(self.segresult.r_coordinates_segment)
+        self.history_r_tracked_coordinates.append(self.r_coordinates_tracked_t0 + r_disp_from_vol1_updated)
 
-    for ref_i in range(ref.shape[0]):
-        # Generate 20 (k_ptrs) points near the specific point
-        # in the ref points set
-
-        distance_ref, indices_ref = nbors_ref.kneighbors(ref[ref_i:ref_i + 1, :],
-                                                         return_distance=True)
-
-        mean_dist_ref = np.mean(distance_ref)
-        ref_x = (ref[indices_ref[0, 1:k_ptrs + 1], :] - ref[indices_ref[0, 0], :]) / mean_dist_ref
-        ref_x_flat = np.zeros(k_ptrs * 3 + 1)
-        ref_x_flat[0:k_ptrs * 3] = ref_x.reshape(k_ptrs * 3)
-        ref_x_flat[k_ptrs * 3] = mean_dist_ref
-
-        ref_x_flat_batch[ref_i, :] = ref_x_flat.reshape(1, k_ptrs * 3 + 1)
-
-    ref_x_flat_batch_meshgrid = np.tile(ref_x_flat_batch, (tgt.shape[0], 1, 1)).reshape(
-        (ref.shape[0] * tgt.shape[0], k_ptrs * 3 + 1))
-
-    for tgt_i in range(tgt.shape[0]):
-        distance_tgt, indices_tgt = nbors_tgt.kneighbors(tgt[tgt_i:tgt_i + 1, :],
-                                                         return_distance=True)
-        mean_dist_tgt = np.mean(distance_tgt)
-        tgt_x = (tgt[indices_tgt[0, 1:k_ptrs + 1], :] - tgt[indices_tgt[0, 0], :]) / mean_dist_tgt
-        tgt_x_flat = np.zeros(k_ptrs * 3 + 1)
-        tgt_x_flat[0:k_ptrs * 3] = tgt_x.reshape(k_ptrs * 3)
-        tgt_x_flat[k_ptrs * 3] = mean_dist_tgt
-
-        tgt_x_flat_batch[tgt_i, :] = tgt_x_flat.reshape(1, k_ptrs * 3 + 1)
-
-    tgt_x_flat_batch_meshgrid = np.tile(tgt_x_flat_batch, (ref.shape[0], 1, 1)).transpose(1, 0, 2).reshape(
-        (ref.shape[0] * tgt.shape[0], k_ptrs * 3 + 1))
-
-    corr = np.reshape(fnn_model.predict([ref_x_flat_batch_meshgrid, tgt_x_flat_batch_meshgrid], batch_size=1024),
-                      (tgt.shape[0], ref.shape[0]))
-
-    return corr
-
-
-def track_one_vol(volume, par_image, par_tracker, par_path, par_subregions, unet_model, FFN_model, r_segmented_list_pre,
-                  r_tracked_list_pre, r_disp_from_vol1_input, r_coor_confirmed_vol1, seg_cells_interp,
-                  cells_on_boundary, method="min_size", rep_correction=20):
-    """
-    Track on volume
-    """
-    r_coor_tracked_pre = r_tracked_list_pre[-1]
-    ########################################################
-    # generate automatic segmentation in current volume
-    ########################################################
-    image_cell_bg, l_center_coordinates, _, image_gcn = \
-        segmentation(volume, par_image, par_tracker, par_path, unet_model,
-                     method=method, neuron_num=par_tracker["neuron_num"])
-    t = time.time()
-    r_coor_segment_post = displacement_image_to_real(l_center_coordinates, par_image)
-    #######################################
-    # track by fnn + prgls
-    #######################################
-    # get a list of reference volumes to predict cell positions
-    ref_list = get_reference_vols(par_tracker["ensemble"], volume, adjacent=par_tracker["adjacent"])
-    # predict cell positions (single or ensemble)
-    list_coor = []
-    print("ref:", end=" ")
-    for ref in ref_list:
-        print(str(ref + 1), end=", ")
-        r_coordinates_prgls = predict_pos_once(r_segmented_list_pre[ref],
-                                               r_coor_segment_post,
-                                               r_tracked_list_pre[ref],
-                                               par_tracker, FFN_model, draw=False)
-        list_coor.append(r_coordinates_prgls)
-    # get mean prediction
-    r_coordinates_prgls = trim_mean(list_coor, 0.1, axis=0)
-    print("len of ref:%d" % (len(list_coor)))
-    print('fnn + pr-gls took %.1f s' % (time.time() - t))
-    ###########################################################
-    # remove cells moved to the boundaries of the 3D image
-    ###########################################################
-    cells_bd = get_cells_onBoundary(r_coordinates_prgls, par_image)
-    print("cells on boundary:", cells_bd[0] + 1)
-    cells_on_boundary[cells_bd] = 1
-    ###################################
-    # accurate correction
-    ###################################
-    t = time.time()
-    # get positions (from vol1) before correction
-    i_cumulated_disp, i_disp_from_vol1, _ = \
-        get_pos_before_correction(par_image, r_coordinates_prgls,
-                                  r_coor_tracked_pre, r_disp_from_vol1_input)
-
-    for i in range(rep_correction):
-        # update positions (from vol1) by correction
-        r_disp_from_vol1, i_disp_from_vol1, r_disp_correction = \
-            correction_once_interp(
-            i_disp_from_vol1, par_image, par_subregions, cells_on_boundary,
-            r_coor_confirmed_vol1, image_cell_bg, image_gcn, seg_cells_interp
-        )
-        # stop the repetition if correction converged
-        stop_flag = evaluate_correction(r_disp_correction, i_cumulated_disp, i, par_image)
-        if stop_flag:
-            break
-
-    # generate current image of labels (more accurate)
-    i_tracked_cells_corrected, i_overlap_corrected = transform_cells_quick(
-        par_subregions, i_disp_from_vol1, print_seq=False)
-    print('accurate correction of displacement took %.1f s' % (time.time() - t))
-
-    # re-calculate boundaries by watershed
-    i_tracked_cells_corrected[np.where(i_overlap_corrected > 1)] = 0
-    for i in np.where(cells_on_boundary == 1)[0]:
-        i_tracked_cells_corrected[np.where(i_tracked_cells_corrected == (i + 1))] = 0
-
-    z_range = range(par_image["z_scaling"] // 2, par_image["z_siz"] * par_image["z_scaling"], par_image["z_scaling"])
-    l_label_T_watershed = watershed_2d_markers(i_tracked_cells_corrected[:, :, z_range],
-                                               i_overlap_corrected[:, :, z_range],
-                                               z_range=par_image["z_siz"])
-    ####################################################
-    # save tracked labels
-    ####################################################
-    save_img3ts(range(1, par_image["z_siz"] + 1), l_label_T_watershed,
-                par_path["track_results_path"] + "track_results_t%04i_z%04i.tif", volume)
-
-    # update and save points locations
-    r_coor_segment_pre = r_coor_segment_post.copy()
-    r_coor_tracked_pre = r_coor_confirmed_vol1 + i_disp_from_vol1 * np.array(
-        [1, 1, par_image["z_xy_ratio"] / par_image["z_scaling"]])
-    return l_label_T_watershed, r_coor_segment_pre, r_coor_tracked_pre, r_disp_from_vol1
-
-
-def get_pos_before_correction(par_image, r_coordinates_prgls, r_coordinates_tracked_pre, r_displacement_from_vol1):
-    """
-    get positions of cells before accurate correction is made
-    """
-    r_displacement_from_vol1 += r_coordinates_prgls - r_coordinates_tracked_pre
-    i_displacement_from_vol1 = displacement_real_to_interpolatedimage(r_displacement_from_vol1, par_image)
-    i_cumulated_disp = i_displacement_from_vol1 * 0.0
-    return i_cumulated_disp, i_displacement_from_vol1, r_displacement_from_vol1
-
-
-def evaluate_correction(r_displacement_correction, i_cumulated_disp, i, par_image):
-    """
-    evaluate if the accurate correction should be stopped
-    """
-    i_cumulated_disp, i_disp_test = get_accumulated_disp(i_cumulated_disp, par_image, r_displacement_correction)
-    if i == 0:
-        print("max correction:", end=" ")
-    if min(np.nanmax(np.abs(i_disp_test)), np.nanmax(np.abs(i_cumulated_disp))) >= 0.5:
-        print(np.nanmax(np.abs(i_disp_test)), end=",")
-        return False
-    else:
-        print(np.nanmax(np.abs(i_disp_test)))
-        return True
-
-
-def get_accumulated_disp(i_cumulated_disp, par_image, r_displacement_correction):
-    """
-    get the accumulated displacements of cells during accurate correction
-    """
-    i_disp_test = r_displacement_correction.copy()
-    i_disp_test[:, 2] *= par_image["z_scaling"] / par_image["z_xy_ratio"]
-    i_cumulated_disp += i_disp_test
-    return i_cumulated_disp, i_disp_test
-
-
-def get_cells_onBoundary(r_coordinates_prgls, par_image):
-    """
-    get cell near the boundary of the image
-    """
-    cells_bd = np.where(reduce(
-        np.logical_or,
-        [r_coordinates_prgls[:, 0] < 6,
-         r_coordinates_prgls[:, 1] < 6,
-         r_coordinates_prgls[:, 0] > par_image["x_siz"] - 6,
-         r_coordinates_prgls[:, 1] > par_image["y_siz"] - 6,
-         r_coordinates_prgls[:, 2] / par_image["z_xy_ratio"] < 0,
-         r_coordinates_prgls[:, 2] / par_image["z_xy_ratio"] > par_image["z_siz"]]))
-    return cells_bd
+        return None

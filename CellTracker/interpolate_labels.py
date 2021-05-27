@@ -28,7 +28,7 @@ def gaussian_filter(img, z_scaling=10, smooth_sigma=5):
     mask = output_img.copy()
     
     for label in range(1, labels_num+1):
-        print(label, end=" ")
+        print(f"Interpolating... cell:{label}", end="\r")
         x,y,z = np.where(img_10x==label)
         xi, yi, zi = np.mgrid[x.min()-5:x.max()+6, y.min()-5:y.max()+6, z.min()-5:z.max()+6]
         d = np.zeros(xi.shape)

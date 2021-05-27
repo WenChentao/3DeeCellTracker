@@ -11,18 +11,18 @@ from scipy.ndimage import filters, distance_transform_edt
 from skimage.feature import peak_local_max
 import skimage.morphology as morphology
 from skimage.morphology import remove_small_objects
-from skimage.segmentation import find_boundaries
+from skimage.segmentation import find_boundaries, watershed
 	
 
 def watershed_2d(image_pred, z_range=21, min_distance=7):
     """
-    Segment cells in each layer of the 3D image by 2D watershed
+    Segment cells in each layer of the 3D image by 2D _watershed
     Input:
         image_pred: the binary image of cell region and background (predicted by 3D U-net)
         z_range: number of layers
         min_distance: the minimum cell distance allowed in the result
     Return:
-        bn_output: binary image (cell/bg) removing boundaries detected by watershed
+        bn_output: binary image (cell/bg) removing boundaries detected by _watershed
         boundary: image of cell boundaries 
     """
     boundary=np.zeros(image_pred.shape,dtype='bool')
@@ -33,7 +33,7 @@ def watershed_2d(image_pred, z_range=21, min_distance=7):
         
         local_maxi = peak_local_max(dist_smooth, min_distance=min_distance, indices=False)
         markers = morphology.label(local_maxi)
-        labels_ws = morphology.watershed(-dist_smooth, markers, mask=bn_image)
+        labels_ws = watershed(-dist_smooth, markers, mask=bn_image)
         labels_bd=find_boundaries(labels_ws, connectivity=2, mode='outer', background=0)
         
         boundary[:,:,z]=labels_bd       
@@ -41,32 +41,32 @@ def watershed_2d(image_pred, z_range=21, min_distance=7):
     bn_output=image_pred>0.5
     bn_output[boundary==1]=0
     
-    return [bn_output,boundary]
+    return bn_output,boundary
 
-def watershed_3d(image_watershed2d, samplingrate, method, min_size, neuron_num, min_distance):
+def watershed_3d(image_watershed2d, samplingrate, method, min_size, cell_num, min_distance):
     """
-    Segment cells by 3D watershed
+    Segment cells by 3D _watershed
     Input:
         image_watershed2d: the binary image (cell/bg) obtained by watershed_2d
         samplingrate: list, resolution in x, y, and z axis to calculate 3D distance
-        method: "min_size" or "neuron_num"
-        neuron_num: determine the min_distance by setting neuron number. Ignored if method=="min_size"
-        min_distance: the minimum cell distance allowed in the result. Ignored if method=="neuron_num"
+        method: "min_size" or "cell_num"
+        cell_num: determine the min_distance by setting neuron number. Ignored if method=="min_size"
+        min_distance: the minimum cell distance allowed in the result. Ignored if method=="cell_num"
     Return:
         labels_wo_bd: label image of cells removing boundaries (set to 0)
         labels_clear: label image of cells before removing boundaries
         min_size: min_size used in this function
-        neuron_num: neuron number detected in this function
+        cell_num: neuron number detected in this function
     """
     dist=distance_transform_edt(image_watershed2d,sampling=samplingrate)    
     dist_smooth=filters.gaussian_filter(dist,(2,2,0.3),mode='constant')
     local_maxi = peak_local_max(dist_smooth, min_distance=min_distance, indices=False)
     markers = morphology.label(local_maxi)
-    labels_ws = morphology.watershed(-dist_smooth, markers, mask=image_watershed2d)
+    labels_ws = watershed(-dist_smooth, markers, mask=image_watershed2d)
     if method=="min_size":
-        neuron_num = np.sum(np.sort(np.bincount(labels_ws.ravel()))>=min_size)-1
-    elif method=="neuron_num":
-        min_size = np.sort(np.bincount(labels_ws.ravel()))[-neuron_num-1]
+        cell_num = np.sum(np.sort(np.bincount(labels_ws.ravel()))>=min_size)-1
+    elif method=="cell_num":
+        min_size = np.sort(np.bincount(labels_ws.ravel()))[-cell_num-1]
     else:
         raise("wrong input of method")
     labels_clear=remove_small_objects(labels_ws, min_size=min_size,connectivity=3)
@@ -76,7 +76,7 @@ def watershed_3d(image_watershed2d, samplingrate, method, min_size, neuron_num, 
     labels_wo_bd[labels_bd==1]=0
     labels_wo_bd=remove_small_objects(labels_wo_bd, min_size=min_size,connectivity=3)
     
-    return [labels_wo_bd, labels_clear, min_size, neuron_num]
+    return labels_wo_bd, labels_clear, min_size, cell_num
 
 
 def watershed_2d_markers(image_pred, mask, z_range=21):
@@ -95,7 +95,7 @@ def watershed_2d_markers(image_pred, mask, z_range=21):
         markers = image_pred[:,:,z]
         markers[np.where(mask[:,:,z]>1)] = 0
         dist=distance_transform_edt(mask[:,:,z]>1,sampling=[1,1])
-        labels_ws[:,:,z] = morphology.watershed(dist, markers, mask=bn_image)
+        labels_ws[:,:,z] = watershed(dist, markers, mask=bn_image)
        
     return labels_ws
 
