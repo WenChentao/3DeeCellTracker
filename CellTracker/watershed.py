@@ -57,10 +57,13 @@ def watershed_3d(image_watershed2d, samplingrate, method, min_size, cell_num, mi
         labels_clear: label image of cells before removing boundaries
         min_size: min_size used in this function
         cell_num: neuron number detected in this function
+    Notes:
+        For peak_local_max function, exclude_border=0 is important. Without it, the function will exclude the cells
+        within bottom/top layers (<=min_distance layers)
     """
     dist=distance_transform_edt(image_watershed2d,sampling=samplingrate)    
     dist_smooth=filters.gaussian_filter(dist,(2,2,0.3),mode='constant')
-    local_maxi = peak_local_max(dist_smooth, min_distance=min_distance, indices=False)
+    local_maxi = peak_local_max(dist_smooth, min_distance=min_distance, exclude_border=0, indices=False)
     markers = morphology.label(local_maxi)
     labels_ws = watershed(-dist_smooth, markers, mask=image_watershed2d)
     if method=="min_size":

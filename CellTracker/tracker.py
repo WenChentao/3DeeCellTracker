@@ -425,8 +425,11 @@ class Segmentation:
     #                 self.draw_prediction(step)
     #             self.val_losses.append(loss)
 
-    def set_segmentation(self, noise_level, min_size, reset_=False):
+    def set_segmentation(self, noise_level=None, min_size=None, reset_=False):
+        """Reset the parameters and/or delete the caches of predictions by unet"""
         if self.noise_level == noise_level and self.min_size == min_size:
+            print("Segmentation parameters were not modified")
+        elif noise_level==None or min_size==None:
             print("Segmentation parameters were not modified")
         else:
             self.noise_level = noise_level
