@@ -858,11 +858,11 @@ class Tracker(Segmentation, Draw):
 
         return r_coordinates_predicted_post, r_coordinates_predicted_pre
 
-    def _get_cells_onBoundary(self, r_coordinates_prgls, emsemble):
+    def _get_cells_onBoundary(self, r_coordinates_prgls, ensemble):
         """
         get cell near the boundary of the image
         """
-        if emsemble:
+        if ensemble:
             boundary_xy = 0
         else:
             boundary_xy = BOUNDARY_XY
@@ -1061,7 +1061,7 @@ class Tracker(Segmentation, Draw):
         # update and save points locations
         if self.ensemble:
             self.cells_on_boundary = \
-                np.zeros((self.cell_num_t0)).astype(int)  # in ensemble mode, cells on boundary are not deleted forever
+                np.zeros(self.cell_num_t0).astype(int)  # in ensemble mode, cells on boundary are not deleted forever
         self.history_r_displacements.append(r_disp_from_vol1_updated)
         self.history_r_segmented_coordinates.append(self.segresult.r_coordinates_segment)
         self.history_r_tracked_coordinates.append(self.r_coordinates_tracked_t0 + r_disp_from_vol1_updated)
