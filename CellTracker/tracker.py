@@ -201,7 +201,7 @@ class Draw:
                                  vmin=0, vmax=vmax, cmap="gray")
             obj2 = axs[1].imshow(self.segresult.image_cell_bg[0, :, :, z, 0] > 0.5, cmap="gray")
             obj3 = axs[2].imshow(self.segresult.segmentation_auto[:, :, z],
-                                 cmap=get_random_cmap(num=self.cell_num))
+                                 vmin=0, vmax=self.cell_num, cmap=get_random_cmap(num=self.cell_num))
             anim_obj.append([obj1, obj2, obj3])
         anim = animation.ArtistAnimation(figs, anim_obj, interval=200).to_jshtml()
 
