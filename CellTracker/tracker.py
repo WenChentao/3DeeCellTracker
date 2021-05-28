@@ -191,9 +191,9 @@ class Draw:
 
     def draw_segresult(self, percentile_high=99.9):
         axs, figs = self._make_3subplots()
-        axs[0].set_title(f"Raw image at t={self.vol}", fontdict=TITLE_STYLE1)
-        axs[1].set_title(f"Cell regions at t={self.vol} by U-Net", fontdict=TITLE_STYLE1)
-        axs[2].set_title(f"Auto-_segment at t={self.vol}", fontdict=TITLE_STYLE1)
+        axs[0].set_title(f"Raw image at vol {self.vol}", fontdict=TITLE_STYLE1)
+        axs[1].set_title(f"Cell regions at vol {self.vol} by U-Net", fontdict=TITLE_STYLE1)
+        axs[2].set_title(f"Auto-_segment at vol {self.vol}", fontdict=TITLE_STYLE1)
         anim_obj = []
         vmax = np.percentile(self.segresult.image_gcn, percentile_high)
         for z in range(self.z_siz):
@@ -215,10 +215,10 @@ class Draw:
     def draw_manual_seg1(self):
         axm, figm = self._make_horizontal_2subplots()
         axm[0].imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0], axis=2) > 0.5, cmap="gray")
-        axm[0].set_title(f"Cell regions at t={self.vol} by U-Net", fontdict=TITLE_STYLE1)
+        axm[0].set_title(f"Cell regions at vol {self.vol} by U-Net", fontdict=TITLE_STYLE1)
         axm[1].imshow(np.max(self.seg_cells_interpolated_corrected, axis=2),
                       cmap=get_random_cmap(num=self.cell_num_t0))
-        axm[1].set_title(f"Manual _segment at t=1", fontdict=TITLE_STYLE1)
+        axm[1].set_title(f"Manual _segment at vol 1", fontdict=TITLE_STYLE1)
 
     def _get_tracking_anim(self, ax, r_coordinates_predicted_pre, r_coordinates_segmented_post,
                            r_coordinates_predicted_post, layercoord, draw_point=True):
@@ -235,7 +235,8 @@ class Draw:
 
     def draw_correction(self, i_disp_from_vol1_updated, r_coor_predicted):
         ax, fig = self._make_horizontal_2subplots()
-        plt.suptitle("Accurate Correction", size=16)
+        ax[0].set_title("Accurate Correction (y-x plane)", size=16)
+        ax[1].set_title("Accurate Correction (y-z plane)", size=16)
         self._draw_correction(ax, r_coor_predicted, i_disp_from_vol1_updated)
         return None
 
@@ -289,16 +290,15 @@ class Draw:
         ax1.imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0], axis=2) > 0.5, cmap="gray")
         ax1.imshow(np.max(self.seg_cells_interpolated_corrected[:, :, self.Z_RANGE_INTERP], axis=2),
                    cmap=get_random_cmap(num=self.cell_num_t0), alpha=ALPHA_BLEND)
-        ax1.set_title(f"Before matching: Cells at vol {volume2} + Labels at vol {self.vol}",
-                      fontdict=TITLE_STYLE1)
-        ax1.set_ylabel("x", fontdict=TITLE_STYLE1)
 
         ax2.imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0], axis=0).T > 0.5, aspect=self.z_xy_ratio,
                    cmap="gray")
         ax2.imshow(np.max(self.seg_cells_interpolated_corrected[:, :, self.Z_RANGE_INTERP], axis=0).T,
                    cmap=get_random_cmap(num=self.cell_num_t0), aspect=self.z_xy_ratio, alpha=ALPHA_BLEND)
-        ax2.set_ylabel("z", fontdict=TITLE_STYLE1)
-        ax2.set_xlabel("y", labelpad=24, fontdict=TITLE_STYLE1)
+        ax1.set_title(f"Before matching: Cells at vol {volume2} + Labels at vol {self.vol} (y-x plane)",
+                      fontdict=TITLE_STYLE1)
+        ax2.set_title(f"Before matching (y-z plane)",
+                      fontdict=TITLE_STYLE1)
 
     def _draw_after_matching(self, ax1, ax2, volume2, legend=True):
         ax1.imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0], axis=2) > 0.5, cmap="gray")
@@ -310,11 +310,10 @@ class Draw:
         ax2.imshow(np.max(self.tracked_labels, axis=0).T, cmap=get_random_cmap(num=self.cell_num_t0),
                    aspect=self.z_xy_ratio, alpha=ALPHA_BLEND)
         if legend:
-            ax1.set_title(f"After matching: Cells at vol {volume2} + Labels at vol {volume2}",
+            ax1.set_title(f"After matching: Cells at vol {volume2} + Labels at vol {volume2} (y-x plane)",
                           fontdict=TITLE_STYLE1)
-            ax1.set_ylabel("x", fontdict=TITLE_STYLE1)
-            ax2.set_ylabel("z", fontdict=TITLE_STYLE1)
-            ax2.set_xlabel("y", labelpad=24, fontdict=TITLE_STYLE1)
+            ax2.set_title(f"After matching (y-z plane)",
+                          fontdict=TITLE_STYLE1)
         return None
 
     def _prepare_tracking_animation(self):
@@ -653,8 +652,8 @@ class Tracker(Segmentation, Draw):
         fig, axs = plt.subplots(1, 2, figsize=(20, int(12 * self.x_siz / self.y_siz)))
         axs[0].imshow(np.max(self.label_vol1, axis=2), cmap="gray")
         axs[1].imshow(np.max(train_prediction, axis=2) > 0.5, cmap="gray")
-        axs[0].set_title("Image (vol 1)")
-        axs[1].set_title(f"Cell prediction at step {step} (vol 1)")
+        axs[0].set_title("Cell regions from manual segmentation at vol 1")
+        axs[1].set_title(f"Cell prediction at step {step} at vol 1")
         plt.tight_layout()
         plt.pause(0.1)
 
