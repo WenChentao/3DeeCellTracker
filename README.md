@@ -36,7 +36,7 @@ To learn how to track cells use 3DeeCellTracker, see following notebooks for exa
 
 
 2. Track cells in freely moving animals: 
-    - [**Ensemble mode (clear notebook)**](ensemble_mode_worm4.ipynb)
+    - [**Ensemble mode (clear notebook)**](ensemble_mode_worm4-clear.ipynb)
     - [**Ensemble mode (results)**](https://wenchentao.github.io//3DeeCellTracker/ensemble_mode_worm4.html)
 
 
