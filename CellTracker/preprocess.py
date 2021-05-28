@@ -67,7 +67,7 @@ def load_image(folder_path, print_=True):
     return img_array
 
 
-def lcn(img3d, filter_size=(3, 27, 27)):
+def lcn(img3d, noise=5, filter_size=(27, 27, 1)):
     """
     Local contrast normalization by cpu
     Input: 
@@ -81,7 +81,7 @@ def lcn(img3d, filter_size=(3, 27, 27)):
     avg = ndimage.convolve(img3d, filter, mode='reflect')
     diff_sqr = np.square(img3d - avg)
     std = np.sqrt(ndimage.convolve(diff_sqr, filter, mode='reflect'))
-    norm = np.divide(img3d - avg, std + 5)
+    norm = np.divide(img3d - avg, std + noise)
     return norm
 
 
@@ -133,7 +133,7 @@ def _normalize_image(image, noise_level):
     """
     image_norm = image - np.median(image)
     image_norm[image_norm < 0] = 0
-    return lcn_gpu(image_norm, noise_level, filter_size=(27, 27, 3))
+    return lcn_gpu(image_norm, noise_level, filter_size=(27, 27, 1))
 
 
 def _normalize_label(label_img):
