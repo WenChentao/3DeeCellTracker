@@ -146,7 +146,7 @@ def points_match_generator(ptrs, k_ptrs, affine_level, rand_move_level, batch_si
 gen_train = points_match_generator(train, k_ptrs, affine_level, random_movement_level, batch_size)
 
 ###############################################
-#            Define the FNN model               
+#            Define the FFN model
 ###############################################
 
 ref = Input(shape=(k_ptrs*3+1, ))
@@ -162,18 +162,18 @@ merged2=dense2(merged_vector)
 merged2=BatchNormalization()(merged2)
 predictions = Dense(1, activation='sigmoid')(merged2)
 
-FNN_model = Model(inputs=[ref, tgt], outputs=predictions)
-FNN_model.summary()
-FNN_model.compile(optimizer='adam',
+FFN_model = Model(inputs=[ref, tgt], outputs=predictions)
+FFN_model.summary()
+FFN_model.compile(optimizer='adam',
               loss='binary_crossentropy',
               metrics=['accuracy'])
 
 ###############################################
-#            Train the FNN model              
+#            Train the FFN model
 ###############################################
 model_callback=ModelCheckpoint(weights_path+'weights.{epoch:02d}.hdf5', monitor='loss',
                                save_best_only=True)
-history = FNN_model.fit_generator(gen_train, callbacks=[model_callback], class_weight={0:0.5, 1:0.5}, 
+history = FFN_model.fit_generator(gen_train, callbacks=[model_callback], class_weight={0:0.5, 1:0.5},
                     epochs=epochs,steps_per_epoch=steps_per_epoch)
 
 # plot loss function
@@ -189,7 +189,7 @@ plt.show()
 
 # load weights and predict initial matching in test data
 weight = 1
-FNN_model.load_weights(weights_path+'weights.%02d.hdf5'%weight)
-init_match = initial_matching(FNN_model, train, test, k_ptrs)
+FFN_model.load_weights(weights_path+'weights.%02d.hdf5'%weight)
+init_match = initial_matching(FFN_model, train, test, k_ptrs)
 fig = FFN_matching_plot(train,test,init_match)
 fig.savefig(save_prediction_path+'weights%02d_test.tif'%weight)
