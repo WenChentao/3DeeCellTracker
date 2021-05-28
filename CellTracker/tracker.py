@@ -408,23 +408,6 @@ class Segmentation:
         self.recalculate_unet = False
         self.segresult = self.SegResults()
 
-    # def retrain(self, iteration=10, weights_name="weights_training_"):
-    #     self.unet_model.load_weights(os.path.join(self.models_path,'weights_initial.h5'))
-    #     for step in range(1, iteration+1):
-    #         self.unet_model.fit_generator(self.train_generator, validation_data=self.valid_data, epochs=1, steps_per_epoch=60)
-    #         if step == 1:
-    #             self.val_losses = [self.unet_model.history.history["val_loss"]]
-    #             print("val_loss at step 1: ", min(self.val_losses))
-    #             self.unet_model.save_weights(os.path.join(self.models_path, weights_name + f"step{step}.h5"))
-    #             self.draw_prediction(step)
-    #         else:
-    #             loss = self.unet_model.history.history["val_loss"]
-    #             if loss<min(self.val_losses):
-    #                 print("val_loss updated from ", min(self.val_losses)," to ", loss)
-    #                 self.unet_model.save_weights(os.path.join(self.models_path, weights_name + f"step{step}.h5"))
-    #                 self.draw_prediction(step)
-    #             self.val_losses.append(loss)
-
     def set_segmentation(self, noise_level=None, min_size=None, reset_=False):
         """Reset the parameters and/or delete the caches of predictions by unet"""
         if self.noise_level == noise_level and self.min_size == min_size:
