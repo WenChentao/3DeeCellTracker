@@ -30,15 +30,20 @@ $ pip install 3DeeCellTracker
 For detailed instructions, see [here](Doc/Enviroment.md).
 ## Quick Start
 To learn how to track cells use 3DeeCellTracker, see following notebooks for examples:
-- Track cells in deforming organs: 
-  - [**Single mode (clear notebook)**](single_mode_worm1-clear.ipynb);
-  - [**single mode (results)**](https://wenchentao.github.io//3DeeCellTracker/single_mode_worm1.html)
-- Track cells in freely moving animals: 
-  - [**Ensemble mode (clear notebook)**](ensemble_mode_worm4.ipynb)
-  - [**Ensemble mode (results)**](https://wenchentao.github.io//3DeeCellTracker/ensemble_mode_worm4.html)
+1. Track cells in deforming organs: 
+    - [**Single mode (clear notebook)**](single_mode_worm1-clear.ipynb);
+    - [**single mode (results)**](https://wenchentao.github.io//3DeeCellTracker/single_mode_worm1.html)
 
-- Train a new 3D U-Net for segmenting cells in new optical conditions: [Train unet]().
 
+2. Track cells in freely moving animals: 
+    - [**Ensemble mode (clear notebook)**](ensemble_mode_worm4.ipynb)
+    - [**Ensemble mode (results)**](https://wenchentao.github.io//3DeeCellTracker/ensemble_mode_worm4.html)
+
+
+3. Train a new 3D U-Net for segmenting cells in new optical conditions: 
+    - [**Train 3D U-Net (clear notebook)**](3D_U_Net_training-clear.ipynb).
+    - [**Train 3D U-Net (results)**](https://wenchentao.github.io//3DeeCellTracker/3D_U_Net_training.html).
+  
 **Note**: Codes above were based on the latest version. 
 For old programs used in eLife 2021, please check the "./Tracking" folder.
 
