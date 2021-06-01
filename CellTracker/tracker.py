@@ -13,6 +13,7 @@ import bz2
 import os
 import pickle
 import time
+import warnings
 from functools import reduce
 
 import cv2
@@ -167,7 +168,7 @@ def save_img3ts(z_range, img, path, t):
     save a 3D image at time t as 2D image series
     """
     for i, z in enumerate(z_range):
-        img2d = (img[:, :, z - 1]).astype(np.uint8)
+        img2d = (img[:, :, z]).astype(np.uint8)
         Image.fromarray(img2d).save(path % (t, i + 1))
 
 
@@ -598,9 +599,10 @@ class Tracker(Segmentation, Draw):
     def load_manual_seg(self):
         # load manually corrected _segment
         segmentation_manual = load_image(self.manual_segmentation_vol1_path, print_=False)
+        print("Loaded manual _segment at vol 1")
+
         # relabel cells sequentially
         self.segmentation_manual_relabels, _, _ = relabel_sequential(segmentation_manual)
-        print("Loaded manual _segment at vol 1")
 
     def _retrain_preprocess(self):
         self.image_raw_vol1 = read_image_ts(1, self.raw_image_path, self.image_name, (1, self.z_siz + 1))
@@ -674,8 +676,12 @@ class Tracker(Segmentation, Draw):
         self.seg_cells_interpolated_corrected = self._interpolate()
         self.Z_RANGE_INTERP = range(self.z_scaling // 2, self.seg_cells_interpolated_corrected.shape[2],
                                     self.z_scaling)
+
+        self.seg_cells_interpolated_corrected = self.relabel_separated_cells(self.seg_cells_interpolated_corrected)
+        self.segmentation_manual_relabels = self.seg_cells_interpolated_corrected[:,:, self.Z_RANGE_INTERP]
+
         # save labels in the first volume (interpolated)
-        save_img3ts(self.Z_RANGE_INTERP, self.seg_cells_interpolated_corrected,
+        save_img3ts(range(0, self.z_siz), self.segmentation_manual_relabels,
                     self.track_results_path + "track_results_t%04i_z%04i.tif", t=1)
 
         # calculate coordinates of cell centers at t=1
@@ -685,6 +691,15 @@ class Tracker(Segmentation, Draw):
         r_coordinates_manual_vol1 = self._transform_layer_to_real(center_points_t1)
         self.r_coordinates_tracked_t0 = r_coordinates_manual_vol1.copy()
         self.cell_num_t0 = r_coordinates_manual_vol1.shape[0]
+
+    @staticmethod
+    def relabel_separated_cells(seg_cells_interpolated):
+        num_cells = np.size(np.unique(seg_cells_interpolated)) - 1
+        seg_cells_interpolated_corrected = label(seg_cells_interpolated, connectivity=3)
+        if num_cells != np.max(seg_cells_interpolated_corrected):
+            print(f"WARNING: {num_cells} cells were manually labeled while the program found "
+                  f"{np.max(seg_cells_interpolated_corrected)} separated cells and corrected it")
+        return seg_cells_interpolated_corrected
 
     def _interpolate(self):
         seg_cells_interpolated, seg_cell_or_bg = gaussian_filter(
@@ -961,9 +976,8 @@ class Tracker(Segmentation, Draw):
         i_tracked_cells_corrected[i_overlap_corrected > 1] = 0
         for i in np.where(cells_on_boundary_local == 1)[0]:
             i_tracked_cells_corrected[i_tracked_cells_corrected == (i + 1)] = 0
-        z_range = range(self.z_scaling // 2, self.z_siz * self.z_scaling, self.z_scaling)
         tracked_labels = watershed_2d_markers(
-            i_tracked_cells_corrected[:, :, z_range], i_overlap_corrected[:, :, z_range],
+            i_tracked_cells_corrected[:, :, self.Z_RANGE_INTERP], i_overlap_corrected[:, :, self.Z_RANGE_INTERP],
             z_range=self.z_siz)
         return tracked_labels
 
@@ -1022,7 +1036,7 @@ class Tracker(Segmentation, Draw):
         """
         # skip frames that cannot be tracked
         if target_volume in self.miss_frame:
-            save_img3ts(range(1, self.z_siz + 1), self.tracked_labels,
+            save_img3ts(range(0, self.z_siz), self.tracked_labels,
                         self.track_results_path + "track_results_t%04i_z%04i.tif", target_volume)
             self.history_r_displacements.append(self.history_r_displacements[-1])
             self.history_r_segmented_coordinates.append(self.segresult.r_coordinates_segment)
@@ -1053,7 +1067,7 @@ class Tracker(Segmentation, Draw):
         self.tracked_labels = self._transform_motion_to_image(self.cells_on_boundary, i_disp_from_vol1_updated)
 
         # save tracked labels
-        save_img3ts(range(1, self.z_siz + 1), self.tracked_labels,
+        save_img3ts(range(0, self.z_siz), self.tracked_labels,
                     self.track_results_path + "track_results_t%04i_z%04i.tif", target_volume)
 
         self._draw_matching_6panel(target_volume, axc6, r_coor_predicted_mean, i_disp_from_vol1_updated)
