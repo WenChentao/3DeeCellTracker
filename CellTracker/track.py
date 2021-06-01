@@ -5,9 +5,9 @@ Created on Fri Oct 13 10:37:20 2017
 
 @author: wen
 """
-from numpy import unravel_index
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+from skimage.filters import gaussian
 from sklearn.neighbors import NearestNeighbors
 
 
@@ -52,7 +52,7 @@ def pr_gls_quick(X, Y, corr, BETA=300, max_iteration=20, LAMBDA=0.1, vol=1E8):
         cc_max = cc_ref_tgt_temp.max()
         if cc_max < 0.5:
             break
-        cc_max_idx = unravel_index(cc_ref_tgt_temp.argmax(), cc_ref_tgt_temp.shape)
+        cc_max_idx = np.unravel_index(cc_ref_tgt_temp.argmax(), cc_ref_tgt_temp.shape)
         init_match[cc_max_idx[0], :] = 0.1 / (length_X - 1)
         init_match[cc_max_idx[0], cc_max_idx[1]] = 0.9
         cc_ref_tgt_temp[cc_max_idx[0], :] = 0;
@@ -199,7 +199,7 @@ def pr_gls(X,Y,corr,BETA=300, max_iteration=20, LAMBDA=0.1,vol=1E8):
         cc_max=cc_ref_tgt_temp.max()
         if cc_max<0.5:
             break
-        cc_max_idx=unravel_index(cc_ref_tgt_temp.argmax(),cc_ref_tgt_temp.shape)
+        cc_max_idx=np.unravel_index(cc_ref_tgt_temp.argmax(),cc_ref_tgt_temp.shape)
         init_match[cc_max_idx[0],:]=0.1/(length_X-1)    
         init_match[cc_max_idx[0],cc_max_idx[1]]=0.9
         cc_ref_tgt_temp[cc_max_idx[0],:]=0;
@@ -422,7 +422,7 @@ def FFN_matching_plot(ref_ptrs, tgt_ptrs, initial_match_score):
         cc_max=cc_ref_tgt_temp.max()
         if cc_max<0.5:
             break
-        cc_max_idx=unravel_index(cc_ref_tgt_temp.argmax(),cc_ref_tgt_temp.shape)
+        cc_max_idx=np.unravel_index(cc_ref_tgt_temp.argmax(),cc_ref_tgt_temp.shape)
     
         plt.plot([ref_ptrs[cc_max_idx[1],1],tgt_ptrs_y_bias[cc_max_idx[0],1]],
              [-ref_ptrs[cc_max_idx[1],0],-tgt_ptrs_y_bias[cc_max_idx[0],0]],'r-')
@@ -450,19 +450,59 @@ def get_subregions(label_image, num):
             print(f"Calculating subregions... cell: {label}", end="\r")
         else:
             print(f"Calculating subregions... cell: {label}")
-        x_max, x_min, y_max, y_min, z_max, z_min = get_coordinates(label, label_image)
+        x_max, x_min, y_max, y_min, z_max, z_min = _get_coordinates(label, label_image, get_subregion=False)
         region_list.append(label_image[x_min:x_max + 1, y_min:y_max + 1, z_min:z_max + 1] == label)
         region_width.append([x_max + 1 - x_min, y_max + 1 - y_min, z_max + 1 - z_min])
         region_coord_min.append([x_min, y_min, z_min])
     return region_list, region_width, region_coord_min
 
 
-def get_coordinates(label, label_image):
+def gaussian_filter(img, z_scaling=10, smooth_sigma=5):
+    """
+    Generate smoothed label image of cells
+    Input: 
+        img: label image
+        z_scaling: factor of interpolations along z axis, should be <10
+        smooth_sigma: sigma used for making Gaussian blur
+    Return:
+        output_img: Generated smoothed label image
+        mask: mask image indicating the overlapping of multiple cells (0: background;
+        1: one cell; >1: multiple cells)
+    """
+    img_interp = np.repeat(img, z_scaling, axis=2)
+    shape_interp = img_interp.shape
+    output_img = np.zeros((shape_interp[0] + 10, shape_interp[1] + 10, shape_interp[2] + 10), dtype='int')
+    mask = output_img.copy()
+
+    for label in range(1, np.max(img) + 1):
+        print(f"Interpolating... cell:{label}", end="\r")
+        x_max, x_min, y_max, y_min, z_max, z_min, subregion_pad, voxels = _get_coordinates(label, img_interp)
+
+        percentage = 1 - np.divide(voxels, np.size(subregion_pad), dtype='float')
+
+        img_smooth = gaussian(subregion_pad, sigma=smooth_sigma, mode='constant')
+
+        threshold = np.percentile(img_smooth, percentage * 100)
+
+        cell_region_interp = img_smooth > threshold
+
+        output_img[x_min:x_max + 11, y_min:y_max + 11, z_min:z_max + 11] += cell_region_interp * label
+        mask[x_min:x_max + 11, y_min:y_max + 11, z_min:z_max + 11] += cell_region_interp * 1
+
+    return output_img, mask
+
+
+def _get_coordinates(label, label_image, get_subregion=True):
     region = np.where(label_image == label)
     x_max, x_min = np.max(region[0]), np.min(region[0])
     y_max, y_min = np.max(region[1]), np.min(region[1])
     z_max, z_min = np.max(region[2]), np.min(region[2])
-    return x_max, x_min, y_max, y_min, z_max, z_min
+    if not get_subregion:
+        return x_max, x_min, y_max, y_min, z_max, z_min
+    else:
+        subregion = np.zeros((x_max-x_min+11,y_max-y_min+11,z_max-z_min+11))
+        subregion[region[0] - x_min + 5, region[1] - y_min + 5, region[2] - z_min + 5] = 0.5
+        return x_max, x_min, y_max, y_min, z_max, z_min, subregion, np.size(region[0])
 
 
 def get_reference_vols(ensemble, vol, adjacent=False):

@@ -30,9 +30,8 @@ from scipy.stats import trim_mean
 from skimage.measure import label
 from skimage.segmentation import relabel_sequential, find_boundaries
 
-from .interpolate_labels import gaussian_filter
 from .preprocess import _make_folder, _normalize_image, _normalize_label, load_image
-from .track import pr_gls_quick, initial_matching_quick, \
+from .track import pr_gls_quick, initial_matching_quick, gaussian_filter, \
     get_reference_vols, get_subregions, tracking_plot_xy, tracking_plot_zx
 from .unet3d import unet3_prediction, _divide_img, _augmentation_generator
 from .watershed import watershed_2d, watershed_3d, watershed_2d_markers
