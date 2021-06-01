@@ -21,15 +21,15 @@ def gaussian_filter(img, z_scaling=10, smooth_sigma=5):
         mask: mask image indicating the overlapping of multiple cells (0: background;
         1: one cell; >1: multiple cells)
     """
-    img_10x = np.repeat(img, z_scaling, axis=2)
-    shape_10x = img_10x.shape
+    img_interp = np.repeat(img, z_scaling, axis=2)
+    shape_interp = img_interp.shape
     labels_num = np.max(img)
-    output_img = np.zeros((shape_10x[0]+10,shape_10x[1]+10,shape_10x[2]+10),dtype='int')
+    output_img = np.zeros((shape_interp[0]+10,shape_interp[1]+10,shape_interp[2]+10),dtype='int')
     mask = output_img.copy()
     
     for label in range(1, labels_num+1):
         print(f"Interpolating... cell:{label}", end="\r")
-        x,y,z = np.where(img_10x==label)
+        x,y,z = np.where(img_interp==label)
         xi, yi, zi = np.mgrid[x.min()-5:x.max()+6, y.min()-5:y.max()+6, z.min()-5:z.max()+6]
         d = np.zeros(xi.shape)
         d[x-x.min()+5,y-y.min()+5,z-z.min()+5]=0.5

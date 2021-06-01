@@ -18,10 +18,11 @@ from keras.layers import Conv3D, LeakyReLU, Input, MaxPooling3D, \
 from keras.models import Model
 from keras.preprocessing.image import ImageDataGenerator
 
-from .preprocess import load_image, _make_folder, _normalize_image, _normalize_label
+from CellTracker.preprocess import load_image, _make_folder, _normalize_image, _normalize_label
 
 warnings.filterwarnings('ignore')
 
+TITLE_STYLE = {'fontsize': 16, 'verticalalignment': 'bottom'}
 
 def unet3_a():
     """
@@ -342,10 +343,10 @@ class TrainingUNet3D:
     def draw_dataset(self, percentile_top=99.9, percentile_bottom=10):
         axs = self._show_4images(percentile_bottom, percentile_top,
                                  (self.train_image, self.train_label, self.valid_image, self.valid_label))
-        axs[0, 0].set_title("Max projection of image (train)")
-        axs[0, 1].set_title("Max projection of cell annotation (train)")
-        axs[1, 0].set_title("Max projection of image (validation)")
-        axs[1, 1].set_title("Max projection of cell annotation (validation)")
+        axs[0, 0].set_title("Max projection of image (train)", fontdict=TITLE_STYLE)
+        axs[0, 1].set_title("Max projection of cell annotation (train)", fontdict=TITLE_STYLE)
+        axs[1, 0].set_title("Max projection of image (validation)", fontdict=TITLE_STYLE)
+        axs[1, 1].set_title("Max projection of cell annotation (validation)", fontdict=TITLE_STYLE)
         plt.tight_layout()
         plt.pause(0.1)
 
@@ -353,10 +354,10 @@ class TrainingUNet3D:
         axs = self._show_4images(percentile_bottom, percentile_top,
                                  (self.train_image_norm, self.train_label_norm, self.valid_image_norm,
                                   self.valid_label_norm))
-        axs[0, 0].set_title("Max projection of normalized image (train)")
-        axs[0, 1].set_title("Max projection of cell annotation (train)")
-        axs[1, 0].set_title("Max projection of normalized image (validation)")
-        axs[1, 1].set_title("Max projection of cell annotation (validation)")
+        axs[0, 0].set_title("Max projection of normalized image (train)", fontdict=TITLE_STYLE)
+        axs[0, 1].set_title("Max projection of cell annotation (train)", fontdict=TITLE_STYLE)
+        axs[1, 0].set_title("Max projection of normalized image (validation)", fontdict=TITLE_STYLE)
+        axs[1, 1].set_title("Max projection of cell annotation (validation)", fontdict=TITLE_STYLE)
         plt.tight_layout()
         plt.pause(0.1)
 
@@ -413,9 +414,9 @@ class TrainingUNet3D:
         valid_prediction = np.squeeze(unet3_prediction(np.expand_dims(self.valid_image_norm,axis=(0,4)), self.model))
         axs = self._show_4images(percentile_bottom, percentile_top,
                                  (self.train_image, train_prediction, self.valid_image, valid_prediction))
-        axs[0, 0].set_title("Image (train)")
-        axs[0, 1].set_title(f"Cell prediction at step {step} (train)")
-        axs[1, 0].set_title("Max projection of image (validation)")
-        axs[1, 1].set_title(f"Cell prediction at step {step} (validation)")
+        axs[0, 0].set_title("Image (train)", fontdict=TITLE_STYLE)
+        axs[0, 1].set_title(f"Cell prediction at step {step} (train)", fontdict=TITLE_STYLE)
+        axs[1, 0].set_title("Max projection of image (validation)", fontdict=TITLE_STYLE)
+        axs[1, 1].set_title(f"Cell prediction at step {step} (validation)", fontdict=TITLE_STYLE)
         plt.tight_layout()
         plt.pause(0.1)

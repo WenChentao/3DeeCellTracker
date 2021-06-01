@@ -39,13 +39,13 @@ from .watershed import watershed_2d, watershed_3d, watershed_2d_markers
 
 mpl.rcParams['image.interpolation'] = 'none'
 
-TITLE_STYLE1 = {'fontsize': 16, 'verticalalignment': 'bottom'}
+TITLE_STYLE = {'fontsize': 16, 'verticalalignment': 'bottom'}
 
 REP_NUM_PRGLS = 5
 REP_NUM_CORRECTION = 20
 BOUNDARY_XY = 6
 ALPHA_BLEND = 0.5
-
+# TODO: Write message when no cells were detected in segmentation (improper parameters)
 
 def timer(func):
     """
@@ -191,9 +191,9 @@ class Draw:
 
     def draw_segresult(self, percentile_high=99.9):
         axs, figs = self._make_3subplots()
-        axs[0].set_title(f"Raw image at vol {self.vol}", fontdict=TITLE_STYLE1)
-        axs[1].set_title(f"Cell regions at vol {self.vol} by U-Net", fontdict=TITLE_STYLE1)
-        axs[2].set_title(f"Auto-_segment at vol {self.vol}", fontdict=TITLE_STYLE1)
+        axs[0].set_title(f"Raw image at vol {self.vol}", fontdict=TITLE_STYLE)
+        axs[1].set_title(f"Cell regions at vol {self.vol} by U-Net", fontdict=TITLE_STYLE)
+        axs[2].set_title(f"Auto-_segment at vol {self.vol}", fontdict=TITLE_STYLE)
         anim_obj = []
         vmax = np.percentile(self.segresult.image_gcn, percentile_high)
         for z in range(self.z_siz):
@@ -215,10 +215,10 @@ class Draw:
     def draw_manual_seg1(self):
         axm, figm = self._make_horizontal_2subplots()
         axm[0].imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0], axis=2) > 0.5, cmap="gray")
-        axm[0].set_title(f"Cell regions at vol {self.vol} by U-Net", fontdict=TITLE_STYLE1)
+        axm[0].set_title(f"Cell regions at vol {self.vol} by U-Net", fontdict=TITLE_STYLE)
         axm[1].imshow(np.max(self.seg_cells_interpolated_corrected, axis=2),
                       cmap=get_random_cmap(num=self.cell_num_t0))
-        axm[1].set_title(f"Manual _segment at vol 1", fontdict=TITLE_STYLE1)
+        axm[1].set_title(f"Manual _segment at vol 1", fontdict=TITLE_STYLE)
 
     def _get_tracking_anim(self, ax, r_coordinates_predicted_pre, r_coordinates_segmented_post,
                            r_coordinates_predicted_post, layercoord, draw_point=True):
@@ -296,9 +296,9 @@ class Draw:
         ax2.imshow(np.max(self.seg_cells_interpolated_corrected[:, :, self.Z_RANGE_INTERP], axis=0).T,
                    cmap=get_random_cmap(num=self.cell_num_t0), aspect=self.z_xy_ratio, alpha=ALPHA_BLEND)
         ax1.set_title(f"Before matching: Cells at vol {volume2} + Labels at vol {self.vol} (y-x plane)",
-                      fontdict=TITLE_STYLE1)
+                      fontdict=TITLE_STYLE)
         ax2.set_title(f"Before matching (y-z plane)",
-                      fontdict=TITLE_STYLE1)
+                      fontdict=TITLE_STYLE)
 
     def _draw_after_matching(self, ax1, ax2, volume2, legend=True):
         ax1.imshow(np.max(self.segresult.image_cell_bg[0, :, :, :, 0], axis=2) > 0.5, cmap="gray")
@@ -311,15 +311,15 @@ class Draw:
                    aspect=self.z_xy_ratio, alpha=ALPHA_BLEND)
         if legend:
             ax1.set_title(f"After matching: Cells at vol {volume2} + Labels at vol {volume2} (y-x plane)",
-                          fontdict=TITLE_STYLE1)
+                          fontdict=TITLE_STYLE)
             ax2.set_title(f"After matching (y-z plane)",
-                          fontdict=TITLE_STYLE1)
+                          fontdict=TITLE_STYLE)
         return None
 
     def _prepare_tracking_animation(self):
         ax, fig = self._make_horizontal_2subplots()
-        ax[0].set_title("Matching by FFN + PR-GLS (y-x plane)", fontdict=TITLE_STYLE1)
-        ax[1].set_title("Matching by FFN + PR-GLS (y-z plane)", fontdict=TITLE_STYLE1)
+        ax[0].set_title("Matching by FFN + PR-GLS (y-x plane)", fontdict=TITLE_STYLE)
+        ax[1].set_title("Matching by FFN + PR-GLS (y-z plane)", fontdict=TITLE_STYLE)
         plt.tight_layout()
         plt.close(fig)
         return ax, fig
@@ -652,8 +652,8 @@ class Tracker(Segmentation, Draw):
         fig, axs = plt.subplots(1, 2, figsize=(20, int(12 * self.x_siz / self.y_siz)))
         axs[0].imshow(np.max(self.label_vol1, axis=2), cmap="gray")
         axs[1].imshow(np.max(train_prediction, axis=2) > 0.5, cmap="gray")
-        axs[0].set_title("Cell regions from manual segmentation at vol 1")
-        axs[1].set_title(f"Cell prediction at step {step} at vol 1")
+        axs[0].set_title("Cell regions from manual segmentation at vol 1", fontdict=TITLE_STYLE)
+        axs[1].set_title(f"Cell prediction at step {step} at vol 1", fontdict=TITLE_STYLE)
         plt.tight_layout()
         plt.pause(0.1)
 
