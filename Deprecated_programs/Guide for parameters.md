@@ -69,10 +69,10 @@ shrink = (24,24,24) # pad and shrink for u-net prediction, corresponding to (x,y
     </thead>
     <tbody>
         <tr>
-            <td><img src="/pictures/zebrafish_raw_z88.png"></td>
-            <td><img src="/pictures/zebrafish_noiselevel_50_z88.png"></td>
-            <td><img src="/pictures/zebrafish_noiselevel_200_z88.png"></td>
-            <td><img src="/pictures/zebrafish_noiselevel_500_z88.png"></td>
+            <td><img src="../pictures/zebrafish_raw_z88.png"></td>
+            <td><img src="../pictures/zebrafish_noiselevel_50_z88.png"></td>
+            <td><img src="../pictures/zebrafish_noiselevel_200_z88.png"></td>
+            <td><img src="../pictures/zebrafish_noiselevel_500_z88.png"></td>
         </tr>
     </tbody>
 </table>
@@ -104,10 +104,10 @@ shrink = (24,24,24) # pad and shrink for u-net prediction, corresponding to (x,y
     </thead>
     <tbody>
         <tr>
-            <td><img src="/pictures/zebrafish_raw_z88.png"></td>
-            <td><img src="/pictures/auto_vol1_minsize_10_z88.png"></td>
-            <td><img src="/pictures/zebrafish_noiselevel_200_z88.png"></td>
-            <td><img src="/pictures/auto_vol1_minsize_200_z88.png"></td>
+            <td><img src="../pictures/zebrafish_raw_z88.png"></td>
+            <td><img src="../pictures/auto_vol1_minsize_10_z88.png"></td>
+            <td><img src="../pictures/zebrafish_noiselevel_200_z88.png"></td>
+            <td><img src="../pictures/auto_vol1_minsize_200_z88.png"></td>
         </tr>
     </tbody>
 </table>
@@ -136,10 +136,10 @@ shrink = (24,24,24) # pad and shrink for u-net prediction, corresponding to (x,y
     </thead>
     <tbody>
         <tr>
-            <td><img src="/pictures/zebrafish_raw_t9697.png"></td>
-            <td><img src="/pictures/Beta10_xy.svg"></td>
-            <td><img src="/pictures/Beta50_xy.svg"></td>
-            <td><img src="/pictures/Beta500_xy.svg"></td>
+            <td><img src="../pictures/zebrafish_raw_t9697.png"></td>
+            <td><img src="../pictures/Beta10_xy.svg"></td>
+            <td><img src="../pictures/Beta50_xy.svg"></td>
+            <td><img src="../pictures/Beta500_xy.svg"></td>
         </tr>
     </tbody>
 </table>
@@ -170,10 +170,10 @@ shrink = (24,24,24) # pad and shrink for u-net prediction, corresponding to (x,y
     </thead>
     <tbody>
         <tr>
-            <td><img src="/pictures/zebrafish_raw_t9697.png"></td>
-            <td><img src="/pictures/Lambda_0.01_xy.svg"></td>
-            <td><img src="/pictures/Beta50_xy.svg"></td>
-            <td><img src="/pictures/Lambda_2_xy.svg"></td>
+            <td><img src="../pictures/zebrafish_raw_t9697.png"></td>
+            <td><img src="../pictures/Lambda_0.01_xy.svg"></td>
+            <td><img src="../pictures/Beta50_xy.svg"></td>
+            <td><img src="../pictures/Lambda_2_xy.svg"></td>
         </tr>
     </tbody>
 </table>
@@ -204,10 +204,10 @@ shrink = (24,24,24) # pad and shrink for u-net prediction, corresponding to (x,y
     </thead>
     <tbody>
         <tr>
-            <td><img src="/pictures/zebrafish_raw_t9697.png"></td>
-            <td><img src="/pictures/iteration_5_xy.svg"></td>
-            <td><img src="/pictures/Beta50_xy.svg"></td>
-            <td><img src="/pictures/iteration_200_xy.svg"></td>
+            <td><img src="../pictures/zebrafish_raw_t9697.png"></td>
+            <td><img src="../pictures/iteration_5_xy.svg"></td>
+            <td><img src="../pictures/Beta50_xy.svg"></td>
+            <td><img src="../pictures/iteration_200_xy.svg"></td>
         </tr>
     </tbody>
 </table>
