@@ -44,7 +44,7 @@ REP_NUM_PRGLS = 5
 REP_NUM_CORRECTION = 20
 BOUNDARY_XY = 6
 ALPHA_BLEND = 0.5
-# TODO: Write message when no cells were detected in segmentation (improper parameters)
+
 
 def timer(func):
     """
@@ -481,9 +481,13 @@ class Segmentation:
         # image_gcn will be used to correct tracking results
         image_gcn = (image_raw.copy() / 65536.0)
         image_cell_bg = self._predict_cellregions(image_raw, vol)
+        if np.max(image_cell_bg)<=0.5:
+            raise ValueError("No cell was detected by 3D U-Net! Try to reduce the noise_level.")
 
         # segment connected cell-like regions using _watershed
         segmentation_auto = self._watershed(image_cell_bg, method)
+        if np.max(segmentation_auto)==0:
+            raise ValueError("No cell was detected by watershed! Try to reduce the min_size.")
 
         # calculate coordinates of the centers of each segmented cell
         l_center_coordinates = snm.center_of_mass(segmentation_auto > 0, segmentation_auto,
