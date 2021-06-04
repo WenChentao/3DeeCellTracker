@@ -195,7 +195,7 @@ class Draw:
     Class for drawing figures. Only use its method through Tracker instances.
     """
     def __init__(self):
-        self.history_r_tracked_coordinates = None
+        self.history.r_tracked_coordinates = None
         self.r_coordinates_tracked_t0 = None
         self.segresult = None
         self.vol = None
@@ -346,7 +346,7 @@ class Draw:
             ax_i.cla()
         plt.suptitle(f"Tracking results at vol {target_volume}", size=16)
 
-        _ = self._get_tracking_anim([ax[0], ax[1]], self.history_r_tracked_coordinates[target_volume - 2],
+        _ = self._get_tracking_anim([ax[0], ax[1]], self.history.r_tracked_coordinates[target_volume - 2],
                                     self.segresult.r_coordinates_segment, r_coor_predicted_mean, layercoord=False)
         self._draw_correction([ax[2], ax[3]], r_coor_predicted_mean, i_disp_from_vol1_updated)
         self._draw_after_matching(ax[4], ax[5], target_volume, legend=False)
@@ -486,8 +486,8 @@ class SegResults:
         self.image_gcn = None
         self.r_coordinates_segment = None
 
-    def _update_results(self, image_cell_bg, l_center_coordinates, segmentation_auto,
-                        image_gcn, r_coordinates_segment):
+    def update_results(self, image_cell_bg, l_center_coordinates, segmentation_auto,
+                       image_gcn, r_coordinates_segment):
         """Update the attributes of a SegResults instance"""
         self.image_cell_bg = image_cell_bg
         self.l_center_coordinates = l_center_coordinates
@@ -508,8 +508,12 @@ class Segmentation:
         self.z_xy_ratio = z_xy_ratio
         self.z_scaling = z_scaling
         self.shrink = shrink
+        self.noise_level = None
+        self.min_size = None
+        self.vol = None
         self.paths = None
         self.unet_model = None
+        self.r_coordinates_segment_t0 = None
         self.segresult = SegResults()
 
     def set_segmentation(self, noise_level=None, min_size=None, del_cache=False):
@@ -588,7 +592,7 @@ class Segmentation:
 
         """
         self.vol = 1
-        self.segresult._update_results(*self._segment(self.vol, method=method, print_shape=True))
+        self.segresult.update_results(*self._segment(self.vol, method=method, print_shape=True))
         self.r_coordinates_segment_t0 = self.segresult.r_coordinates_segment.copy()
 
         # save the segmented cells of volume #1
@@ -679,6 +683,8 @@ class Segmentation:
 
 class Paths:
     """
+    Paths for storing data and results used by Tracker instance
+
     Attributes
     ----------
     folder_path : str
@@ -741,6 +747,17 @@ class Paths:
         self.track_results = _make_folder(track_results_path)
         self.anim = _make_folder(os.path.join(folder_path, "anim/"))
         self.unet_weights = _make_folder(os.path.join(self.models, "unet_weights/"))
+
+
+class History:
+    """
+
+    """
+    def __init__(self):
+        self.r_displacements = []
+        self.r_segmented_coordinates = []
+        self.r_tracked_coordinates = []
+        self.anim = []
 
 
 class Tracker(Segmentation, Draw):
@@ -835,7 +852,6 @@ class Tracker(Segmentation, Draw):
         self.max_iteration = maxiter_tk
         self.ensemble = ensemble
         self.adjacent = adjacent
-        self.paths = Paths(folder_path, image_name, unet_model_file, ffn_model_file)
         self.cell_num = cell_num
         self.cell_num_t0 = None
         self.Z_RANGE_INTERP = None
@@ -847,6 +863,11 @@ class Tracker(Segmentation, Draw):
         self.pad_z = None
         self.label_padding = None
         self.segmentation_manual_relabels = None
+        self.cells_on_boundary = None
+        self.ffn_model = None
+        self.val_losses = None
+        self.paths = Paths(folder_path, image_name, unet_model_file, ffn_model_file)
+        self.history = History()
         self.paths.make_folders(adjacent, ensemble)
 
     def set_tracking(self, beta_tk, lambda_tk, maxiter_tk):
@@ -1088,13 +1109,13 @@ class Tracker(Segmentation, Draw):
         Initiate the lists to store the displacement/coordinates histories from volume 1 (t0)
         """
         self.cells_on_boundary = np.zeros(self.cell_num_t0).astype(int)
-        self.history_r_displacements = []
-        self.history_r_displacements.append(np.zeros((self.cell_num_t0, 3)))
-        self.history_r_segmented_coordinates = []
-        self.history_r_segmented_coordinates.append(self.r_coordinates_segment_t0)
-        self.history_r_tracked_coordinates = []
-        self.history_r_tracked_coordinates.append(self.r_coordinates_tracked_t0)
-        self.history_anim = []
+        self.history.r_displacements = []
+        self.history.r_displacements.append(np.zeros((self.cell_num_t0, 3)))
+        self.history.r_segmented_coordinates = []
+        self.history.r_segmented_coordinates.append(self.r_coordinates_segment_t0)
+        self.history.r_tracked_coordinates = []
+        self.history.r_tracked_coordinates.append(self.r_coordinates_tracked_t0)
+        self.history.anim = []
         print("Initiated coordinates for tracking (from vol 1)")
 
     def match(self, target_volume, method="min_size"):
@@ -1119,7 +1140,7 @@ class Tracker(Segmentation, Draw):
             raise ValueError("target_volume is a miss_frame")
 
         # generate automatic _segment in current volume
-        self.segresult._update_results(*self._segment(target_volume, method=method))
+        self.segresult.update_results(*self._segment(target_volume, method=method))
 
         # track by fnn + prgls
         r_coor_predicted, anim = self._predict_pos_once(source_volume=1, draw=True)
@@ -1137,8 +1158,8 @@ class Tracker(Segmentation, Draw):
 
     def _accurate_correction(self, cells_on_boundary_local, r_coor_predicted):
         """Correct center positions of cells based on the cell regions detected by unet and intensities in raw image"""
-        r_disp_from_vol1_updated = self.history_r_displacements[-1] + \
-                                   (r_coor_predicted - self.history_r_tracked_coordinates[-1])
+        r_disp_from_vol1_updated = self.history.r_displacements[-1] + \
+                                   (r_coor_predicted - self.history.r_tracked_coordinates[-1])
         i_disp_from_vol1_updated = self._transform_real_to_interpolated(r_disp_from_vol1_updated)
         for i in range(REP_NUM_CORRECTION):
             # update positions (from vol1) by correction
@@ -1158,10 +1179,10 @@ class Tracker(Segmentation, Draw):
         """
         # fitting the parameters for transformation
         C_t, BETA_t, coor_intermediate_list = self._fit_ffn_prgls(
-            REP_NUM_PRGLS, self.history_r_segmented_coordinates[source_volume - 1])
+            REP_NUM_PRGLS, self.history.r_segmented_coordinates[source_volume - 1])
 
         # Transform the coordinates
-        r_coordinates_predicted = self.history_r_tracked_coordinates[source_volume - 1].copy()
+        r_coordinates_predicted = self.history.r_tracked_coordinates[source_volume - 1].copy()
 
         if draw:
             ax, fig = self._subplots_ffnprgls_animation()
@@ -1415,11 +1436,11 @@ class Tracker(Segmentation, Draw):
     def _reset_tracking_state(self, from_volume):
         """Remove the tracking history after a specific volume to re-track from this volume"""
         assert from_volume >= 2, "from_volume should >= 2"
-        current_vol = len(self.history_r_displacements)
-        del self.history_r_displacements[from_volume - 1:]
-        del self.history_r_segmented_coordinates[from_volume - 1:]
-        del self.history_r_tracked_coordinates[from_volume - 1:]
-        assert len(self.history_r_displacements) == from_volume - 1, \
+        current_vol = len(self.history.r_displacements)
+        del self.history.r_displacements[from_volume - 1:]
+        del self.history.r_segmented_coordinates[from_volume - 1:]
+        del self.history.r_tracked_coordinates[from_volume - 1:]
+        assert len(self.history.r_displacements) == from_volume - 1, \
             f"Currently data has been tracked until vol {current_vol}, the program cannot start from {from_volume}"
         # print(f"Currently data has been tracked until vol {current_vol}, start from vol {from_volume}")
 
@@ -1442,14 +1463,14 @@ class Tracker(Segmentation, Draw):
         if target_volume in self.miss_frame:
             save_img3ts(range(0, self.z_siz), self.tracked_labels,
                         self.paths.track_results + "track_results_t%04i_z%04i.tif", target_volume)
-            self.history_r_displacements.append(self.history_r_displacements[-1])
-            self.history_r_segmented_coordinates.append(self.segresult.r_coordinates_segment)
-            self.history_r_tracked_coordinates.append(
-                self.r_coordinates_tracked_t0 + self.history_r_displacements[-1])
+            self.history.r_displacements.append(self.history.r_displacements[-1])
+            self.history.r_segmented_coordinates.append(self.segresult.r_coordinates_segment)
+            self.history.r_tracked_coordinates.append(
+                self.r_coordinates_tracked_t0 + self.history.r_displacements[-1])
             return None
 
         # make _segment of target volume
-        self.segresult._update_results(*self._segment(target_volume, method=method))
+        self.segresult.update_results(*self._segment(target_volume, method=method))
 
         # FFN + PR-GLS predictions (single or ensemble)
         source_vols_list = get_reference_vols(self.ensemble, target_volume, adjacent=self.adjacent)
@@ -1482,8 +1503,8 @@ class Tracker(Segmentation, Draw):
         if self.ensemble:
             self.cells_on_boundary = \
                 np.zeros(self.cell_num_t0).astype(int)  # in ensemble mode, cells on boundary are not deleted forever
-        self.history_r_displacements.append(r_disp_from_vol1_updated)
-        self.history_r_segmented_coordinates.append(self.segresult.r_coordinates_segment)
-        self.history_r_tracked_coordinates.append(self.r_coordinates_tracked_t0 + r_disp_from_vol1_updated)
+        self.history.r_displacements.append(r_disp_from_vol1_updated)
+        self.history.r_segmented_coordinates.append(self.segresult.r_coordinates_segment)
+        self.history.r_tracked_coordinates.append(self.r_coordinates_tracked_t0 + r_disp_from_vol1_updated)
 
         return None
