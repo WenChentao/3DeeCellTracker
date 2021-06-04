@@ -96,8 +96,7 @@ def pr_gls_quick(X, Y, corr, BETA=300, max_iteration=20, LAMBDA=0.1, vol=1E8):
         dist_square = np.sum(np.square(T_X_tile - Y_tile), axis=2)
         sigma_square = np.sum(P * dist_square) / (3 * M_P)
 
-        # avoid using too small values of sigma_square (the sample error should be
-        # >=1 pixel)
+        # avoid using too small values of sigma_square (the sample error should be >=1 pixel)
         if sigma_square < 1:
             sigma_square = 1
 

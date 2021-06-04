@@ -5,18 +5,17 @@ Created on Fri Oct 13 10:37:20 2017
 
 @author: wen
 """
-import itertools
-import math
 import os
+import math
 import warnings
+import itertools
 from functools import partial
 
-import matplotlib.pyplot as plt
 import numpy as np
-from keras.layers import Conv3D, LeakyReLU, Input, MaxPooling3D, \
-    UpSampling3D, concatenate, BatchNormalization
+import matplotlib.pyplot as plt
 from keras.models import Model
 from keras.preprocessing.image import ImageDataGenerator
+from keras.layers import Conv3D, LeakyReLU, Input, MaxPooling3D, UpSampling3D, concatenate, BatchNormalization
 
 from CellTracker.preprocess import load_image, _make_folder, _normalize_image, _normalize_label
 
@@ -27,8 +26,11 @@ TITLE_STYLE = {'fontsize': 16, 'verticalalignment': 'bottom'}
 def unet3_a():
     """
     Generate a 3D unet model used in figure 2-S1a (eLife 2021)
-    Returns:
-        obj: keras.Model
+
+    Returns
+    -------
+    keras.Model
+        A 3D U-Net model (before training)
     """
     pool_size = up_size = (2, 2, 1)
     inputs = Input((160, 160, 16, 1))
@@ -38,8 +40,11 @@ def unet3_a():
 def unet3_b():
     """
     Generate a 3D unet model used in figure 2-S1b
-        Returns:
-        obj: keras.Model
+
+    Returns
+    -------
+    keras.Model
+        A 3D U-Net model (before training)
     """
     pool_size = up_size = (2, 2, 1)
     inputs = Input((96, 96, 8, 1))
@@ -65,8 +70,11 @@ def unet3_b():
 def unet3_c():
     """
     Generate a 3D unet model used in figure 2-S1c
-        Returns:
-        obj: keras.Model
+
+    Returns
+    -------
+    keras.Model
+        A 3D U-Net model (before training)
     """
     pool_size = up_size = (2, 2, 2)
     inputs = Input((64, 64, 64, 1))
@@ -74,6 +82,7 @@ def unet3_c():
 
 
 def _unet3_depth3(inputs, pool_size, up_size):
+    """Generate a custom 3D U-Net model"""
     downscale_p = partial(_downscale, transform=_conv3d_leakyrelu_bn)
     upscale_p = partial(_upscale, transform=_conv3d_leakyrelu_bn)
     conv_level0, pool_level1 = downscale_p(8, 16, pool_size, inputs)
@@ -92,12 +101,18 @@ def _unet3_depth3(inputs, pool_size, up_size):
 def _conv3d_leakyrelu_bn(filter_num, inputs):
     """
     Build a block to perform convolution (3d) + LeakyReLU + BatchNormalization
-    Args:
-        filter_num: (int), number of conv filters
-        inputs: (obj, numpy.ndarray), shape: (sample, x, y, z, channel)
 
-    Returns:
-        obj, numpy.ndarray
+    Parameters
+    ----------
+    filter_num : int
+        Number of conv filters
+    inputs : numpy.ndarray
+        input (multiple 3D images) of the model with shape shape: (sample, x, y, z, channel)
+
+    Returns
+    -------
+    outputs : numpy.ndarray
+        output (multiple 3D images)
     """
     outputs = Conv3D(filter_num, 3, padding='same')(inputs)
     outputs = LeakyReLU()(outputs)
@@ -108,12 +123,18 @@ def _conv3d_leakyrelu_bn(filter_num, inputs):
 def _conv3d_relu_bn(filter_num, inputs):
     """
     Build a block to perform convolution (3d) + ReLU + BatchNormalization
-    Args:
-        filter_num: (int), number of conv filters
-        inputs: (obj, numpy.ndarray), shape: (sample, x, y, z, channel)
 
-    Returns:
-        obj, numpy.ndarray
+    Parameters
+    ----------
+    filter_num : int
+        Number of conv filters
+    inputs : numpy.ndarray
+        input (multiple 3D images) of the model with shape shape: (sample, x, y, z, channel)
+
+    Returns
+    -------
+    outputs : numpy.ndarray
+        Output (multiple 3D images)
     """
     conv_2 = Conv3D(filter_num, 3, padding='same', activation='relu')(inputs)
     conv_2 = BatchNormalization()(conv_2)
@@ -123,16 +144,24 @@ def _conv3d_relu_bn(filter_num, inputs):
 def _downscale(f1_num, f2_num, pool_size, inputs, transform):
     """
     Build a block to perform twice transformations (conv+...) followed by once max pooling
-    Args:
-        f1_num: (int), number of conv filters 1
-        f2_num: (int), number of conv filters 2
-        pool_size: (tuple), window size for max pooling
-        inputs: (obj, numpy.ndarray), shape: (sample, x, y, z, channel)
-        transform: (function), the transformation method
 
-    Returns:
-        im_output: (obj, numpy.ndarray), output at the save level
-        im_downscaled: (obj, numpy.ndarray), output at the lower (downscaled) level
+    Parameters
+    ----------
+    f1_num : int
+        Number of conv filters 1
+    f2_num : int
+        Number of conv filters 2
+    pool_size : tuple
+        Window size for max pooling
+    inputs : numpy.ndarray
+    transform : function
+        The transformation method
+    Returns
+    -------
+    im_output : numpy.ndarray
+        Output at the save level
+    im_downscaled : numpy.ndarray
+        Output at the lower (downscaled) level
     """
     im_1 = transform(f1_num, inputs)
     im_output = transform(f2_num, im_1)
@@ -144,16 +173,26 @@ def _upscale(f1_num, f2_num, size, input_horiz, input_vertical, transform):
     """
     Build a block to perform twice transformations (conv+...) (on input1) followed by once upsampling,
     and then concatenated the results with input2
-    Args:
-        f1_num: (int), number of conv filters 1
-        f2_num: (int), number of conv filters 1
-        size: (tuple), window size for upsampling
-        input_horiz: (obj, numpy.ndarray), shape: (sample, x, y, z, channel), previous input2
-        input_vertical: (obj, numpy.ndarray), shape: (sample, x, y, z, channel), previous input1
-        transform: (function), the transformation method
 
-    Returns:
-        (obj, numpy.ndarray), the concatenated output
+    Parameters
+    ----------
+    f1_num : int
+        Number of conv filters 1
+    f2_num : int
+        Number of conv filters 1
+    size : tuple
+        Window size for upsampling
+    input_horiz : numpy.ndarray
+        Shape: (sample, x, y, z, channel), previous input2
+    input_vertical : numpy.ndarray
+        Shape: (sample, x, y, z, channel), previous input1
+    transform : function
+        The transformation method
+
+    Returns
+    -------
+    im_up_concatenated : numpy.ndarray
+        The concatenated output
     """
     im_1 = transform(f1_num, input_vertical)
     im_2 = transform(f2_num, im_1)
@@ -164,17 +203,20 @@ def _upscale(f1_num, f2_num, size, input_horiz, input_vertical, transform):
 def unet3_prediction(img, model, shrink=(24, 24, 2)):
     """
     Predict cell/non-cell regions by applying 3D U-net on each sub-sub_images.
-    Args:
-        img: (obj, numpy.ndarry), shape: (sample, x, y, z, channel), the normalized images to be segmented.
-        model: (obj, keras.Model), the pre-trained 3D U-Net model.
-        shrink: (tuple), the surrounding voxels to make pad.
-         it is also used to discard surrounding regions of each predicted sub-region.
 
-    Returns:
-        out_img: (obj, numpy.ndarry), predicted cell regions, shape: (sample, x, y, z, channel)
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Shape: (sample, x, y, z, channel), the normalized images to be segmented.
+    model : keras.Model
+        The pre-trained 3D U-Net model.
+    shrink : tuple
+        The surrounding voxels to make pad. It is also used to discard surrounding regions of each predicted sub-region.
 
-    Note:
-        input images is expanded outside by "reflection" to predict the voxels near borders.
+    Returns
+    -------
+    out_img : numpy.ndarray
+        Predicted cell regions, shape: (sample, x, y, z, channel)
     """
     out_centr_siz1 = model.output_shape[1] - shrink[0] * 2  # size of the center part of the prediciton by unet
     out_centr_siz2 = model.output_shape[2] - shrink[1] * 2
@@ -217,13 +259,20 @@ def unet3_prediction(img, model, shrink=(24, 24, 2)):
 def _get_sizes_padded_im(img_siz_i, out_centr_siz_i):
     """
     Calculate the sizes and number of subregions to prepare the padded sub_images
-    Args:
-        img_siz_i: (int) size of raw sub_images along axis i
-        out_centr_siz_i: (int), size of the center of the prediction by unet, along axis i
 
-    Returns:
-        temp_siz_i: (int), size of the padded sub_images along axis i
-        num_axis_i: (int), number of the subregions (as inputs for unet) along axis i
+    Parameters
+    ----------
+    img_siz_i : int
+        Size of raw sub_images along axis i
+    out_centr_siz_i : int
+        Size of the center of the prediction by unet, along axis i
+
+    Returns
+    -------
+    temp_siz_i : int
+        Size of the padded sub_images along axis i
+    num_axis_i : int
+        Number of the subregions (as inputs for unet) along axis i
     """
     num_axis_i = int(math.ceil(img_siz_i * 1.0 / out_centr_siz_i))
     temp_siz_i = num_axis_i * out_centr_siz_i
@@ -233,12 +282,18 @@ def _get_sizes_padded_im(img_siz_i, out_centr_siz_i):
 def _divide_img(img, unet_siz):
     """
     Divide an sub_images into multiple sub_images with the size used by the defined UNet
-    Args:
-        img: (obj, numpy.ndarray) shape (x, y, z), input sub_images
-        unet_siz: (tuple), (x_siz, y_siz, z_siz) input size of the UNet
 
-    Returns:
-        obj, numpy.ndarray: shape (number_subimages, x, y, z, 1) sub_images
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Shape (x, y, z), input sub_images
+    unet_siz : tuple
+        (x_siz, y_siz, z_siz), input size of the UNet
+
+    Returns
+    -------
+    numpy.ndarray
+        shape (number_subimages, x, y, z, 1) sub_images
     """
     x_siz, y_siz, z_siz = img.shape
     x_input, y_input, z_input = unet_siz
@@ -256,14 +311,23 @@ def _augmentation_generator(sub_images, sub_cells, img_gen, batch_siz):
     """
     This function generates the same style of augmentations for all 2D layers in both sub_images
     and its corresponding sub_cells.
-    Args:
-        sub_images: (obj, numpy.ndarray), shape (number_subimages, x, y, z, 1) sub_images
-        sub_cells: (obj, numpy.ndarray), shape (number_subcells, x, y, z, 1) sub_cells
-        img_gen: (obj. keras.preprocessing.image.ImageDataGenerator), A generator for 2D images
-        batch_siz: (int), batch_siz used during training the U-Net.
 
-    Returns:
-        Generator: images and its corresponding labels, both with shape (batch_size, x, y, z, 1)
+    Parameters
+    ----------
+    sub_images : numpy.ndarray
+        Shape (number_subimages, x, y, z, 1) sub_images
+    sub_cells : numpy.ndarray
+        Shape (number_subcells, x, y, z, 1) sub_cells
+    img_gen : keras.preprocessing.image.ImageDataGenerator
+        A generator for 2D images
+    batch_siz : int
+        batch_siz used during training the U-Net.
+
+    Yields
+    -------
+    image_gen : numpy.ndarray
+    cell_gen : numpy.ndarray
+        images and its corresponding labels, both with shape (batch_size, x, y, z, 1)
     """
     num_subimgs, x_siz, y_siz, z_siz = np.shape(sub_images)[0:4]
     while 1:
@@ -280,22 +344,78 @@ def _augmentation_generator(sub_images, sub_cells, img_gen, batch_siz):
 
 
 class TrainingUNet3D:
+    """
+    Class to train the 3D U-Net
+
+    Attributes
+    ----------
+    noise_level : float
+        The parameter to discriminate cell regions and background noise used in normalization
+    folder_path : str
+        The folder to store the data and training results
+    model : keras.Model
+        A 3D U-Net model (before compiling)
+    x_siz : int
+    y_siz : int
+    z_siz : int
+        Sizes of the training image
+    train_image : numpy.array
+    train_label : numpy.array
+    valid_image : numpy.array
+    valid_label : numpy.array
+        Raw images/labels
+    train_image_norm : numpy.array
+    train_label_norm : numpy.array
+    valid_image_norm : numpy.array
+    valid_label_norm : numpy.array
+        Normalized images/labels
+    train_subimage : numpy.array
+    valid_subimag : numpy.array
+    train_subcells : numpy.array
+    valid_subcells : numpy.array
+        Divided images/labels
+    train_image_path : str
+        The path to store the training image
+    train_label_path : str
+        The path to store the cell images corresponding to the training image
+    valid_image_path : str
+        The path to store the validation image
+    valid_label_path : str
+        The path to store the cell images corresponding to the validation image
+    models_path : str
+        The path to store the model weights and model files to be trained
+    """
 
     def __init__(self, noise_level, folder_path, model):
         self.x_siz, self.y_siz, self.z_siz = None, None, None
         self.noise_level = noise_level
         self.folder_path = folder_path
+        self.model = model
         self.train_image_path = None
         self.train_label_path = None
         self.valid_image_path = None
         self.valid_label_path = None
+        self.train_image = None
+        self.train_label = None
+        self.valid_image = None
+        self.valid_label = None
+        self.train_image_norm = None
+        self.valid_image_norm = None
+        self.train_label_norm = None
+        self.valid_label_norm = None
+        self.train_subimage = None
+        self.valid_subimage = None
+        self.train_subcells = None
+        self.valid_subcells = None
+        self.train_generator = None
+        self.valid_data = None
+        self.val_losses = None
         self.models_path = ""
-        self.make_folders()
-        self.model = model
+        self._make_folders()
         self.model.compile(loss='binary_crossentropy', optimizer="adam")
         self.model.save_weights(os.path.join(self.models_path,'weights_initial.h5'))
 
-    def make_folders(self):
+    def _make_folders(self):
         """
         make folders for storing data and results
         """
@@ -308,19 +428,40 @@ class TrainingUNet3D:
         self.valid_label_path = _make_folder(os.path.join(folder_path, "valid_label/"))
         self.models_path = _make_folder(os.path.join(folder_path, "models/"))
 
-    def train(self):
-        self._load_dataset()
-        self._preprocess()
-        self._train()
-
-    def _load_dataset(self):
+    def load_dataset(self):
+        """
+        Load training dataset and validation dataset stored in the corresponding folders
+        """
         self.train_image = load_image(self.train_image_path)
-        self.x_siz, self.y_siz, self.z_size = self.train_image.shape
+        self.x_siz, self.y_siz, self.z_siz = self.train_image.shape
         self.train_label = load_image(self.train_label_path)
         self.valid_image = load_image(self.valid_image_path)
         self.valid_label = load_image(self.valid_label_path)
 
-    def _preprocess(self):
+    def draw_dataset(self, percentile_top=99.9, percentile_bottom=10):
+        """
+        Draw the training dataset and validation dataset by max projection
+
+        Parameters
+        ----------
+        percentile_top : float, optional
+            A percentile to indicate the upper limitation for showing the images. Default: 99.9
+        percentile_bottom : float, optional
+            A percentile to indicate the lower limitation for showing the images. Default: 10
+        """
+        axs = self._subplots_4images(percentile_bottom, percentile_top,
+                                     (self.train_image, self.train_label, self.valid_image, self.valid_label))
+        axs[0, 0].set_title("Max projection of image (train)", fontdict=TITLE_STYLE)
+        axs[0, 1].set_title("Max projection of cell annotation (train)", fontdict=TITLE_STYLE)
+        axs[1, 0].set_title("Max projection of image (validation)", fontdict=TITLE_STYLE)
+        axs[1, 1].set_title("Max projection of cell annotation (validation)", fontdict=TITLE_STYLE)
+        plt.tight_layout()
+        plt.pause(0.1)
+
+    def preprocess(self):
+        """
+        Normalize the images and divided them into small images for training the model
+        """
         self.train_image_norm = _normalize_image(self.train_image, self.noise_level)
         self.valid_image_norm = _normalize_image(self.valid_image, self.noise_level)
         self.train_label_norm = _normalize_label(self.train_label)
@@ -340,19 +481,19 @@ class TrainingUNet3D:
         self.valid_data = (self.valid_subimage, self.valid_subcells)
         print("Data for training 3D U-Net were prepared")
 
-    def draw_dataset(self, percentile_top=99.9, percentile_bottom=10):
-        axs = self._show_4images(percentile_bottom, percentile_top,
-                                 (self.train_image, self.train_label, self.valid_image, self.valid_label))
-        axs[0, 0].set_title("Max projection of image (train)", fontdict=TITLE_STYLE)
-        axs[0, 1].set_title("Max projection of cell annotation (train)", fontdict=TITLE_STYLE)
-        axs[1, 0].set_title("Max projection of image (validation)", fontdict=TITLE_STYLE)
-        axs[1, 1].set_title("Max projection of cell annotation (validation)", fontdict=TITLE_STYLE)
-        plt.tight_layout()
-        plt.pause(0.1)
-
     def draw_norm_dataset(self, percentile_top=99.9, percentile_bottom=10):
-        axs = self._show_4images(percentile_bottom, percentile_top,
-                                 (self.train_image_norm, self.train_label_norm, self.valid_image_norm,
+        """
+        Draw the normalized training dataset and validation dataset by max projection
+
+        Parameters
+        ----------
+        percentile_top : float, optional
+            A percentile to indicate the upper limitation for showing the images. Default: 99.9
+        percentile_bottom : float, optional
+            A percentile to indicate the lower limitation for showing the images. Default: 10
+        """
+        axs = self._subplots_4images(percentile_bottom, percentile_top,
+                                     (self.train_image_norm, self.train_label_norm, self.valid_image_norm,
                                   self.valid_label_norm))
         axs[0, 0].set_title("Max projection of normalized image (train)", fontdict=TITLE_STYLE)
         axs[0, 1].set_title("Max projection of cell annotation (train)", fontdict=TITLE_STYLE)
@@ -361,7 +502,8 @@ class TrainingUNet3D:
         plt.tight_layout()
         plt.pause(0.1)
 
-    def _show_4images(self, percentile_bottom, percentile_top, imgs):
+    def _subplots_4images(self, percentile_bottom, percentile_top, imgs):
+        """Make a (2, 2) layout figure to show 4 images"""
         fig, axs = plt.subplots(2, 2, figsize=(20, int(24 * self.x_siz / self.y_siz)))
         vmax_train = np.percentile(imgs[0], percentile_top)
         vmax_valid = np.percentile(imgs[2], percentile_top)
@@ -374,6 +516,16 @@ class TrainingUNet3D:
         return axs
 
     def draw_divided_train_data(self, percentile_top=99.9, percentile_bottom=10):
+        """
+        Draw the previous 16 divided small images and corresponding cell images in training dataset by max projection
+
+        Parameters
+        ----------
+        percentile_top : float, optional
+            A percentile to indicate the upper limitation for showing the images. Default: 99.9
+        percentile_bottom : float, optional
+            A percentile to indicate the lower limitation for showing the images. Default: 10
+        """
         vmax_train = np.percentile(self.train_image_norm, percentile_top)
         vmin_train = np.percentile(self.train_image_norm, percentile_bottom)
         fig, axs = plt.subplots(4, 8, figsize=(20, int(24 * self.x_siz / self.y_siz)))
@@ -388,7 +540,22 @@ class TrainingUNet3D:
         plt.tight_layout()
         plt.pause(0.1)
 
-    def _train(self, iteration=100, weights_name="weights_training_"):
+    def train(self, iteration=100, weights_name="weights_training_"):
+        """
+        Train the 3D U-Net model
+
+        Parameters
+        ----------
+        iteration : int, optional
+            The number of epochs to train the model. Default: 100
+        weights_name : str, optional
+            The prefix of the weights files to be stored during training.
+
+        Notes
+        -----
+        The training can be stopped by pressing Ctrl + C if users feel the prediction is good enough during training.
+        Every time the validation loss was reduced, the weights file will be stored into the /models folder
+        """
         self.model.load_weights(os.path.join(self.models_path,'weights_initial.h5'))
         for step in range(1, iteration+1):
             self.model.fit_generator(self.train_generator, validation_data=self.valid_data, epochs=1, steps_per_epoch=60)
@@ -396,24 +563,35 @@ class TrainingUNet3D:
                 self.val_losses = [self.model.history.history["val_loss"]]
                 print("val_loss at step 1: ", min(self.val_losses))
                 self.model.save_weights(os.path.join(self.models_path, weights_name + f"step{step}.h5"))
-                self.draw_prediction(step)
+                self._draw_prediction(step)
             else:
                 loss = self.model.history.history["val_loss"]
                 if loss<min(self.val_losses):
                     print("val_loss updated from ", min(self.val_losses)," to ", loss)
                     self.model.save_weights(os.path.join(self.models_path, weights_name + f"step{step}.h5"))
-                    self.draw_prediction(step)
+                    self._draw_prediction(step)
                 self.val_losses.append(loss)
 
-    def _select_weights(self, step, weights_name="weights_training_"):
+    def select_weights(self, step, weights_name="weights_training_"):
+        """
+        Select the satisfied weight and store the model to the /models folder
+
+        Parameters
+        ----------
+        step : int
+            (>=1), the step corresponding to the best prediction the user would like to choose
+        weights_name : str, optional
+            The prefix of the weights file to be restored.
+        """
         self.model.load_weights(os.path.join(self.models_path, weights_name + f"step{step}.h5"))
         self.model.save(os.path.join(self.models_path, "unet3_pretrained.h5"))
 
-    def draw_prediction(self, step, percentile_top=99.9, percentile_bottom=10):
+    def _draw_prediction(self, step, percentile_top=99.9, percentile_bottom=10):
+        """Draw the predictions in current step"""
         train_prediction = np.squeeze(unet3_prediction(np.expand_dims(self.train_image_norm,axis=(0,4)), self.model))
         valid_prediction = np.squeeze(unet3_prediction(np.expand_dims(self.valid_image_norm,axis=(0,4)), self.model))
-        axs = self._show_4images(percentile_bottom, percentile_top,
-                                 (self.train_image, train_prediction, self.valid_image, valid_prediction))
+        axs = self._subplots_4images(percentile_bottom, percentile_top,
+                                     (self.train_image, train_prediction, self.valid_image, valid_prediction))
         axs[0, 0].set_title("Image (train)", fontdict=TITLE_STYLE)
         axs[0, 1].set_title(f"Cell prediction at step {step} (train)", fontdict=TITLE_STYLE)
         axs[1, 0].set_title("Max projection of image (validation)", fontdict=TITLE_STYLE)

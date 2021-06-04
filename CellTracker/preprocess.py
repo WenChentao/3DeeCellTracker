@@ -16,12 +16,19 @@ from keras.layers import Conv3D, Input
 
 def _make_folder(path_i, print_=True):
     """
-    Make a folder and print its relative path
-    Args:
-        path_i: (str), the folder path
+    Make a folder
 
-    Returns:
-        str: return the same path
+    Parameters
+    ----------
+    path_i : str
+         The folder path
+    print_ : bool, optional
+        If True, print the relative path of the created folder. Default: True
+
+    Returns
+    -------
+    path_i : str
+        The folder path
     """
     if not os.path.exists(path_i):
         os.makedirs(path_i)
@@ -33,11 +40,16 @@ def _make_folder(path_i, print_=True):
 def _get_files(folder_path):
     """
     Get paths of all files in the folder
-    Args:
-        folder_path: (str), the path of the folder containing images
 
-    Returns:
-        list: paths of all files
+    Parameters
+    ----------
+    folder_path : str
+        The path of the folder containing images
+
+    Returns
+    -------
+    img_path : list
+        A list of the file paths in the folder
     """
     img_path = []
     for img_filename in sorted(os.listdir(folder_path)):
@@ -48,14 +60,18 @@ def _get_files(folder_path):
 def load_image(folder_path, print_=True):
     """
     Load a 3D image from 2D layers (without time information)
-    Args:
-        folder_path: (str), the path of the folder containing images
 
-    Returns:
-        obj, numpy.ndarray: 3D image
+    Parameters
+    ----------
+    folder_path : str
+        The path of the folder containing images
+    print_ : int, optional
+        If True, print the shape of the loaded 3D image. Default: True
 
-    Notes:
-        Currently only tested with 2D .tif files.
+    Returns
+    -------
+    img_array : numpy.ndarray
+        The 3D array of the loaded image
     """
     img_file_path = _get_files(folder_path)
     img = []
@@ -67,48 +83,79 @@ def load_image(folder_path, print_=True):
     return img_array
 
 
-def lcn(img3d, noise=5, filter_size=(27, 27, 1)):
+def lcn_cpu(img3d, noise_level, filter_size=(27, 27, 1)):
     """
     Local contrast normalization by cpu
-    Input: 
-        img3d: raw 3D image
-        filter_size: the window size to apply constrast normalization (z_siz, x_siz, y_siz)
-    Return:
-        the normalized image
+    
+    Parameters
+    ----------
+    img3d : numpy.ndarray
+        The raw 3D image
+    noise_level : float
+        The parameter to suppress the enhancement of the background noises
+    filter_size : tuple, optional
+        the window size to apply the normalization along x, y, and z axis. Default: (27, 27, 1)
+
+    Returns
+    -------
+    norm : numpy.ndarray
+        The normalized 3D image
+
+    Notes
+    -----
+    The normalization in the edge regions used "reflect" padding, which is different with
+    the lcn_gpu function (uses zero padding).
     """
     filter = np.ones(filter_size)
     filter = filter / filter.size
     avg = ndimage.convolve(img3d, filter, mode='reflect')
     diff_sqr = np.square(img3d - avg)
     std = np.sqrt(ndimage.convolve(diff_sqr, filter, mode='reflect'))
-    norm = np.divide(img3d - avg, std + noise)
+    norm = np.divide(img3d - avg, std + noise_level)
     return norm
 
 
 def conv3d_keras(filter_size, img3d_siz):
     """
     Generate a keras model for applying 3D convolution
-    Input: 
-        filter_size: the window size to apply local contrast normalization
-        img3d_siz: the size of the images
-    Return:
-        result: the keras model
+
+    Parameters
+    ----------
+    filter_size : tuple
+    img3d_siz : tuple
+
+    Returns
+    -------
+    keras.Model
+        The keras model to apply 3D convolution
     """
     inputs = Input((img3d_siz[0], img3d_siz[1], img3d_siz[2], 1))
     conv_3d = Conv3D(1, filter_size, kernel_initializer=keras.initializers.Ones(), padding='same')(inputs)
-    result = Model(inputs=inputs, outputs=conv_3d)
-    return result
+    return Model(inputs=inputs, outputs=conv_3d)
 
 
-def lcn_gpu(img3d, noise=5, filter_size=(27, 27, 1)):
+def lcn_gpu(img3d, noise_level=5, filter_size=(27, 27, 1)):
     """
     Local contrast normalization by gpu
-    Input: 
-        img3d: raw 3D image
-        noise: a tiny value (close to the background noise) added to the denominator
-        filter_size: the window size to apply contrast normalization
-    Return:
-        the normalized image
+
+    Parameters
+    ----------
+    img3d : numpy.ndarray
+        The raw 3D image
+    noise_level : float
+        The parameter to suppress the enhancement of the background noises
+    filter_size : tuple, optional
+        the window size to apply the normalization along x, y, and z axis. Default: (27, 27, 1)
+
+    Returns
+    -------
+    norm : numpy.ndarray
+        The normalized 3D image
+
+    Notes
+    -----
+    The normalization in the edge regions currently used zero padding based on keras.Conv3D function,
+    which is different with the lcn_cpu function (uses "reflect" padding).
     """
     img3d_siz = img3d.shape
     volume = filter_size[0] * filter_size[1] * filter_size[2]
@@ -117,19 +164,25 @@ def lcn_gpu(img3d, noise=5, filter_size=(27, 27, 1)):
     avg = conv3d_model.predict(img3d) / volume
     diff_sqr = np.square(img3d - avg)
     std = np.sqrt(conv3d_model.predict(diff_sqr) / volume)
-    norm = np.divide(img3d - avg, std + noise)
+    norm = np.divide(img3d - avg, std + noise_level)
     return norm[0, :, :, :, 0]
 
 
 def _normalize_image(image, noise_level):
     """
     Normalize an 3D image by local contrast normalization
-    Args:
-        image: (obj, numpy.ndarray), shape (x, y, z), 3D image
-        noise_level: (float), the parameter controlling tiny noise to be ignored
 
-    Returns:
-        obj, numpy.ndarray: shape (x, y, z), the normalized image
+    Parameters
+    ----------
+    image : numpy.ndarray
+        A 3D image to be normalized
+    noise_level : float
+        The parameter to suppress the enhancement of the background noises
+
+    Returns
+    -------
+    numpy.ndarray
+        The normalized image
     """
     image_norm = image - np.median(image)
     image_norm[image_norm < 0] = 0
@@ -137,5 +190,17 @@ def _normalize_image(image, noise_level):
 
 
 def _normalize_label(label_img):
-    """Transform label image into 0/1, with shape (1, x, y, z, 1)"""
+    """
+    Transform cell/non-cell image into binary (0/1)
+
+    Parameters
+    ----------
+    label_img : numpy.ndarray
+        Input image of cell/non-cell regions
+
+    Returns
+    -------
+    numpy.ndarray
+        The binarized image
+    """
     return (label_img > 0).astype(int)

@@ -71,7 +71,7 @@ def watershed_3d(image_watershed2d, samplingrate, method, min_size, cell_num, mi
     elif method=="cell_num":
         min_size = np.sort(np.bincount(labels_ws.ravel()))[-cell_num-1]
     else:
-        raise("wrong input of method")
+        raise("The method parameter should be either min_size or cell_num")
     labels_clear=remove_small_objects(labels_ws, min_size=min_size,connectivity=3)
     
     labels_bd=find_boundaries(labels_clear, connectivity=3, mode='outer', background=0)
