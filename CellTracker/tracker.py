@@ -1,12 +1,16 @@
 """
-tracker.py
-by Chentao Wen
-2021.March
+Module for tracking and monitoring the intermediate results
+Author: Chentao Wen
 
-Resolution of variables on z axis:
-* layer-based (l_, extracted from 3D image: = i_/z_scaling, or r_/z_xy_ratio):
-* interpolated-layer-based (i_, required by accurate correction: = l_ * z_scaling, or r_ * z_scaling/z_xy_ratio):
-* real-resolution (r_, required by fnn + prgls: = l_ * z_xy_ratio, or i_ * z_xy_ratio/z_scaling):
+Notes
+-----
+To describe the cell positions, 3 different coordinates are used
+    layer-based
+        Use \"l_\" prefix, corresponding to the positions in the raw image
+    interpolated-layer-based
+        Use "i_" prefix, corresponding to the positions in the interpolated image
+    real-resolution
+        Use "r_" prefix, the cell positions along z axis are transformed to correspond the resolution in x-y plane
 """
 
 import os
@@ -496,8 +500,7 @@ class Segmentation:
     """
     Class for segmentation. Only use it through the Tracker instance.
     """
-    def __init__(self, volume_num, siz_xyz: tuple, z_xy_ratio, z_scaling,
-                 image_name, unet_model_file, shrink):
+    def __init__(self, volume_num, siz_xyz: tuple, z_xy_ratio, z_scaling, shrink):
         self.volume_num = volume_num
         self.x_siz = siz_xyz[0]
         self.y_siz = siz_xyz[1]
@@ -505,14 +508,8 @@ class Segmentation:
         self.z_xy_ratio = z_xy_ratio
         self.z_scaling = z_scaling
         self.shrink = shrink
-        self.image_name = image_name
-        self.unet_model_file = unet_model_file
+        self.paths = None
         self.unet_model = None
-        self.unet_path = None
-        self.models_path = None
-        self.unet_weights_path = None
-        self.auto_segmentation_vol1_path = None
-        self.raw_image_path = None
         self.segresult = SegResults()
 
     def set_segmentation(self, noise_level=None, min_size=None, del_cache=False):
@@ -539,12 +536,12 @@ class Segmentation:
             if min_size is not None:
                 self.min_size = min_size
             print(f"Parameters were modified: noise_level={self.noise_level}, min_size={self.min_size}")
-            for f in os.listdir(self.unet_path):
-                os.remove(os.path.join(self.unet_path, f))
+            for f in os.listdir(self.paths.unet_cache):
+                os.remove(os.path.join(self.paths.unet_cache, f))
             print(f"All files under /unet folder were deleted")
         if del_cache:
-            for f in os.listdir(self.unet_path):
-                os.remove(os.path.join(self.unet_path, f))
+            for f in os.listdir(self.paths.unet_cache):
+                os.remove(os.path.join(self.paths.unet_cache, f))
             print(f"All files under /unet folder were deleted")
 
     @staticmethod
@@ -574,8 +571,8 @@ class Segmentation:
         """
         Load the pretrained unet model (keras Model file like "xxx.h5") and save its weights for retraining
         """
-        self.unet_model = load_model(os.path.join(self.models_path, self.unet_model_file))
-        self.unet_model.save_weights(os.path.join(self.unet_weights_path, 'weights_initial.h5'))
+        self.unet_model = load_model(os.path.join(self.paths.models, self.paths.image_name))
+        self.unet_model.save_weights(os.path.join(self.paths.unet_weights, 'weights_initial.h5'))
         print("Loaded the 3D U-Net model")
 
     def segment_vol1(self, method="min_size"):
@@ -596,7 +593,7 @@ class Segmentation:
 
         # save the segmented cells of volume #1
         save_img3(z_siz=self.z_siz, img=self.segresult.segmentation_auto,
-                  path=self.auto_segmentation_vol1_path + "auto_t%04i_z%04i.tif")
+                  path=self.paths.auto_segmentation_vol1 + "auto_t%04i_z%04i.tif")
         print(f"Segmented volume 1 and saved it")
 
     def _segment(self, vol, method, print_shape=False):
@@ -626,7 +623,7 @@ class Segmentation:
             Transformed from l_center_coordinates, with the z coordinates corrected by the resolution relative to x-y
             plane
         """
-        image_raw = read_image_ts(vol, self.raw_image_path, self.image_name, (1, self.z_siz + 1), print_=print_shape)
+        image_raw = read_image_ts(vol, self.paths.raw_image, self.paths.image_name, (1, self.z_siz + 1), print_=print_shape)
         # image_gcn will be used to correct tracking results
         image_gcn = (image_raw.copy() / 65536.0)
         image_cell_bg = self._predict_cellregions(image_raw, vol)
@@ -650,7 +647,7 @@ class Segmentation:
         Predict cell regions by 3D U-Net and save it if the prediction has not been cached
         """
         try:
-            image_cell_bg = np.load(self.unet_path + "t%04i.npy" % vol, allow_pickle=True)
+            image_cell_bg = np.load(self.paths.unet_cache + "t%04i.npy" % vol, allow_pickle=True)
         except OSError:
             image_cell_bg = self._save_unet_regions(image_raw, vol)
         return image_cell_bg
@@ -661,7 +658,7 @@ class Segmentation:
         image_norm = np.expand_dims(_normalize_image(image_raw, self.noise_level), axis=(0, 4))
         # predict cell-like regions using 3D U-net
         image_cell_bg = unet3_prediction(image_norm, self.unet_model, shrink=self.shrink)
-        np.save(self.unet_path + "t%04i.npy" % vol, np.array(image_cell_bg, dtype="float16"))
+        np.save(self.paths.unet_cache + "t%04i.npy" % vol, np.array(image_cell_bg, dtype="float16"))
         return image_cell_bg
 
     def _watershed(self, image_cell_bg, method):
@@ -678,6 +675,72 @@ class Segmentation:
         if method == "min_size":
             self.cell_num = cell_num
         return segmentation_auto
+
+
+class Paths:
+    """
+    Attributes
+    ----------
+    folder_path : str
+        The path of the folder to store all related data
+        including images, 3D U-Net, FFN models and segmentation/tracking results.
+    models : str
+        The path of the folder to store the pretrained and retrained models
+    unet_cache : str
+        The path of the folder to store the cached cell regions (predicted by 3D U-Net) to accelerate the tracking
+    raw_image : str
+        The path of the folder to store the raw images to be tracked
+    auto_segmentation_vol1 : str
+        The path of the folder to store the automatic segmentation in volume 1 to be used in manual correction
+    manual_segmentation_vol1 : str
+        The path of the folder to store the manually corrected segmentation in volume 1
+    unet_weights : str
+        The path of the folder to store the retrained weights of 3D U-Net
+    track_results :
+        The path of the folder to store the tracking results (in images with labels)
+    track_information : str
+        The path of the folder to store the displacements, coordinates information of segmented and tracked cells
+    anim : str
+        The path of the folder to store the animation of tracking in each volume
+    image_name : str
+        The file names of the raw image files.
+        It should use formatted string to indicate volume number and then layer number, e.g. "xxx_t%04d_z%04i.tif"
+    unet_model_file : str
+        The filename of the pretrained 3D U-Net (keras model such as "xxx.h5")
+    ffn_model_file : str
+        The filename of the pretrained FFN model (keras model such as "xxx.h5")
+    """
+    def __init__(self, folder_path, image_name, unet_model_file, ffn_model_file):
+        self.folder = folder_path
+        self.models = None
+        self.unet_cache = None
+        self.raw_image = None
+        self.auto_segmentation_vol1 = None
+        self.manual_segmentation_vol1 = None
+        self.unet_weights = None
+        self.track_results = None
+        self.track_information = None
+        self.anim = None
+        self.image_name = image_name
+        self.unet_model_file = unet_model_file
+        self.ffn_model_file = ffn_model_file
+
+    def make_folders(self, adjacent, ensemble):
+        """
+        Make folders for storing data, models, and results
+        """
+        print("Following folders were made under:", os.getcwd())
+        folder_path = self.folder
+        self.raw_image = _make_folder(os.path.join(folder_path, "data/"))
+        self.auto_segmentation_vol1 = _make_folder(os.path.join(folder_path, "auto_vol1/"))
+        self.manual_segmentation_vol1 = _make_folder(os.path.join(folder_path, "manual_vol1/"))
+        self.track_information = _make_folder(os.path.join(folder_path, "track_information/"))
+        self.models = _make_folder(os.path.join(folder_path, "models/"))
+        self.unet_cache = _make_folder(os.path.join(folder_path, "unet_cache/"))
+        track_results_path = get_tracking_path(adjacent, ensemble, folder_path)
+        self.track_results = _make_folder(track_results_path)
+        self.anim = _make_folder(os.path.join(folder_path, "anim/"))
+        self.unet_weights = _make_folder(os.path.join(self.models, "unet_weights/"))
 
 
 class Tracker(Segmentation, Draw):
@@ -714,16 +777,6 @@ class Tracker(Segmentation, Draw):
     maxiter_tk : int
         The maximum number of iterations of PR-GLS during once application of FFN + PR-GLS.
         A large values will generate more accurate tracking but will also increase the runtime.
-    folder_path : str
-        The path of the folder to store all related data
-        including images, 3D U-Net, FFN models and segmentation/tracking results.
-    image_name : str
-        The file names of the raw image files.
-        It should use formatted string to indicate volume number and then layer number, e.g. "xxx_t%04d_z%04i.tif"
-    unet_model_file : str
-        The filename of the pretrained 3D U-Net (keras model such as "xxx.h5")
-    ffn_model_file : str
-        The filename of the pretrained FFN model (keras model such as "xxx.h5")
     cell_num : int
         The number of cells to be extracted from watershed. It is used only when segmentation method is "cell_num".
         Default: 0
@@ -741,22 +794,6 @@ class Tracker(Segmentation, Draw):
     miss_frame : list, optional
         A list of volumes which includes serious problem in the raw images and thus will be skipped for tracking.
         Default: None
-    raw_image_path : str
-        The path of the folder to store the raw images to be tracked
-    auto_segmentation_vol1_path : str
-        The path of the folder to store the automatic segmentation in volume 1 to be used in manual correction
-    manual_segmentation_vol1_path : str
-        The path of the folder to store the manually corrected segmentation in volume 1
-    unet_path : str
-        The path of the folder to store the cached cell regions (predicted by 3D U-Net) to accelerate the tracking
-    track_results_path :
-        The path of the folder to store the tracking results (in images with labels)
-    track_information_path : str
-        The path of the folder to store the displacements, coordinates information of segmented and tracked cells
-    models_path : str
-        The path of the folder to store the pretrained and retrained models
-    unet_weights_path : str
-        The path of the folder to store the retrained weights of 3D U-Net
     cell_num_t0 : int
         The detected cell numbers in the manually corrected segmentation in volume 1
     Z_RANGE_INTERP : Range object
@@ -788,8 +825,7 @@ class Tracker(Segmentation, Draw):
                  ffn_model_file, cell_num=0, ensemble=False, adjacent=False,
                  shrink=(24, 24, 2), miss_frame=None
                  ):
-        Segmentation.__init__(self, volume_num, siz_xyz, z_xy_ratio, z_scaling,
-                              image_name, unet_model_file, shrink)
+        Segmentation.__init__(self, volume_num, siz_xyz, z_xy_ratio, z_scaling, shrink)
 
         self.miss_frame = [] if not miss_frame else miss_frame
         self.noise_level = noise_level
@@ -799,11 +835,7 @@ class Tracker(Segmentation, Draw):
         self.max_iteration = maxiter_tk
         self.ensemble = ensemble
         self.adjacent = adjacent
-        self.folder_path = folder_path
-        self.ffn_model_file = ffn_model_file
-        self.manual_segmentation_vol1_path = None
-        self.track_results_path = None
-        self.track_information_path = None
+        self.paths = Paths(folder_path, image_name, unet_model_file, ffn_model_file)
         self.cell_num = cell_num
         self.cell_num_t0 = None
         self.Z_RANGE_INTERP = None
@@ -815,7 +847,7 @@ class Tracker(Segmentation, Draw):
         self.pad_z = None
         self.label_padding = None
         self.segmentation_manual_relabels = None
-        self._make_folders()
+        self.paths.make_folders(adjacent, ensemble)
 
     def set_tracking(self, beta_tk, lambda_tk, maxiter_tk):
         """
@@ -836,23 +868,6 @@ class Tracker(Segmentation, Draw):
             print(f"Parameters were modified: beta_tk={self.beta_tk}, "
                   f"lambda_tk={self.lambda_tk}, maxiter_tk={self.max_iteration}")
 
-    def _make_folders(self):
-        """
-        Make folders for storing data, models, and results
-        """
-        print("Following folders were made under:", os.getcwd())
-        folder_path = self.folder_path
-        self.raw_image_path = _make_folder(os.path.join(folder_path, "data/"))
-        self.auto_segmentation_vol1_path = _make_folder(os.path.join(folder_path, "auto_vol1/"))
-        self.manual_segmentation_vol1_path = _make_folder(os.path.join(folder_path, "manual_vol1/"))
-        self.track_information_path = _make_folder(os.path.join(folder_path, "track_information/"))
-        self.models_path = _make_folder(os.path.join(folder_path, "models/"))
-        self.unet_path = _make_folder(os.path.join(folder_path, "unet/"))
-        track_results_path = get_tracking_path(self.adjacent, self.ensemble, folder_path)
-        self.track_results_path = _make_folder(track_results_path)
-        self.anim_path = _make_folder(os.path.join(folder_path, "anim/"))
-        self.unet_weights_path = _make_folder(os.path.join(self.models_path, "unet_weights/"))
-
     def load_manual_seg(self):
         """
         Load the manually corrected segmentation in the "/manual_vol1" folder
@@ -862,7 +877,7 @@ class Tracker(Segmentation, Draw):
         The files to be loaded in "manual_vol1" folder should be 2D images corresponding to cell labels in
         each layer of the 3D image in volume 1
         """
-        segmentation_manual = load_image(self.manual_segmentation_vol1_path, print_=False)
+        segmentation_manual = load_image(self.paths.manual_segmentation_vol1, print_=False)
         print("Loaded manual _segment at vol 1")
         self.segmentation_manual_relabels, _, _ = relabel_sequential(segmentation_manual)
 
@@ -870,7 +885,7 @@ class Tracker(Segmentation, Draw):
         """
         Prepare the training data for retraining the unet model
         """
-        self.image_raw_vol1 = read_image_ts(1, self.raw_image_path, self.image_name, (1, self.z_siz + 1))
+        self.image_raw_vol1 = read_image_ts(1, self.paths.raw_image, self.paths.image_name, (1, self.z_siz + 1))
         self.train_image_norm = _normalize_image(self.image_raw_vol1, self.noise_level)
         self.label_vol1 = self._remove_2d_boundary(self.segmentation_manual_relabels) > 0
         self.train_label_norm = _normalize_label(self.label_vol1)
@@ -934,7 +949,7 @@ class Tracker(Segmentation, Draw):
         self._retrain_preprocess()
 
         self.unet_model.compile(loss='binary_crossentropy', optimizer="adam")
-        self.unet_model.load_weights(os.path.join(self.unet_weights_path, 'weights_initial.h5'))
+        self.unet_model.load_weights(os.path.join(self.paths.unet_weights, 'weights_initial.h5'))
 
         # evaluate model prediction before retraining
         val_loss = self.unet_model.evaluate(self.train_subimage, self.train_subcells)
@@ -948,7 +963,7 @@ class Tracker(Segmentation, Draw):
             loss = self.unet_model.history.history["val_loss"]
             if loss < min(self.val_losses):
                 print("val_loss updated from ", min(self.val_losses), " to ", loss)
-                self.unet_model.save_weights(os.path.join(self.unet_weights_path, weights_name + f"step{step}.h5"))
+                self.unet_model.save_weights(os.path.join(self.paths.unet_weights, weights_name + f"step{step}.h5"))
                 self._draw_retrain(step)
             self.val_losses.append(loss)
 
@@ -982,10 +997,10 @@ class Tracker(Segmentation, Draw):
             If step < 0
         """
         if step==0:
-            self.unet_model.load_weights(os.path.join(self.unet_weights_path, 'weights_initial.h5'))
+            self.unet_model.load_weights(os.path.join(self.paths.unet_weights, 'weights_initial.h5'))
         elif step > 0:
-            self.unet_model.load_weights((os.path.join(self.unet_weights_path, weights_name + f"step{step}.h5")))
-            self.unet_model.save(os.path.join(self.unet_weights_path, "unet3_retrained.h5"))
+            self.unet_model.load_weights((os.path.join(self.paths.unet_weights, weights_name + f"step{step}.h5")))
+            self.unet_model.save(os.path.join(self.paths.unet_weights, "unet3_retrained.h5"))
         else:
             raise ValueError("step should be an interger >= 0")
 
@@ -1010,7 +1025,7 @@ class Tracker(Segmentation, Draw):
 
         # save labels in the first volume (interpolated)
         save_img3ts(range(0, self.z_siz), self.segmentation_manual_relabels,
-                    self.track_results_path + "track_results_t%04i_z%04i.tif", t=1)
+                    self.paths.track_results + "track_results_t%04i_z%04i.tif", t=1)
 
         # calculate coordinates of cell centers at t=1
         center_points_t0 = snm.center_of_mass(self.segmentation_manual_relabels > 0,
@@ -1065,7 +1080,7 @@ class Tracker(Segmentation, Draw):
 
     def load_ffn(self):
         """Load the pre-trained FFN model"""
-        self.ffn_model = load_model(os.path.join(self.models_path, self.ffn_model_file))
+        self.ffn_model = load_model(os.path.join(self.paths.models, self.paths.ffn_model_file))
         print("Loaded the FFN model")
 
     def initiate_tracking(self):
@@ -1388,7 +1403,7 @@ class Tracker(Segmentation, Draw):
         track_process_images = []
         for volume in range(from_volume, self.volume_num + 1):
             try:
-                im = mgimg.imread(self.anim_path + "track_anim_t%04i.png" % volume)
+                im = mgimg.imread(self.paths.anim + "track_anim_t%04i.png" % volume)
             except FileNotFoundError:
                 continue
             implot = ax.imshow(im)
@@ -1426,7 +1441,7 @@ class Tracker(Segmentation, Draw):
         # skip frames that cannot be tracked
         if target_volume in self.miss_frame:
             save_img3ts(range(0, self.z_siz), self.tracked_labels,
-                        self.track_results_path + "track_results_t%04i_z%04i.tif", target_volume)
+                        self.paths.track_results + "track_results_t%04i_z%04i.tif", target_volume)
             self.history_r_displacements.append(self.history_r_displacements[-1])
             self.history_r_segmented_coordinates.append(self.segresult.r_coordinates_segment)
             self.history_r_tracked_coordinates.append(
@@ -1457,11 +1472,11 @@ class Tracker(Segmentation, Draw):
 
         # save tracked labels
         save_img3ts(range(0, self.z_siz), self.tracked_labels,
-                    self.track_results_path + "track_results_t%04i_z%04i.tif", target_volume)
+                    self.paths.track_results + "track_results_t%04i_z%04i.tif", target_volume)
 
         self._draw_matching_6panel(target_volume, axc6, r_coor_predicted_mean, i_disp_from_vol1_updated)
         fig.canvas.draw()
-        plt.savefig(self.anim_path + "track_anim_t%04i.png" % target_volume, bbox_inches='tight')
+        plt.savefig(self.paths.anim + "track_anim_t%04i.png" % target_volume, bbox_inches='tight')
 
         # update and save points locations
         if self.ensemble:
