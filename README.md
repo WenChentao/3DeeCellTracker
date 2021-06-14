@@ -18,13 +18,19 @@ We have updated our program to 3DeeCellTracker v0.3:
 
 ## Installation
 
-* Create a conda enviroment  with prerequred packages using the 3DCT.yml file:
+* Create a conda environment for a PC with GPU including prerequisite packages using the 3DCT.yml file:
 
 ```console
 $ conda env create -f 3DCT.yml
 ```
 
-* Or install the 3DeeCellTracker in your own enviroment by PyPI (pip):
+* Users can also create a conda environment for a PC with only CPU using the 3DCT-CPU.yml file.
+However, this is not recommended because the deep learning codes will be very slow, especially the training codes may fail.
+```console
+$ conda env create -f 3DCT-CPU.yml
+```
+
+* Or install the 3DeeCellTracker in your own environment by PyPI (pip):
 
 ```console
 $ pip install 3DeeCellTracker
