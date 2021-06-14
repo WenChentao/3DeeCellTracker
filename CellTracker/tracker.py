@@ -751,7 +751,18 @@ class Paths:
 
 class History:
     """
+    Storing the tracking histories
 
+    Attributes
+    ----------
+    r_displacements :  list
+        The displacements of each cell in each volume relative to their positions in volume 1
+    r_segmented_coordinates : list
+        The positions of each cell segmented by 3D U-Net + watershed in each volume
+    r_tracked_coordinates : list
+        The positions of each cell tracked by FFN + PR-GLS + corrections in each volume
+    anim : list
+        The images of tracking process in each volume (from volume 2)
     """
     def __init__(self):
         self.r_displacements = []
@@ -763,8 +774,6 @@ class History:
 class Tracker(Segmentation, Draw):
     """
     Data and methods for tracking cells
-
-    ...
 
     Attributes
     ----------
