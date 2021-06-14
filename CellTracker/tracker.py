@@ -1,5 +1,5 @@
 """
-Module for tracking and monitoring the intermediate results
+A module for tracking and monitoring the intermediate results
 Author: Chentao Wen
 
 Notes
@@ -27,7 +27,6 @@ from keras.models import load_model
 from keras.preprocessing.image import ImageDataGenerator
 from matplotlib import animation
 from matplotlib import pyplot as plt
-from matplotlib.gridspec import GridSpec
 from scipy.stats import trim_mean
 from skimage.measure import label
 from skimage.segmentation import relabel_sequential, find_boundaries
@@ -65,6 +64,7 @@ def timer(func):
 def save_coordinates(obj, filename):
     """"""
     # TODO: save_coordinates
+
 
 def load_coordinates(filename):
     """"""
@@ -575,7 +575,7 @@ class Segmentation:
         """
         Load the pretrained unet model (keras Model file like "xxx.h5") and save its weights for retraining
         """
-        self.unet_model = load_model(os.path.join(self.paths.models, self.paths.image_name))
+        self.unet_model = load_model(os.path.join(self.paths.models, self.paths.unet_model_file))
         self.unet_model.save_weights(os.path.join(self.paths.unet_weights, 'weights_initial.h5'))
         print("Loaded the 3D U-Net model")
 
