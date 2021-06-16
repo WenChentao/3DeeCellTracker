@@ -8,7 +8,7 @@
 
 ## Updates:
 ### 2021.05.xx
-We will update our program to 3DeeCellTracker v0.4:
+We will update our program to 3DeeCellTracker v0.4.0:
 - The notebooks and the underlying package were largely modified to simplify the use.
 - The intermediate results of segmentation and tracking can be visualized easily to assist the parameter optimization. 
 
@@ -51,12 +51,14 @@ To learn how to track cells use 3DeeCellTracker, see following notebooks for exa
 3. Train a new 3D U-Net for segmenting cells in new optical conditions: 
     - [**Train 3D U-Net (clear notebook)**](3D_U_Net_training-clear.ipynb).
     - [**Train 3D U-Net (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/3D_U_Net_training.html).
-  
+   
+The data and model files for demonstrating above notebooks can be downloaded [**here**](https://osf.io/dt76c/).
+
 **Note**: Codes above were based on the latest version. 
 For old programs used in eLife 2021, please check the "./Tracking" folder.
 
 ## How it works
-This pipeline was designed for segmenting and tracking cells in 3D + T images in deforming organs. The methods have been explained in [Wen et al. bioRxiv 2018]( https://doi.org/10.1101/385567) and in [Wen et al. eLife, 2021](https://elifesciences.org/articles/59187).
+We designed this pipeline for segmenting and tracking cells in 3D + T images in deforming organs. The methods have been explained in [Wen et al. bioRxiv 2018]( https://doi.org/10.1101/385567) and in [Wen et al. eLife, 2021](https://elifesciences.org/articles/59187).
 The data for demonstration and the previous demo codes can be found in the [SSBD database](http://ssbd.qbic.riken.jp/set/20190602/)
 
 **Overall procedures of our method** ([Wen et al. eLife, 2021–Figure 1](https://elifesciences.org/articles/59187/figures#content))
