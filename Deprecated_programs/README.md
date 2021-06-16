@@ -1,6 +1,6 @@
 ## Use 3DeeCellTracker in Spyder
 The python scripts in this folder were used to generate the results we published in eLife 2021,
-but they have been deprecated because the newer version are more convenient to use and quicker.
+but they have been deprecated because the newer version is more convenient to use and quicker.
 
 - We archived these old scripts here for backup.
 - In order to use these scripts please install the old version of 3DeeCellTracker v0.2 by: 
