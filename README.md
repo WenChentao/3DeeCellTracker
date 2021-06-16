@@ -55,7 +55,7 @@ To learn how to track cells use 3DeeCellTracker, see following notebooks for exa
 The data and model files for demonstrating above notebooks can be downloaded [**here**](https://osf.io/dt76c/).
 
 **Note**: Codes above were based on the latest version. 
-For old programs used in eLife 2021, please check the "./Tracking" folder.
+For old programs used in eLife 2021, please check the "[**Deprecated_programs**](Deprecated_programs)" folder.
 
 ## How it works
 We designed this pipeline for segmenting and tracking cells in 3D + T images in deforming organs. The methods have been explained in [Wen et al. bioRxiv 2018]( https://doi.org/10.1101/385567) and in [Wen et al. eLife, 2021](https://elifesciences.org/articles/59187).
