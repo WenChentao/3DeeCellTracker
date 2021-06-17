@@ -14,14 +14,28 @@ from sklearn.neighbors import NearestNeighbors
 def pr_gls_quick(X, Y, corr, BETA=300, max_iteration=20, LAMBDA=0.1, vol=1E8):
     """
     Get coherent movements from the initial matching by PR-GLS algorithm
-    Input:
-        X,Y: positions of two point sets
-        corr: initial matching
-        BETA, max_iteration, LAMBDA, vol: parameters of PR-GLS
-    Return:
-        P: updated matching
-        T_X: transformed positions of X
-        C: coefficients for transforming positions other than X.
+
+    Parameters
+    ----------
+    X : numpy.ndarray
+    Y : numpy.ndarray
+        positions of two point sets
+    corr : numpy.ndarray
+        initial matching
+    BETA : float
+    max_iteration : int
+    LAMBDA : float
+    vol : float
+        parameters of PR-GLS
+
+    Returns
+    -------
+    P : numpy.ndarray
+        updated matching
+    T_X : numpy.ndarray
+        transformed positions of X
+    C : numpy.ndarray
+        coefficients for transforming positions other than X.
     """
     ############################################################
     # initiate Gram matrix, C, sigma_square, init_match, T_X, P
@@ -103,10 +117,25 @@ def pr_gls_quick(X, Y, corr, BETA=300, max_iteration=20, LAMBDA=0.1, vol=1E8):
     return P, T_X, C
 
 
-def initial_matching_quick(fnn_model, ref, tgt, k_ptrs):
+def initial_matching_quick(ffn_model, ref, tgt, k_ptrs):
     """
-    this function compute initial matching between all pairs of points
-    in reference and target points set
+    This function compute initial matching between all pairs of points in reference and target points set.
+
+    Parameters
+    ----------
+    ffn_model : keras.Model
+        The pretrained FFN model
+    ref : numpy.ndarray
+        The positions of the cells in the first volume
+    tgt : numpy.ndarray
+        The positions of the cells in the second volume
+    k_ptrs : int
+        The number of neighboring points used for FFN
+
+    Returns
+    -------
+    corr : numpy.ndarray
+        The correspondence matrix between two point sets
     """
     nbors_ref = NearestNeighbors(n_neighbors=k_ptrs + 1).fit(ref)
     nbors_tgt = NearestNeighbors(n_neighbors=k_ptrs + 1).fit(tgt)
@@ -146,22 +175,14 @@ def initial_matching_quick(fnn_model, ref, tgt, k_ptrs):
     tgt_x_flat_batch_meshgrid = np.tile(tgt_x_flat_batch, (ref.shape[0], 1, 1)).transpose(1, 0, 2).reshape(
         (ref.shape[0] * tgt.shape[0], k_ptrs * 3 + 1))
 
-    corr = np.reshape(fnn_model.predict([ref_x_flat_batch_meshgrid, tgt_x_flat_batch_meshgrid], batch_size=1024),
+    corr = np.reshape(ffn_model.predict([ref_x_flat_batch_meshgrid, tgt_x_flat_batch_meshgrid], batch_size=1024),
                       (tgt.shape[0], ref.shape[0]))
 
     return corr
 
 def pr_gls(X,Y,corr,BETA=300, max_iteration=20, LAMBDA=0.1,vol=1E8):
     """
-    Get coherent movements from the initial matching by PR-GLS algorithm
-    Input: 
-        X,Y: positions of two point sets
-        corr: initial matching
-        BETA, max_iteration, LAMBDA, vol: parameters of PR-GLS
-    Return:
-        P: updated matching
-        T_X: transformed positions of X
-        C: coefficients for transforming positions other than X.
+    (Deprecated from v0.3) The old version of pr_gls_quick(). Much slower.
     """
     ############################################################
     # initiate Gram matrix, C, sigma_square, init_match, T_X, P
@@ -262,13 +283,7 @@ def pr_gls(X,Y,corr,BETA=300, max_iteration=20, LAMBDA=0.1,vol=1E8):
 
 def initial_matching(fnn_model,ref,tgt,k_ptrs):
     """
-    Compute initial matching
-    Input:
-        fnn_model: pre-trained FNN model, keras object
-        ref, tgt: two point sets
-        k_ptrs: number of neighbor cells to calculate relative positions
-    Return:
-        corr: predicted probalilities that two cells are of the same cell.
+    (Deprecated from v0.3) The old version of initial_matching_quick(). Much slower.
     """
     nbors_ref=NearestNeighbors(n_neighbors=k_ptrs+1).fit(ref)
     nbors_tgt=NearestNeighbors(n_neighbors=k_ptrs+1).fit(tgt)
@@ -310,12 +325,20 @@ def initial_matching(fnn_model,ref,tgt,k_ptrs):
 def transform_cells(img3d, vectors3d):
     """
     Move individual cells in the label image.
-    Input:
-        img3d: label image, each cell with different labels.
-        vectors3d: the movement vectors for each cell, of dtype 'int' (movement from input img to output img)
-    Return:
-        output: transformed label image
-        mask: overlap between different labels (if value>1)
+
+    Parameters
+    ----------
+    img3d : numpy.ndarray
+        Label image, each cell with different labels.
+    vectors3d : numpy.ndarray
+        The movement vectors for each cell, of dtype 'int' (movement from input img to output img)
+
+    Returns
+    -------
+    output : numpy.ndarray
+        Transformed label image
+    mask : numpy.ndarray
+        Overlap between different labels (if value>1)
     """
     shape = np.shape(img3d)
     output = np.zeros((shape),dtype=np.dtype(img3d[0,0,0]))
@@ -344,16 +367,18 @@ def transform_cells(img3d, vectors3d):
              idx_label[2]+idx_3_start+v3] = mask[idx_label[0]+idx_1_start+v1,
                       idx_label[1]+idx_2_start+v2,idx_label[2]+idx_3_start+v3]+1
     
-    return [output, mask]
+    return output, mask
 
 
 def plot_arrow(ax, x1, y1, x2, y2):
+    """Draw the arrows between two sets of coordinates"""
     return ax.annotate("",
                 xy=(x1, y1), xycoords='axes fraction',
                 xytext=(x2, y2), textcoords='axes fraction',
                 arrowprops=dict(arrowstyle="wedge",  color="C0"))
 
 def plot_tracking_2d(T_ref, ax, draw_point, ref_ptrs, tgt_ptrs, x_axis, y_axis, sizes):
+    """Draw the tracking process between two point sets with layer-based coordinates"""
     element = []
     ax.invert_yaxis()
     if draw_point:
@@ -368,6 +393,7 @@ def plot_tracking_2d(T_ref, ax, draw_point, ref_ptrs, tgt_ptrs, x_axis, y_axis, 
     return element
 
 def plot_tracking_2d_realcoord(T_ref, ax, draw_point, ref_ptrs, tgt_ptrs, x_axis, y_axis):
+    """Draw the tracking process between two point sets with real-resolution coordinates"""
     ax.invert_yaxis()
     element = []
     if draw_point:
@@ -385,6 +411,7 @@ def plot_tracking_2d_realcoord(T_ref, ax, draw_point, ref_ptrs, tgt_ptrs, x_axis
 
 
 def tracking_plot_xy(ax, ref_ptrs, tgt_ptrs, T_ref, yx_sizes, draw_point=True, layercoord=False):
+    """Draw the tracking process between two point sets in x-y plane"""
     x_axis=1
     y_axis=0
     if layercoord:
@@ -395,6 +422,7 @@ def tracking_plot_xy(ax, ref_ptrs, tgt_ptrs, T_ref, yx_sizes, draw_point=True, l
 
 
 def tracking_plot_zx(ax, ref_ptrs, tgt_ptrs, T_ref, yz_sizes, draw_point=True, layercoord=True):
+    """Draw the tracking process between two point sets in z-x plane"""
     x_axis=1
     y_axis=2
     if layercoord:
@@ -405,6 +433,7 @@ def tracking_plot_zx(ax, ref_ptrs, tgt_ptrs, T_ref, yz_sizes, draw_point=True, l
 
 
 def FFN_matching_plot(ref_ptrs, tgt_ptrs, initial_match_score):
+    """(Deprecated from v0.3) Draw the FFN_matching process"""
     length_ref_ptrs = np.size(ref_ptrs, axis=0)
     
     tgt_ptrs_y_bias = tgt_ptrs.copy()
@@ -433,13 +462,22 @@ def FFN_matching_plot(ref_ptrs, tgt_ptrs, initial_match_score):
 def get_subregions(label_image, num):
     """
     Get individual regions of segmented cells
-    Input:
-        label_image: image of segmented cells
-        num: number of cells
-    Return:
-        region_list: list, cropped images of each cell
-        region_width: list, width of each cell in x,y,and z axis
-        region_coord_min: list, minimum coordinates of each element in region list
+
+    Parameters
+    ----------
+    label_image : numpy.ndarray
+        Image of segmented cells
+    num : int
+        Number of cells
+
+    Returns
+    -------
+    region_list : list
+        Cropped images of each cell
+    region_width : list
+        Width of each cell in x,y,and z axis
+    region_coord_min : list
+        Minimum coordinates of each element in region list
     """
     region_list = []
     region_width = []
@@ -459,14 +497,22 @@ def get_subregions(label_image, num):
 def gaussian_filter(img, z_scaling=10, smooth_sigma=5):
     """
     Generate smoothed label image of cells
-    Input: 
-        img: label image
-        z_scaling: factor of interpolations along z axis, should be <10
-        smooth_sigma: sigma used for making Gaussian blur
-    Return:
-        output_img: Generated smoothed label image
-        mask: mask image indicating the overlapping of multiple cells (0: background;
-        1: one cell; >1: multiple cells)
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Label image
+    z_scaling : int
+        Factor of interpolations along z axis, should be <10
+    smooth_sigma : float
+        sigma used for making Gaussian blur
+
+    Returns
+    -------
+    output_img : numpy.ndarray
+        Generated smoothed label image
+    mask : numpy.ndarray
+        Mask image indicating the overlapping of multiple cells (0: background; 1: one cell; >1: multiple cells)
     """
     img_interp = np.repeat(img, z_scaling, axis=2)
     shape_interp = img_interp.shape
@@ -492,6 +538,32 @@ def gaussian_filter(img, z_scaling=10, smooth_sigma=5):
 
 
 def _get_coordinates(label, label_image, get_subregion=True):
+    """
+    Get the coordinates of a specific label
+
+    Parameters
+    ----------
+    label : int
+        The number of the cell label
+    label_image :
+        The label image
+    get_subregion : bool
+        If True, return the image of the subregion and its size
+
+    Returns
+    -------
+    x_max : float
+    x_min : float
+    y_max : float
+    y_min : float
+    z_max : float
+    z_min : float
+        Coordinates for the subregion
+    subregion : numpy.ndarray
+        The subregion containing the label
+    np.size(region[0]) : int
+        The size of the subregion
+    """
     region = np.where(label_image == label)
     x_max, x_min = np.max(region[0]), np.min(region[0])
     y_max, y_min = np.max(region[1]), np.min(region[1])
@@ -507,11 +579,20 @@ def _get_coordinates(label, label_image, get_subregion=True):
 def get_reference_vols(ensemble, vol, adjacent=False):
     """
     Get the reference volumes to calculate multiple prediction from which
-    Input:
-        ensemble: the maximum number of predictions
-        vol: the current volume number at which the prediction was made
-    Return:
-        vols_list: the list of the reference volume numbers
+
+    Parameters
+    ----------
+    ensemble : int
+        The maximum number of predictions
+    vol : int
+        The current volume number at which the prediction was made
+    adjacent : bool
+        If True, get reference volumes from adjacent previous volumes. If False, from distributed previous volumes
+
+    Returns
+    -------
+    vols_list : list
+        The list of the reference volume numbers
     """
     if not ensemble:
         return [vol - 1]
@@ -526,20 +607,8 @@ def get_reference_vols(ensemble, vol, adjacent=False):
 
 
 def get_remote_vols(ensemble, vol):
+    """Get distributed previous volumes"""
     interval = (vol - 1) // ensemble
     start = np.mod(vol - 1, ensemble) + 1
     vols_list = list(range(start, vol - interval+1, interval))
     return vols_list
-
-
-def displacement_real_to_image(real_disp, i_displacement_from_vol1, par_image):
-    """
-    Transform the coordinates from real to voxel
-    Input:
-        r_disp: coordinates in real scale
-    Return:
-        coordinates in voxel
-    """
-    l_displacement_from_vol1 = real_disp.copy()
-    l_displacement_from_vol1[:, 2] = i_displacement_from_vol1[:, 2] / par_image["z_xy_ratio"]
-    return np.rint(l_displacement_from_vol1).astype(int)
