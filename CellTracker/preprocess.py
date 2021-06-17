@@ -1,9 +1,7 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
 """
-Created on Mon Aug 28 13:12:41 2017
+A module for preprocessing of 3D cell images
+Author: Chentao Wen
 
-@author: wen
 """
 import os
 import cv2

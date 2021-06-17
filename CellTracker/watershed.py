@@ -1,9 +1,7 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
 """
-Created on Thu Sep 28 09:22:51 2017
+A module for segmenting cells with watershed in 3D images
+Author: Chentao Wen
 
-@author: wen
 """
 
 import numpy as np

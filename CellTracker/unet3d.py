@@ -1,9 +1,7 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
 """
-Created on Fri Oct 13 10:37:20 2017
+A module for training the 3D U-Net
+Author: Chentao Wen
 
-@author: wen
 """
 import os
 import math
