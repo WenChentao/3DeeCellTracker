@@ -1130,11 +1130,12 @@ class Tracker(Segmentation, Draw):
     def match(self, target_volume, method="min_size"):
         """
         Match cells in volume 1 with the target_volume
+
         Parameters
         ----------
         target_volume : int
             The target volume to be matched
-        method :
+        method : str
             The method to segment cells.
 
         Returns
