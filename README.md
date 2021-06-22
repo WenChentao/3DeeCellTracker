@@ -85,7 +85,7 @@ year = {2021}
 ```
 
 ## Acknowledgements
-We wish to thank **JetBrainsfor** for supporting this project 
+We wish to thank **JetBrains** for supporting this project 
 with free open source **Pycharm** license.
 
 [![Pycharm Logo](pictures/jetbrains_small.png)](https://www.jetbrains.com/) 
