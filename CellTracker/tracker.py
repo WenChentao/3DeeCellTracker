@@ -263,8 +263,8 @@ class Draw:
                       cmap=get_random_cmap(num=self.cell_num_t0))
         axm[1].set_title(f"Manual _segment at vol 1", fontdict=TITLE_STYLE)
 
-    def _get_tracking_anim(self, ax, r_coordinates_predicted_pre, r_coordinates_segmented_post,
-                           r_coordinates_predicted_post, layercoord, draw_point=True):
+    def _draw_transformation(self, ax, r_coordinates_predicted_pre, r_coordinates_segmented_post,
+                             r_coordinates_predicted_post, layercoord, draw_point=True):
         """
         Draw each iteration of the tracking by FFN + PR-GLS
         """
@@ -300,7 +300,7 @@ class Draw:
         """
         Draw the accurate correction of cell positions after FFN + PR-GLS transformation
         """
-        _ = self._get_tracking_anim(
+        _ = self._draw_transformation(
             [ax[0], ax[1]],
             self._transform_real_to_layer(r_coor_predicted),
             self._transform_real_to_layer(self.segresult.r_coordinates_segment),
@@ -346,8 +346,8 @@ class Draw:
             ax_i.cla()
         plt.suptitle(f"Tracking results at vol {target_volume}", size=16)
 
-        _ = self._get_tracking_anim([ax[0], ax[1]], self.history.r_tracked_coordinates[target_volume - 2],
-                                    self.segresult.r_coordinates_segment, r_coor_predicted_mean, layercoord=False)
+        _ = self._draw_transformation([ax[0], ax[1]], self.history.r_tracked_coordinates[target_volume - 2],
+                                      self.segresult.r_coordinates_segment, r_coor_predicted_mean, layercoord=False)
         self._draw_correction([ax[2], ax[3]], r_coor_predicted_mean, i_disp_from_vol1_updated)
         self._draw_after_matching(ax[4], ax[5], target_volume, legend=False)
         self._set_layout_anim()
@@ -1200,7 +1200,7 @@ class Tracker(Segmentation, Draw):
             for i in range(len(C_t)):
                 r_coordinates_predicted, r_coordinates_predicted_pre = self._predict_one_rep(
                     r_coordinates_predicted, coor_intermediate_list[i], BETA_t[i], C_t[i])
-                plt_obj = self._get_tracking_anim(
+                plt_obj = self._draw_transformation(
                     ax, r_coordinates_predicted_pre, self.segresult.r_coordinates_segment,
                     r_coordinates_predicted, layercoord=False)
                 plt_objs.append(plt_obj)

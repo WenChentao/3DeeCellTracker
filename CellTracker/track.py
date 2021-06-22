@@ -369,10 +369,10 @@ def transform_cells(img3d, vectors3d):
 
 
 def plot_arrow(ax, x1, y1, x2, y2):
-    """Draw the arrows between two sets of coordinates"""
+    """Draw the arrows from (x1, y1) to (x2,y2)"""
     return ax.annotate("",
-                xy=(x1, y1), xycoords='axes fraction',
-                xytext=(x2, y2), textcoords='axes fraction',
+                xy=(x2, y2), xycoords='axes fraction',
+                xytext=(x1, y1), textcoords='axes fraction',
                 arrowprops=dict(arrowstyle="wedge",  color="C0"))
 
 def plot_tracking_2d(T_ref, ax, draw_point, ref_ptrs, tgt_ptrs, x_axis, y_axis, sizes):
