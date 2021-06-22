@@ -3,7 +3,13 @@
 
 **3DeeCellTracker** is a deep-learning based pipeline for tracking cells in 3D time lapse images of deforming/moving organs ([eLife, 2021](https://elifesciences.org/articles/59187)).
 
+### To do:
+In the next version of our PyPI package 3DeeCellTracker v0.4.1, following issues will be fixed:
+- Solve the bug "the directions of arrows showing the accurate correction are opposite" 
+  - The codes here have been fixed
+
 ## Updates:
+
 ### 2021.06.17
 We have updated our program to 3DeeCellTracker v0.4.0:
 - We modified the notebooks, and the underlying package to simplify the use.
