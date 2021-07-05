@@ -7,6 +7,10 @@ Author: Chentao Wen
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
+import matplotlib as mpl
+
+mpl.rcParams["axes.spines.right"] = False
+mpl.rcParams["axes.spines.top"] = False
 
 def get_activities(path_raw, path_tracked, volume_num, layer_num):
     """
@@ -30,11 +34,11 @@ def get_activities(path_raw, path_tracked, volume_num, layer_num):
     """
     images_label, images_raw = _read_image(1, layer_num, path_raw, path_tracked)
     cell_num = np.max(images_label)
-    activities = np.zeros((volume_num + 1, cell_num + 1))
+    activities = np.zeros((volume_num, cell_num))
     discard_ratio = 0.1
     for frame in range(1, volume_num + 1):
 
-        print("t=%i"%frame, end=",")
+        print("t=%i"%frame, end="\r")
 
         # read raw images and labels
         if frame>=2:
@@ -132,5 +136,7 @@ def draw_signals(signals, min_upper, max_lower, figsize=(40, 20)):
                 lower_sig_n = max_lower
             axes[row, column].set_ylim(lower_sig_n, upper_sig_n)
             axes[row, column].set_title("N%d" % (n + 1), va="top")
-    plt.subplots_adjust(left=0.02, bottom=0.02, right=1, top=1, wspace=0.1, hspace=0.2)
+            if row<row_n-1:
+                axes[row, column].get_xaxis().set_visible(False)
+    plt.subplots_adjust(left=0.02, bottom=0.02, right=0.98, top=0.98, wspace=0.2, hspace=0.2)
     return fig, axes
