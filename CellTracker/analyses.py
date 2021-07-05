@@ -1,0 +1,136 @@
+"""
+A module for analyses after tracking
+Author: Chentao Wen
+
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import cv2
+
+def get_activities(path_raw, path_tracked, volume_num, layer_num):
+    """
+    Get activities of all cells
+
+    Parameters
+    ----------
+    path_raw : str
+        The path of the images for extracting activities
+    path_tracked : str
+        The path of the tracked labels
+    volume_num : int
+        The number of the volumes
+    layer_num : int
+        the number of layers in the raw images and the tracked labels
+
+    Returns
+    -------
+    activities : numpy.ndarray
+        The extracted activities with shape (volume, label)
+    """
+    images_label, images_raw = _read_image(1, layer_num, path_raw, path_tracked)
+    cell_num = np.max(images_label)
+    activities = np.zeros((volume_num + 1, cell_num + 1))
+    discard_ratio = 0.1
+    for frame in range(1, volume_num + 1):
+
+        print("t=%i"%frame, end=",")
+
+        # read raw images and labels
+        if frame>=2:
+            images_label, images_raw = _read_image(frame, layer_num, path_raw, path_tracked)
+
+        # calculate mean intensities of each cell of top 90% area
+        for label in range(1, cell_num + 1):
+            intensity_label_i = images_raw[images_label==label]
+            threshold = np.floor(np.size(intensity_label_i) * discard_ratio).astype(int)
+            sorted_intensity_idx = np.argsort(intensity_label_i)
+            activities[frame-1, label-1] = np.mean(intensity_label_i[sorted_intensity_idx[threshold:]])
+    return activities
+
+
+def _read_image(frame, layer_num, path_raw, path_tracked):
+    """Read 3D images of raw activities and tracked labels"""
+    images_raw = []
+    images_label = []
+    for z in range(1, layer_num + 1):
+        images_raw.append(cv2.imread(path_raw % (frame, z), -1))
+        images_label.append(cv2.imread(path_tracked % (frame, z), 0))
+    images_raw = np.array(images_raw)
+    images_label = np.array(images_label)
+    return images_label, images_raw
+
+
+def optimize_row_column(duration, n_signals, figsize):
+    """
+    Return the proper number of row, column for visualization
+
+    Parameters
+    ----------
+    duration : int
+        Number of time points for each signal.
+    n_signals : int
+        Number of signals.
+    figsize : tuple
+        size of the figure to show activities
+
+    Returns
+    -------
+    row_n : int
+        Number of row
+    column_n : int
+        Number of column
+
+    Notes
+    -----
+    The row_n and colume_n are designed to make sure the xy_ratio of each subplot propotional with duration.
+
+    Examples
+    --------
+    >>> optimize_row_column(duration=200, n_signals=100, figsize=(40, 20))
+    (14, 8)
+    """
+    width_hight_ratio = figsize[0]/figsize[1]
+    total_length = duration * n_signals
+    row_n = int((total_length / (50 * width_hight_ratio)) ** 0.5)
+    column_n = int(np.ceil(n_signals / row_n))
+    return row_n, column_n
+
+
+def draw_signals(signals, min_upper, max_lower, figsize=(40, 20)):
+    """
+    Draw signals in multiple subplots
+
+    Parameters
+    ----------
+    signals : numpy.ndarray
+        N Signals with T time points with shape (T, N)
+    min_upper : float
+        If maximum signal < min_upper, set the upper limitation of y axis to min_upper
+    max_lower : float
+        If minimum signal > max_lower, set the lower limitation of y axis to max_lower
+    figsize : tuple
+        Size of the figure
+
+    Returns
+    -------
+    fig : matplotlib.figure
+    axes : array of matplotlib.axes.Axes
+    """
+    row_n, column_n = optimize_row_column(signals.shape[0], signals.shape[1], figsize)
+    fig, axes = plt.subplots(row_n, column_n, figsize=figsize)
+    for row in range(row_n):
+        for column in range(column_n):
+            n = row * column_n + column
+            if n >= signals.shape[1]:
+                break
+            axes[row, column].plot(signals[:, n], lw=2)
+            upper_sig_n, lower_sig_n = np.nanmax(signals[:, n]), np.nanmin(signals[:, n])
+            if upper_sig_n < min_upper:
+                upper_sig_n = min_upper
+            if lower_sig_n > max_lower:
+                lower_sig_n = max_lower
+            axes[row, column].set_ylim(lower_sig_n, upper_sig_n)
+            axes[row, column].set_title("N%d" % (n + 1), va="top")
+    plt.subplots_adjust(left=0.02, bottom=0.02, right=1, top=1, wspace=0.1, hspace=0.2)
+    return fig, axes
