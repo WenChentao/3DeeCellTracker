@@ -121,7 +121,7 @@ def get_tracking_path(adjacent, ensemble, folder_path):
 
 def read_image_ts(vol, path, name, z_range, print_=False):
     """
-    Load a single volume of the 3D+T sub_images.
+    Read a 3D image at time vol
 
     Parameters
     ----------
@@ -152,7 +152,7 @@ def read_image_ts(vol, path, name, z_range, print_=False):
 
 def save_img3(z_siz, img, path):
     """
-    Save a 3D image as 2D image sequence
+    Save a 3D image (at t=1) as 2D image sequence
 
     Parameters
     ----------

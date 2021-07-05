@@ -7,6 +7,8 @@
 In the next version of our PyPI package 3DeeCellTracker v0.4.1, following issues will be fixed:
 - Solve the bug "the directions of arrows showing the accurate correction are opposite" 
   - The codes here have been fixed
+- Add functions for extracting/drawing activities from cell images based on tracked labels
+- Add the function for storing coordinates of tracked cells
 
 ## Updates:
 
