@@ -129,7 +129,7 @@ def read_image_ts(vol, path, name, z_range, print_=False):
     Returns
     -------
     img_array : numpy.ndarray
-        An array of the image with shape (x, y, z)
+        An array of the image with shape (row, column, layer)
     """
     image_raw = []
     for z in range(z_range[0], z_range[1]):
@@ -149,7 +149,7 @@ def save_img3(z_siz, img, path):
     z_siz : int
         The layer number of the 3D image
     img : numpy.ndarray
-        The 3D image to be saved
+        The 3D image to be saved. Shape: (row, column, layer)
     path : str
         The path of the image files to be saved.
         It should use formatted string to indicate volume number and then layer number, e.g. "xxx_t%04d_z%04i.tif"
@@ -745,12 +745,12 @@ class History:
 
     Attributes
     ----------
-    r_displacements :  list
-        The displacements of each cell in each volume relative to their positions in volume 1
-    r_segmented_coordinates : list
-        The positions of each cell segmented by 3D U-Net + watershed in each volume
-    r_tracked_coordinates : list
-        The positions of each cell tracked by FFN + PR-GLS + corrections in each volume
+    r_displacements :  list of numpy.ndarray
+        The displacements of each cell in each volume relative to their positions in volume 1. Shape: (cell_num, 3)
+    r_segmented_coordinates : list of numpy.ndarray
+        The positions of each cell segmented by 3D U-Net + watershed in each volume. Shape: (cell_num, 3)
+    r_tracked_coordinates : list of numpy.ndarray
+        The positions of each cell tracked by FFN + PR-GLS + corrections in each volume. Shape: (cell_num, 3)
     anim : list
         The images of tracking process in each volume (from volume 2)
     """
@@ -808,14 +808,14 @@ class Tracker(Segmentation, Draw):
         For padding the images before applying U-Net and for shrinking the cell prediction in the center part
         of the U-Net output. Each value should be < (x, y, or z size of the U-Net input // 2), Default: (24, 24, 2)
     miss_frame : list, optional
-        A list of volumes which includes serious problem in the raw images and thus will be skipped for tracking.
+        A list of volumes (int) which includes serious problem in the raw images and thus will be skipped for tracking.
         Default: None
     cell_num_t0 : int
         The detected cell numbers in the manually corrected segmentation in volume 1
     Z_RANGE_INTERP : Range object
         The sequence of the indexes along z axis in the interpolated image corresponding to the layers in the raw image
     region_list : list
-        List of the sub-images [array_cell1, array_cell2, ...] with binary values
+        List of the 3D sub-images [array_cell1, array_cell2, ...] with binary values
         (1: this cell; 0: background or other cells)
     region_width : list
         List of the width of [[x_width, y_width, z_width]_cell1, ...] each sub-image in x, y, and z axis
@@ -826,9 +826,10 @@ class Tracker(Segmentation, Draw):
     pad_z : int
         The values for padding a zero array with the raw image size
     label_padding : numpy.ndarray
-        The zero array padded with pad_x, pad_y, pad_z, to be used in accurate correction during tracking
+        A 3D array with zero values, used in accurate correction during tracking.
+        Shape: (row + 2 * pad_x, column + 2 * pad_y, layer + 2 * pad_z)
     segmentation_manual_relabels : numpy.ndarray
-        The relabeled manual segmentation
+        The relabeled manual segmentation. Shape: (row, column, layer)
     segresult : SegResults object
         The results of the segmentation in current volume
     unet_model : keras.Model
@@ -1205,15 +1206,24 @@ class Tracker(Segmentation, Draw):
 
     def _fit_ffn_prgls(self, rep, r_coordinates_segment_pre):
         """
-        Appliy FFN + PR-GLS from t1 to t2 (multiple times) to get transformation
-            parameters to predict cell coordinates
-        Input:
-            rep: the number of repetitions of (FFN + max_iteration times of PR-GLS)
-        Return:
-            C_t: list of C in each repetition (to predict the transformed coordinates)
-            BETA_t: list of the parameter beta used in each repetition (to predict coordinates)
-            coor_intermediate_list: list of the pre-transformed coordinates of automatically
-                segmented cells in each repetition (to predict coordinates)
+        Appliy FFN + PR-GLS from t1 to t2 (multiple times) to get transformation parameters to predict cell coordinates
+
+        Parameters
+        ----------
+        rep : int
+            The number of repetitions of (FFN + max_iteration times of PR-GLS)
+        r_coordinates_segment_pre : numpy.ndarray
+            Coordinates of cells in previous volume. Shape: (cell_num, 3)
+
+        Returns
+        -------
+        C_t : list
+            List of C in each repetition (to predict the transformed coordinates)
+        BETA_t : list
+            List of the parameter beta used in each repetition (to predict coordinates)
+        coor_intermediate_list : list
+            List of the pre-transformed coordinates of automatically segmented cells in each repetition
+            (to predict coordinates)
         """
         corr_intermediate = r_coordinates_segment_pre.copy()
         C_t = []
@@ -1336,7 +1346,7 @@ class Tracker(Segmentation, Draw):
         mask : numpy.ndarray
             The new image with the
         """
-        label_moved = self.label_padding.copy() * 0
+        label_moved = self.label_padding.copy()
         mask = label_moved.copy()
         for label in range(0, len(self.region_list)):
             new_x_min = self.region_xyz_min[label][0] + vectors3d[label, 0] + self.pad_x
