@@ -61,16 +61,6 @@ def timer(func):
     return wrapper_timer
 
 
-def save_coordinates(obj, filename):
-    """"""
-    # TODO: save_coordinates
-
-
-def load_coordinates(filename):
-    """"""
-    # TODO: load_coordinates
-
-
 def get_random_cmap(num, seed=1):
     """
     Generate a random cmap
@@ -1518,3 +1508,18 @@ class Tracker(Segmentation, Draw):
         self.history.r_tracked_coordinates.append(self.r_coordinates_tracked_t0 + r_disp_from_vol1_updated)
 
         return None
+
+    def save_coordinates(self):
+        """Save 3D coordinates in a csv file under the track_information folder
+
+        Notes
+        -----
+        x,y are coordinates with pixel unit, while z is the interpolated coordinate with the same unit as x and y
+        """
+        coord = np.asarray(self.history.r_tracked_coordinates)
+        t, cell, pos = coord.shape
+        coord_table = np.column_stack(
+            (np.repeat(np.arange(1, t+1), cell), np.tile(np.arange(1, cell+1), t), coord.reshape(t * cell, pos)))
+        np.savetxt(os.path.join(self.paths.track_information, "tracked_coordinates.csv"), coord_table, delimiter=',',
+                   header="cell,t,x(row),y(column),z(interpolated)", comments="")
+        print("Cell coordinates were stored in ./track_information/tracked_coordinates.csv")
