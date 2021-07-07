@@ -56,17 +56,20 @@ which can track moving cells in 3D time-lapse images.
 - Update the positions of the cells confirmed in volume 1 in following 
   volumes, i.e. volume 2, 3, 4, ..., until the last volume.
   
-- In single mode, the positions were updated subsequently as: 
+- In single mode, the positions were updated subsequently as:
   
-  $Pos_2 = f_{1,2}(Pos_1)$, $Pos_3 = f_{2,3}(Pos_2)$,..., 
-  $Pos_{t+1} = f_{t,t+1}(Pos_t)$,
+  ![](http://latex.codecogs.com/gif.latex?Pos_2=f_{1,2}(Pos_1)),
+  ![](http://latex.codecogs.com/gif.latex?Pos_3=f_{2,3}(Pos_2)),
+  ![](http://latex.codecogs.com/gif.latex?Pos_{t+1}=f_{t,t+1}(Pos_t)),
+
   where each function f_t are estimated by FFN and other techniques 
   between volume t and t+1, based on the positions of cells segmented 
   by 3D U-Net and watershed (do not need manual correction)
 - In ensemble mode, to improve the accuracy of tracking, 
   the positions at t+1 were instead estimated as the 
   mean of predictions from multiple previous volumes, such like:
-  $Pos_{t+1} = mean[f_{t-d,t}(Pos_t-d), f_{t-2d,t}(Pos_t-2d), ...]$
+  
+  ![](http://latex.codecogs.com/gif.latex?Pos_{t+1}=\\frac{1}{N}\\sum_{i}^{N}f_{t-i*\\Delta,t}(Pos_{t-i*\\Delta}))
 
 ## Protocol
 See Our GitHub repository for more information
