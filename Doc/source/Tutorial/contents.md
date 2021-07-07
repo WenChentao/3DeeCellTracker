@@ -59,7 +59,7 @@ which can track moving cells in 3D time-lapse images.
 - In single mode, the positions were updated subsequently as:
   
   ![](http://latex.codecogs.com/gif.latex?Pos_2=f_{1,2}(Pos_1)),
-  ![](http://latex.codecogs.com/gif.latex?Pos_3=f_{2,3}(Pos_2)),
+  ![](http://latex.codecogs.com/gif.latex?Pos_3=f_{2,3}(Pos_2)),...
   ![](http://latex.codecogs.com/gif.latex?Pos_{t+1}=f_{t,t+1}(Pos_t)),
 
   where each function f_t are estimated by FFN and other techniques 
