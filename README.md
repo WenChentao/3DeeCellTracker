@@ -67,9 +67,9 @@ We have made tutorials explaining how to use our software. See links below (vide
 
 [Tutorial 1: Install 3DeeCellTracker and train the 3D U-Net](https://www.youtube.com/watch?v=ctt6o3DY2bA)
 
-[Tutorial 2: Tracking cells by 3DeeCellTracker](https://www.youtube.com/watch?v=KZ03Y8u8UK0&t=34s)
+[Tutorial 2: Tracking cells by 3DeeCellTracker](https://www.youtube.com/watch?v=KZ03Y8u8UK0)
 
-[Tutorial 3: Annotate cells for training 3D U-Net](https://www.youtube.com/watch?v=ONSOLJQaq28&t=9s)
+[Tutorial 3: Annotate cells for training 3D U-Net](https://www.youtube.com/watch?v=ONSOLJQaq28)
 
 [Tutorial 4: Manually correct the cell segmentation](https://www.youtube.com/watch?v=e7xWaccH63o)
 
