@@ -74,7 +74,7 @@ We have made tutorials explaining how to use our software. See links below (vide
 
 [Tutorial 4: Manually correct the cell segmentation](https://www.youtube.com/watch?v=e7xWaccH63o)
 
-## A text tutorial 
+## A Text Tutorial 
 LINK: https://bio-protocol.org/prep1350
 
 ## How it works
