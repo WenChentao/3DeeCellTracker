@@ -1355,7 +1355,7 @@ class Tracker(Segmentation, Draw):
             subregion_previous = label_moved[new_x_min:new_x_min + self.region_width[label][0],
                                  new_y_min:new_y_min + self.region_width[label][1],
                                  new_z_min:new_z_min + self.region_width[label][2]]
-            if len(subregion_previous.flatten()) == 0:
+            if subregion_previous.shape != self.region_list[label].shape:
                 continue
             subregion_new = subregion_previous * (1 - self.region_list[label]) + \
                             self.region_list[label] * (label + 1)
