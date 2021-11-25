@@ -5,12 +5,13 @@
 **3DeeCellTracker** is a deep-learning based pipeline for tracking cells in 3D time lapse images of deforming/moving organs ([eLife, 2021](https://elifesciences.org/articles/59187)).
 
 ### To do:
-In the next version of our PyPI package 3DeeCellTracker v0.4.1, following issues will be fixed:
+**In the next version of our PyPI package 3DeeCellTracker v0.4.1, following issues will be fixed:**
 - Solve the bug "the directions of arrows showing the accurate correction are opposite" 
   - The codes here have been fixed
 - Add functions for extracting/drawing activities from cell images based on tracked labels
 - Add the function for storing coordinates of tracked cells
-Other critical issues to be solved:
+
+**Other critical issues to be solved:**
 - Currently, 3DeeCellTracker only works with TensorFlow-gpu 1.x which does not support some latest NVIDIA GPU models using CUDA 11 drivers. This issue will be sovled in future versions of 3DeeCellTracker.
 
 ## Updates:
