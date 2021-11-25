@@ -10,6 +10,8 @@ In the next version of our PyPI package 3DeeCellTracker v0.4.1, following issues
   - The codes here have been fixed
 - Add functions for extracting/drawing activities from cell images based on tracked labels
 - Add the function for storing coordinates of tracked cells
+Other critical issues to be solved:
+- Currently, 3DeeCellTracker only works with TensorFlow-gpu 1.x which does not support some latest NVIDIA GPU models using CUDA 11 drivers. This issue will be sovled in future versions of 3DeeCellTracker.
 
 ## Updates:
 
