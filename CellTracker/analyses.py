@@ -101,7 +101,7 @@ def optimize_row_column(duration, n_signals, figsize):
     return row_n, column_n
 
 
-def draw_signals(signals, min_upper, max_lower, figsize=(40, 20)):
+def draw_signals(signals, ylim_upper=None, ylim_lower=None, figsize=(40, 20)):
     """
     Draw signals in multiple subplots
 
@@ -109,10 +109,10 @@ def draw_signals(signals, min_upper, max_lower, figsize=(40, 20)):
     ----------
     signals : numpy.ndarray
         N Signals with T time points with shape (T, N)
-    min_upper : float
-        If maximum signal < min_upper, set the upper limitation of y axis to min_upper
-    max_lower : float
-        If minimum signal > max_lower, set the lower limitation of y axis to max_lower
+    ylim_upper : float
+        ylim upper bound. If None, set it to the highest value.
+    ylim_lower : float
+        ylim lower bound. If None, set it to the lowest value.
     figsize : tuple
         Size of the figure
 
@@ -130,10 +130,10 @@ def draw_signals(signals, min_upper, max_lower, figsize=(40, 20)):
                 break
             axes[row, column].plot(signals[:, n], lw=2)
             upper_sig_n, lower_sig_n = np.nanmax(signals[:, n]), np.nanmin(signals[:, n])
-            if upper_sig_n < min_upper:
-                upper_sig_n = min_upper
-            if lower_sig_n > max_lower:
-                lower_sig_n = max_lower
+            if ylim_upper is not None:
+                upper_sig_n = ylim_upper
+            if ylim_lower is not None:
+                lower_sig_n = ylim_lower
             axes[row, column].set_ylim(lower_sig_n, upper_sig_n)
             axes[row, column].set_title("N%d" % (n + 1), va="top")
             if row<row_n-1:
