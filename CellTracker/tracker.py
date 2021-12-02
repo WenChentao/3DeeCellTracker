@@ -23,8 +23,8 @@ import matplotlib.image as mgimg
 import numpy as np
 import scipy.ndimage.measurements as snm
 from PIL import Image
-from keras.models import load_model
-from keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from matplotlib import animation
 from matplotlib import pyplot as plt
 from scipy.stats import trim_mean
@@ -981,7 +981,7 @@ class Tracker(Segmentation, Draw):
         for step in range(1, iteration + 1):
             self.unet_model.fit_generator(self.train_generator, validation_data=self.valid_data, epochs=1,
                                           steps_per_epoch=60)
-            loss = self.unet_model.history.history["val_loss"]
+            loss = self.unet_model.history.history["val_loss"][-1]
             if loss < min(self.val_losses):
                 print("val_loss updated from ", min(self.val_losses), " to ", loss)
                 self.unet_model.save_weights(os.path.join(self.paths.unet_weights, weights_name + f"step{step}.h5"))

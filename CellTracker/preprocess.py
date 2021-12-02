@@ -7,9 +7,9 @@ import os
 import cv2
 from scipy import ndimage
 import numpy as np
-import keras
-from keras.models import Model
-from keras.layers import Conv3D, Input
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Conv3D, Input
+import tensorflow.keras as keras
 
 
 def _make_folder(path_i, print_=True):

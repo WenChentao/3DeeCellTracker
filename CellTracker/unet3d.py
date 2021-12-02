@@ -3,23 +3,25 @@ A module for training the 3D U-Net
 Author: Chentao Wen
 
 """
-import os
-import math
-import warnings
 import itertools
+import math
+import os
+import warnings
 from functools import partial
 
-import numpy as np
 import matplotlib.pyplot as plt
-from keras.models import Model
-from keras.preprocessing.image import ImageDataGenerator
-from keras.layers import Conv3D, LeakyReLU, Input, MaxPooling3D, UpSampling3D, concatenate, BatchNormalization
+import numpy as np
+from tensorflow.keras.layers import Conv3D, LeakyReLU, Input, MaxPooling3D, UpSampling3D, concatenate, \
+    BatchNormalization
+from tensorflow.keras.models import Model
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 from CellTracker.preprocess import load_image, _make_folder, _normalize_image, _normalize_label
 
 warnings.filterwarnings('ignore')
 
 TITLE_STYLE = {'fontsize': 16, 'verticalalignment': 'bottom'}
+
 
 def unet3_a():
     """
@@ -411,7 +413,7 @@ class TrainingUNet3D:
         self.models_path = ""
         self._make_folders()
         self.model.compile(loss='binary_crossentropy', optimizer="adam")
-        self.model.save_weights(os.path.join(self.models_path,'weights_initial.h5'))
+        self.model.save_weights(os.path.join(self.models_path, 'weights_initial.h5'))
 
     def _make_folders(self):
         """
@@ -492,7 +494,7 @@ class TrainingUNet3D:
         """
         axs = self._subplots_4images(percentile_bottom, percentile_top,
                                      (self.train_image_norm, self.train_label_norm, self.valid_image_norm,
-                                  self.valid_label_norm))
+                                      self.valid_label_norm))
         axs[0, 0].set_title("Max projection of normalized image (train)", fontdict=TITLE_STYLE)
         axs[0, 1].set_title("Max projection of cell annotation (train)", fontdict=TITLE_STYLE)
         axs[1, 0].set_title("Max projection of normalized image (validation)", fontdict=TITLE_STYLE)
@@ -554,18 +556,19 @@ class TrainingUNet3D:
         The training can be stopped by pressing Ctrl + C if users feel the prediction is good enough during training.
         Every time the validation loss was reduced, the weights file will be stored into the /models folder
         """
-        self.model.load_weights(os.path.join(self.models_path,'weights_initial.h5'))
-        for step in range(1, iteration+1):
-            self.model.fit_generator(self.train_generator, validation_data=self.valid_data, epochs=1, steps_per_epoch=60)
+        self.model.load_weights(os.path.join(self.models_path, 'weights_initial.h5'))
+        for step in range(1, iteration + 1):
+            self.model.fit_generator(self.train_generator, validation_data=self.valid_data, epochs=1,
+                                     steps_per_epoch=60)
             if step == 1:
-                self.val_losses = [self.model.history.history["val_loss"]]
+                self.val_losses = [self.model.history.history["val_loss"][-1]]
                 print("val_loss at step 1: ", min(self.val_losses))
                 self.model.save_weights(os.path.join(self.models_path, weights_name + f"step{step}.h5"))
                 self._draw_prediction(step)
             else:
-                loss = self.model.history.history["val_loss"]
-                if loss<min(self.val_losses):
-                    print("val_loss updated from ", min(self.val_losses)," to ", loss)
+                loss = self.model.history.history["val_loss"][-1]
+                if loss < min(self.val_losses):
+                    print("val_loss updated from ", min(self.val_losses), " to ", loss)
                     self.model.save_weights(os.path.join(self.models_path, weights_name + f"step{step}.h5"))
                     self._draw_prediction(step)
                 self.val_losses.append(loss)
@@ -586,8 +589,8 @@ class TrainingUNet3D:
 
     def _draw_prediction(self, step, percentile_top=99.9, percentile_bottom=10):
         """Draw the predictions in current step"""
-        train_prediction = np.squeeze(unet3_prediction(np.expand_dims(self.train_image_norm,axis=(0,4)), self.model))
-        valid_prediction = np.squeeze(unet3_prediction(np.expand_dims(self.valid_image_norm,axis=(0,4)), self.model))
+        train_prediction = np.squeeze(unet3_prediction(np.expand_dims(self.train_image_norm, axis=(0, 4)), self.model))
+        valid_prediction = np.squeeze(unet3_prediction(np.expand_dims(self.valid_image_norm, axis=(0, 4)), self.model))
         axs = self._subplots_4images(percentile_bottom, percentile_top,
                                      (self.train_image, train_prediction, self.valid_image, valid_prediction))
         axs[0, 0].set_title("Image (train)", fontdict=TITLE_STYLE)
