@@ -66,7 +66,7 @@ We have made tutorials explaining how to use our software. See links below (vide
 [Tutorial 4: Manually correct the cell segmentation](https://www.youtube.com/watch?v=e7xWaccH63o)
 
 ## A Text Tutorial 
-LINK: https://bio-protocol.org/prep1350
+We have wrote a tutorial explaining how to install and use 3DeeCellTracker. See [Bio-protocol, 2022](https://bio-protocol.org/e4319)
 
 ## How it works
 We designed this pipeline for segmenting and tracking cells in 3D + T images in deforming organs. The methods have been explained in [Wen et al. bioRxiv 2018]( https://doi.org/10.1101/385567) and in [Wen et al. eLife, 2021](https://elifesciences.org/articles/59187).
