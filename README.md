@@ -28,6 +28,12 @@ $ conda env create -f 3DCT-CPU.yml
 $ pip install 3DeeCellTracker
 ```
 
+* Update the 3DeeCellTracker package to the latest version
+
+```console
+$ pip install --update 3DeeCellTracker
+```
+
 For detailed instructions, see [here](Doc/Enviroment.md).
 ## Quick Start
 To learn how to track cells use 3DeeCellTracker, see following notebooks for examples:
