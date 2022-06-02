@@ -6,12 +6,8 @@
 
 ## Updates:
 
-**3DeeCellTracker v0.4.1 was released with following issues fixed (2021.12.02)**
-- Solved the bug "the directions of arrows showing the accurate correction are opposite" 
-  - The codes here have been fixed
-- Added functions for extracting/drawing activities from cell images based on tracked labels
-- Added the function for storing coordinates of tracked cells
-- Added support for both tensorflow 1.x and 2.x
+**3DeeCellTracker v0.4.2 was released with following issues fixed (2022.06.02)**
+- Solved the saving mistakes when cell number > 255.
 
 ## Installation
 

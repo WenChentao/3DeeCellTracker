@@ -140,7 +140,7 @@ def read_image_ts(vol, path, name, z_range, print_=False):
     return img_array
 
 
-def save_img3(z_siz, img, path):
+def save_img3(z_siz, img, path, use_8_bit: bool):
     """
     Save a 3D image (at t=1) as 2D image sequence
 
@@ -153,13 +153,16 @@ def save_img3(z_siz, img, path):
     path : str
         The path of the image files to be saved.
         It should use formatted string to indicate volume number and then layer number, e.g. "xxx_t%04d_z%04i.tif"
+    use_8_bit: bool
+        The array will be transformed to 8-bit or 16-bit before saving as image.
     """
+    dtype = np.uint8 if use_8_bit else np.uint16
     for z in range(1, z_siz + 1):
-        img2d = img[:, :, z - 1].astype(np.uint8)
+        img2d = img[:, :, z - 1].astype(dtype)
         Image.fromarray(img2d).save(path % (1, z))
 
 
-def save_img3ts(z_range, img, path, t):
+def save_img3ts(z_range, img, path, t, use_8_bit: bool=True):
     """
     Save a 3D image at time t as 2D image sequence
 
@@ -174,9 +177,12 @@ def save_img3ts(z_range, img, path, t):
         It should use formatted string to indicate volume number and then layer number, e.g. "xxx_t%04d_z%04i.tif"
     t : int
         The volume number for the image to be saved
+    use_8_bit: bool
+        The array will be transformed to 8-bit or 16-bit before saving as image.
     """
+    dtype = np.uint8 if use_8_bit else np.uint16
     for i, z in enumerate(z_range):
-        img2d = (img[:, :, z]).astype(np.uint8)
+        img2d = (img[:, :, z]).astype(dtype)
         Image.fromarray(img2d).save(path % (t, i + 1))
 
 
@@ -184,6 +190,7 @@ class Draw:
     """
     Class for drawing figures. Only use its method through Tracker instances.
     """
+
     def __init__(self):
         self.history.r_tracked_coordinates = None
         self.r_coordinates_tracked_t0 = None
@@ -469,6 +476,7 @@ class SegResults:
     r_coordinates_segment : numpy.ndarray
         Transformed from l_center_coordinates, with the z coordinates corrected by the resolution relative to x-y plane
     """
+
     def __init__(self):
         self.image_cell_bg = None
         self.l_center_coordinates = None
@@ -490,6 +498,7 @@ class Segmentation:
     """
     Class for segmentation. Only use it through the Tracker instance.
     """
+
     def __init__(self, volume_num, siz_xyz: tuple, z_xy_ratio, z_scaling, shrink):
         self.volume_num = volume_num
         self.x_siz = siz_xyz[0]
@@ -522,7 +531,7 @@ class Segmentation:
         """
         if self.noise_level == noise_level and self.min_size == min_size:
             print("Segmentation parameters were not modified")
-        elif noise_level==None and min_size==None:
+        elif noise_level == None and min_size == None:
             print("Segmentation parameters were not modified")
         else:
             if noise_level is not None:
@@ -584,10 +593,11 @@ class Segmentation:
         self.vol = 1
         self.segresult.update_results(*self._segment(self.vol, method=method, print_shape=True))
         self.r_coordinates_segment_t0 = self.segresult.r_coordinates_segment.copy()
+        use_8_bit = True if self.segresult.segmentation_auto.max() <= 255 else False
 
         # save the segmented cells of volume #1
         save_img3(z_siz=self.z_siz, img=self.segresult.segmentation_auto,
-                  path=self.paths.auto_segmentation_vol1 + "auto_t%04i_z%04i.tif")
+                  path=self.paths.auto_segmentation_vol1 + "auto_t%04i_z%04i.tif", use_8_bit=use_8_bit)
         print(f"Segmented volume 1 and saved it")
 
     def _segment(self, vol, method, print_shape=False):
@@ -617,16 +627,17 @@ class Segmentation:
             Transformed from l_center_coordinates, with the z coordinates corrected by the resolution relative to x-y
             plane
         """
-        image_raw = read_image_ts(vol, self.paths.raw_image, self.paths.image_name, (1, self.z_siz + 1), print_=print_shape)
+        image_raw = read_image_ts(vol, self.paths.raw_image, self.paths.image_name, (1, self.z_siz + 1),
+                                  print_=print_shape)
         # image_gcn will be used to correct tracking results
         image_gcn = (image_raw.copy() / 65536.0)
         image_cell_bg = self._predict_cellregions(image_raw, vol)
-        if np.max(image_cell_bg)<=0.5:
+        if np.max(image_cell_bg) <= 0.5:
             raise ValueError("No cell was detected by 3D U-Net! Try to reduce the noise_level.")
 
         # segment connected cell-like regions using _watershed
         segmentation_auto = self._watershed(image_cell_bg, method)
-        if np.max(segmentation_auto)==0:
+        if np.max(segmentation_auto) == 0:
             raise ValueError("No cell was detected by watershed! Try to reduce the min_size.")
 
         # calculate coordinates of the centers of each segmented cell
@@ -706,6 +717,7 @@ class Paths:
     ffn_model_file : str
         The filename of the pretrained FFN model (keras model such as "xxx.h5")
     """
+
     def __init__(self, folder_path, image_name, unet_model_file, ffn_model_file):
         self.folder = folder_path
         self.models = None
@@ -754,6 +766,7 @@ class History:
     anim : list
         The images of tracking process in each volume (from volume 2)
     """
+
     def __init__(self):
         self.r_displacements = []
         self.r_segmented_coordinates = []
@@ -869,6 +882,7 @@ class Tracker(Segmentation, Draw):
         self.paths = Paths(folder_path, image_name, unet_model_file, ffn_model_file)
         self.history = History()
         self.paths.make_folders(adjacent, ensemble)
+        self.use_8_bit = True
 
     def set_tracking(self, beta_tk, lambda_tk, maxiter_tk):
         """
@@ -901,6 +915,8 @@ class Tracker(Segmentation, Draw):
         segmentation_manual = load_image(self.paths.manual_segmentation_vol1, print_=False)
         print("Loaded manual _segment at vol 1")
         self.segmentation_manual_relabels, _, _ = relabel_sequential(segmentation_manual)
+        if self.segmentation_manual_relabels.max() > 255:
+            self.use_8_bit = False
 
     def _retrain_preprocess(self):
         """
@@ -939,7 +955,7 @@ class Tracker(Segmentation, Draw):
         """
         labels_new = labels3d.copy()
         for z in range(self.z_siz):
-            labels = labels_new[:,:,z]
+            labels = labels_new[:, :, z]
             labels[find_boundaries(labels, mode='outer') == 1] = 0
         return labels_new
 
@@ -1017,7 +1033,7 @@ class Tracker(Segmentation, Draw):
         ValueError
             If step < 0
         """
-        if step==0:
+        if step == 0:
             self.unet_model.load_weights(os.path.join(self.paths.unet_weights, 'weights_initial.h5'))
         elif step > 0:
             self.unet_model.load_weights((os.path.join(self.paths.unet_weights, weights_name + f"step{step}.h5")))
@@ -1042,11 +1058,11 @@ class Tracker(Segmentation, Draw):
 
         # re-segmentation
         self.seg_cells_interpolated_corrected = self._relabel_separated_cells(self.seg_cells_interpolated_corrected)
-        self.segmentation_manual_relabels = self.seg_cells_interpolated_corrected[:,:, self.Z_RANGE_INTERP]
+        self.segmentation_manual_relabels = self.seg_cells_interpolated_corrected[:, :, self.Z_RANGE_INTERP]
 
         # save labels in the first volume (interpolated)
         save_img3ts(range(0, self.z_siz), self.segmentation_manual_relabels,
-                    self.paths.track_results + "track_results_t%04i_z%04i.tif", t=1)
+                    self.paths.track_results + "track_results_t%04i_z%04i.tif", t=1, self.use_8_bit)
 
         # calculate coordinates of cell centers at t=1
         center_points_t0 = snm.center_of_mass(self.segmentation_manual_relabels > 0,
@@ -1363,9 +1379,9 @@ class Tracker(Segmentation, Draw):
             new_y_min:new_y_min + self.region_width[label][1],
             new_z_min:new_z_min + self.region_width[label][2]] = subregion_new
             mask[new_x_min:new_x_min + self.region_width[label][0],
-                new_y_min:new_y_min + self.region_width[label][1],
-                new_z_min:new_z_min + self.region_width[label][2]] += \
-                    (self.region_list[label] > 0).astype("int8")
+            new_y_min:new_y_min + self.region_width[label][1],
+            new_z_min:new_z_min + self.region_width[label][2]] += \
+                (self.region_list[label] > 0).astype("int8")
         output = label_moved[self.pad_x:-self.pad_x, self.pad_y:-self.pad_y, self.pad_z:-self.pad_z]
         mask = mask[self.pad_x:-self.pad_x, self.pad_y:-self.pad_y, self.pad_z:-self.pad_z]
 
@@ -1472,7 +1488,7 @@ class Tracker(Segmentation, Draw):
         # skip frames that cannot be tracked
         if target_volume in self.miss_frame:
             save_img3ts(range(0, self.z_siz), self.tracked_labels,
-                        self.paths.track_results + "track_results_t%04i_z%04i.tif", target_volume)
+                        self.paths.track_results + "track_results_t%04i_z%04i.tif", target_volume, self.use_8_bit)
             self.history.r_displacements.append(self.history.r_displacements[-1])
             self.history.r_segmented_coordinates.append(self.segresult.r_coordinates_segment)
             self.history.r_tracked_coordinates.append(
@@ -1503,7 +1519,7 @@ class Tracker(Segmentation, Draw):
 
         # save tracked labels
         save_img3ts(range(0, self.z_siz), self.tracked_labels,
-                    self.paths.track_results + "track_results_t%04i_z%04i.tif", target_volume)
+                    self.paths.track_results + "track_results_t%04i_z%04i.tif", target_volume, self.use_8_bit)
 
         self._draw_matching_6panel(target_volume, axc6, r_coor_predicted_mean, i_disp_from_vol1_updated)
         fig.canvas.draw()
@@ -1529,7 +1545,7 @@ class Tracker(Segmentation, Draw):
         coord = np.asarray(self.history.r_tracked_coordinates)
         t, cell, pos = coord.shape
         coord_table = np.column_stack(
-            (np.repeat(np.arange(1, t+1), cell), np.tile(np.arange(1, cell+1), t), coord.reshape(t * cell, pos)))
+            (np.repeat(np.arange(1, t + 1), cell), np.tile(np.arange(1, cell + 1), t), coord.reshape(t * cell, pos)))
         np.savetxt(os.path.join(self.paths.track_information, "tracked_coordinates.csv"), coord_table, delimiter=',',
                    header="cell,t,x(row),y(column),z(interpolated)", comments="")
         print("Cell coordinates were stored in ./track_information/tracked_coordinates.csv")
