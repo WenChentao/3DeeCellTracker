@@ -1062,7 +1062,7 @@ class Tracker(Segmentation, Draw):
 
         # save labels in the first volume (interpolated)
         save_img3ts(range(0, self.z_siz), self.segmentation_manual_relabels,
-                    self.paths.track_results + "track_results_t%04i_z%04i.tif", t=1, self.use_8_bit)
+                    self.paths.track_results + "track_results_t%04i_z%04i.tif", t=1, use_8_bit=self.use_8_bit)
 
         # calculate coordinates of cell centers at t=1
         center_points_t0 = snm.center_of_mass(self.segmentation_manual_relabels > 0,

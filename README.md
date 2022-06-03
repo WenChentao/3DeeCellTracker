@@ -6,8 +6,8 @@
 
 ## Updates:
 
-**3DeeCellTracker v0.4.2 was released with following issues fixed (2022.06.02)**
-- Solved the saving mistakes when cell number > 255.
+**3DeeCellTracker v0.4.4 was released with following issues fixed (2022.06.03)**
+- Solved an installation bug.
 
 ## Installation
 
@@ -31,7 +31,7 @@ $ pip install 3DeeCellTracker
 * Update the 3DeeCellTracker package to the latest version
 
 ```console
-$ pip install --update 3DeeCellTracker
+$ pip install --upgrade 3DeeCellTracker
 ```
 
 For detailed instructions, see [here](Doc/Enviroment.md).
