@@ -6,8 +6,8 @@
 
 ## Updates:
 
-**3DeeCellTracker v0.4.4 was released with following issues fixed (2022.06.03)**
-- Solved an installation bug.
+**3DeeCellTracker v0.4.5 was released with following issues fixed (2022.06.03)**
+- Solved an activity load bug.
 
 ## Installation
 

@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="3DeeCellTracker",
-    version="0.4.4",
+    version="0.4.5",
     author="Chentao Wen",
     author_email="chintou.on@gmail.com",
     description="A package for tracking cells in 3D time lapse images",
