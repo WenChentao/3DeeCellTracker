@@ -56,6 +56,14 @@ The data and model files for demonstrating above notebooks can be downloaded [**
 **Note**: Codes above were based on the latest version. 
 For old programs used in eLife 2021, please check the "[**Deprecated_programs**](Deprecated_programs)" folder.
 
+## A frequently reported issue and its solution
+Multiple users have reported that when running the tracker.match() 
+function, a ValueError of shape mismatch occurs. And they were 
+discovered to be the result of an incorrect setting of _siz_xyz_, 
+which should be (height, width, depth) of the 3D image. 
+If you encounter the same error, please double-check that it is 
+correctly set.
+
 ## Video Tutorials
 We have made tutorials explaining how to use our software. See links below (videos in Youtube):
 
