@@ -32,6 +32,17 @@ np.random.seed(42)
 lbl_cmap = random_label_cmap()
 
 
+def load_one_image(path_image: str, t: int):
+    """This function load all 2D images at time t and normalize the resulted 3D image"""
+    path_images_t = sorted(glob(path_image % t))
+    x = imread(path_images_t)
+    axis_norm = (0, 1, 2)  # normalize channels independently
+    return normalize(x, 1, 99.8, axis=axis_norm)
+
+
+def load_stardist():
+    return StarDist3D(None, name='stardist', basedir='models')
+
 def load_images(path_train_images: str, path_train_labels: str, max_projection: bool):
     X = sorted(glob(path_train_images))
     Y = sorted(glob(path_train_labels))
