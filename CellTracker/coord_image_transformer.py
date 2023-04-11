@@ -61,29 +61,51 @@ class CoordsToImageTransformer:
         """
         Interpolate the images along z axis and save the results in "track_results_xxx" folder
 
+        Parameters
+        ----------
+        interpolation_factor : int
+            The factor by which to interpolate the images along the z-axis.
+        smooth_sigma : float, optional
+            The sigma value to use for smoothing the interpolated images, by default 2.5.
+
+        Raises
+        ------
+        ValueError
+            If `interpolation_factor` is less than or equal to zero.
+
         Notes
         -----
-        The image was interpolated and smoothed if z_scaling>1, or smoothed if z_scaling=1 by a Gaussian filter.
-        After interpolation/smoothing, the cell boundaries were reassigned by 2d watershed. Then the interpolated cells
-        were re-segmented by 3d connectivity to separate cells incorrectly labelled as the same cell.
+        The image is interpolated and smoothed if z_scaling > 1, or smoothed if z_scaling = 1 by a Gaussian filter.
+        After interpolation/smoothing, the cell boundaries are reassigned by 2d watershed. Then the interpolated cells
+        are re-segmented by 3d connectivity to separate cells incorrectly labelled as the same cell.
         """
-        # _interpolate layers in z axis
+
+        if interpolation_factor <= 0:
+            raise ValueError("Interpolation factor must be greater than zero.")
+
+        print("Interpolating images along z-axis...")
+
+        # Interpolate layers in z-axis
         self.interpolation_factor = interpolation_factor
         self.subregions = gaussian_interpolation_3d(
-            self.proofed_segmentation, interpolation_factor=interpolation_factor, smooth_sigma=2.5)
-        interpolated_labels, cell_overlaps_mask = self.move_cells(movements_nx3=None)
-        self.z_slice_original_labels = \
-            slice(interpolation_factor // 2, interpolated_labels.shape[2], interpolation_factor)
-        print(f"Interpolated seg:{interpolated_labels.shape}")
+            self.proofed_segmentation, interpolation_factor=interpolation_factor, smooth_sigma=smooth_sigma)
 
+        # Move cells and get interpolated labels
+        interpolated_labels, cell_overlaps_mask = self.move_cells(movements_nx3=None)
+
+        # Calculate the original z-slice labels
+        self.z_slice_original_labels = slice(interpolation_factor // 2, interpolated_labels.shape[2], interpolation_factor)
+
+        # Recalculate cell boundaries
         self.auto_corrected_segmentation = recalculate_cell_boundaries(
             interpolated_labels[:, :, self.z_slice_original_labels],
             cell_overlaps_mask[:, :, self.z_slice_original_labels],
             sampling_xy=self.voxel_size[:2])
 
-        # fix segmentations errors if one or more separated cells were incorrectly marked with the same values
+        # Fix segmentation errors
         self.auto_corrected_segmentation, was_corrected = fix_labeling_errors(self.auto_corrected_segmentation)
         if was_corrected:
+            # Recalculate the interpolation and cell boundaries again if segmentation errors were fixed
             self.subregions = gaussian_interpolation_3d(
                 self.auto_corrected_segmentation, interpolation_factor=interpolation_factor, smooth_sigma=smooth_sigma)
             interpolated_labels, cell_overlaps_mask = self.move_cells(movements_nx3=None)
@@ -92,22 +114,21 @@ class CoordsToImageTransformer:
                 cell_overlaps_mask[:, :, self.z_slice_original_labels],
                 sampling_xy=self.voxel_size[:2])
 
-        self.use_8_bit = False if self.auto_corrected_segmentation.max() > 255 else True
+        # Check if 8-bit is needed for saving the image
+        self.use_8_bit = self.auto_corrected_segmentation.max() <= 255
 
-        # save labels in the first volume (interpolated)
-        save_tracked_cell_images(self.auto_corrected_segmentation,
-                                 os.path.join(self.track_results_folder + "track_results_t%04i_z%04i.tif"),
-                                 t=1,
-                                 use_8_bit=self.use_8_bit)
+        # Save labels in the first volume (interpolated)
+        filename = os.path.join(self.track_results_folder, "track_results_t%04i_z%04i.tif")
+        save_tracked_cell_images(self.auto_corrected_segmentation, filename, t=1, use_8_bit=self.use_8_bit)
 
-        # calculate coordinates of cell centers at t=1
+        print("Calculating coordinates of cell centers...")
+        # Calculate coordinates of cell centers at t=1
         coord_vol1 = ndm.center_of_mass(
             self.auto_corrected_segmentation > 0,
             self.auto_corrected_segmentation,
             range(1, self.auto_corrected_segmentation.max() + 1)
         )
         self.coord_vol1 = Coordinates(np.array(coord_vol1), interpolation_factor, self.voxel_size, dtype="interp")
-    #
 
     def create_interpolated_image(self,
                                   movements_nx3: ndarray = None,

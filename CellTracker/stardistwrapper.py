@@ -7,6 +7,7 @@ Modification Description: This module is a wrapper of 3D StarDist modified accor
 
 from __future__ import print_function, unicode_literals, absolute_import, division
 
+import re
 import sys
 from typing import List
 
@@ -32,18 +33,83 @@ np.random.seed(42)
 lbl_cmap = random_label_cmap()
 
 
-def load_one_image(path_image: str, t: int):
-    """This function load all 2D images at time t and normalize the resulted 3D image"""
-    path_images_t = sorted(glob(path_image % t))
-    x = imread(path_images_t)
+def load_stardist_model(model_name: str = "stardist"):
+    return StarDist3D(None, name=model_name, basedir='models')
+
+
+def load_2d_slices_at_time(slice_paths: str, t: int):
+    """Load all 2D slices at time t and normalize the resulted 3D image"""
+    slice_paths_at_t = sorted(glob(slice_paths % t))
+    if len(slice_paths_at_t) == 0:
+        raise FileNotFoundError(f"No image at time {t} was found")
+    x = imread(slice_paths_at_t)
     axis_norm = (0, 1, 2)  # normalize channels independently
     return normalize(x, 1, 99.8, axis=axis_norm)
 
 
-def load_stardist():
-    return StarDist3D(None, name='stardist', basedir='models')
+def predict_and_save_coordinates(images_path: str, model: StarDist3D, coords_path: str):
+    """
+    Load 2D slices of a 3D image stack obtained at time t and predict instance coordinates using a trained StarDist3D model.
+    Save the predicted coordinates as numpy arrays in a folder.
 
-def load_images(path_train_images: str, path_train_labels: str, max_projection: bool):
+    Args:
+        images_path (str): The file path of the 3D image stack with 2D slices at each time point.
+        model (StarDist3D): A trained StarDist3D model for instance segmentation of 3D image stacks.
+        coords_path (str): The folder path to save the predicted instance coordinates as numpy arrays.
+        t_start (int, optional): The time point to start processing. Defaults to 1.
+    """
+    # Check if the folder exists and create it if necessary
+    _coords_path = Path(coords_path)
+    _coords_path.mkdir(parents=True, exist_ok=True)
+
+    # Get the list of image file names
+    images_path_search = Path(images_path)
+    new_filename = "*t*" + images_path_search.suffix
+    filenames = glob(str(images_path_search.parent / new_filename))
+    assert len(filenames) > 0, f"No image files were found in {images_path_search.parent / new_filename}"
+    numbers = [int(re.findall(r"t(\d+)", f)[0]) for f in filenames]
+    smallest_number = min(numbers)
+    largest_number = max(numbers)
+
+    # Process images and predict instance coordinates
+    with tqdm(total=largest_number-smallest_number+1, desc="Segmenting images", ncols=50) as pbar:
+        for t in range(smallest_number, largest_number + 1):
+            try:
+                # Load 2D slices at time t
+                x = load_2d_slices_at_time(images_path, t=t)
+            except FileNotFoundError:
+                # Handle missing image files
+                print(f"Warning: Segmentation has been stopped since images at t={t - 1} cannot be loaded!")
+                break
+            _, details = model.predict_instances(x)
+            # Save predicted instance coordinates as numpy arrays
+            filepath = _coords_path / f"coords{str(t).zfill(4)}.npy"
+            np.save(filepath, details["points"])
+            pbar.update(1)
+    print(f"All images from t={smallest_number} to t={largest_number} have been Segmented")
+
+
+def save_arrays_to_folder(arrays, folder_path):
+    """
+    Save a series of NumPy arrays to a folder with numbered filenames.
+
+    Args:
+        arrays (list): A list of NumPy arrays to save.
+        folder_path (str): The path to the folder to save the arrays in.
+    """
+    # Check if the folder exists and create it if necessary
+    path = Path(folder_path)
+    path.mkdir(parents=True, exist_ok=True)
+
+    # Loop over the arrays and save them to the folder with numbered filenames
+    for i, arr in enumerate(arrays):
+        filename = f"coords{str(i+1).zfill(4)}.npy"
+        filepath = path / filename
+        np.save(filepath, arr)
+
+
+def load_training_images(path_train_images: str, path_train_labels: str, max_projection: bool):
+    """Load images for training StarDist3D"""
     X = sorted(glob(path_train_images))
     Y = sorted(glob(path_train_labels))
     assert len(X) > 0 and len(Y) > 0
@@ -87,7 +153,7 @@ def load_images(path_train_images: str, path_train_labels: str, max_projection: 
     return X, Y, X_trn, Y_trn, X_val, Y_val, n_channel
 
 
-def configure(Y: List[ndarray], n_channel: int, up_limit: int = UP_LIMIT):
+def configure(Y: List[ndarray], n_channel: int, up_limit: int = UP_LIMIT, model_name: str = 'stardist'):
     extents = calculate_extents(Y)
     anisotropy = tuple(np.max(extents) / extents)
     print('empirical anisotropy of labeled objects = %s' % str(anisotropy))
@@ -145,7 +211,7 @@ def configure(Y: List[ndarray], n_channel: int, up_limit: int = UP_LIMIT):
         # alternatively, try this:
         # limit_gpu_memory(None, allow_growth=True)
 
-    model = StarDist3D(conf, name='stardist', basedir='models')
+    model = StarDist3D(conf, name=model_name, basedir='models')
 
     median_size = calculate_extents(Y, np.median)
     fov = np.array(model._axes_tile_overlap('ZYX'))
@@ -174,12 +240,30 @@ def plot_img_label_center_slice(img, lbl, img_title="image (XY slice)", lbl_titl
     plt.tight_layout()
 
 
-def plot_img_label_max_projection(img, lbl, img_title="image (max projection)", lbl_title="label (max projection)"):
-    fig, (ai,al) = plt.subplots(1,2, figsize=(15, 7), gridspec_kw=dict(width_ratios=(1.25,1)))
-    im = ai.imshow(img.max(axis=0), cmap='gray', clim=(0,1), vmin=0, vmax=1)
+def plot_img_label_max_projection(img, lbl, img_title="image (max projection/x-y)", lbl_title="label (max projection)",
+                                  fig_width_px=1200, dpi=96):
+    fig_width_in = fig_width_px / dpi  # convert to inches assuming 96 dpi
+    fig_height_in = fig_width_in / 1.618  # set height to golden ratio
+    # Create a new figure with the calculated size
+    fig, (ai,al) = plt.subplots(1,2, figsize=(fig_width_in, fig_height_in))
+
+    ai.imshow(img.max(axis=0), clim=(0,1), vmin=0, vmax=1)
     ai.set_title(img_title)
-    fig.colorbar(im, ax=ai)
     al.imshow(lbl.max(axis=0), cmap=lbl_cmap)
+    al.set_title(lbl_title)
+    plt.tight_layout()
+
+
+def plot_img_label_max_projection_xz(img, lbl, img_title="image (max projection/x-z)", lbl_title="label (max projection)",
+                                  fig_width_px=1200, dpi=96, scale_z: int = 1):
+    fig_width_in = fig_width_px / dpi  # convert to inches assuming 96 dpi
+    fig_height_in = fig_width_in / 1.618  # set height to golden ratio
+    # Create a new figure with the calculated size
+    fig, (ai,al) = plt.subplots(1,2, figsize=(fig_width_in, fig_height_in))
+
+    ai.imshow(img.max(axis=1), clim=(0,1), vmin=0, vmax=1, aspect=scale_z)
+    ai.set_title(img_title)
+    al.imshow(lbl.max(axis=1), cmap=lbl_cmap, aspect=scale_z)
     al.set_title(lbl_title)
     plt.tight_layout()
 

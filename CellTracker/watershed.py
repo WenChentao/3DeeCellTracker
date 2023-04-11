@@ -6,6 +6,7 @@ Author: Chentao Wen
 
 import numpy as np
 import skimage.morphology as morphology
+from numpy import ndarray
 from scipy.ndimage import filters, distance_transform_edt
 from skimage.feature import peak_local_max
 from skimage.morphology import remove_small_objects
@@ -107,30 +108,42 @@ def watershed_3d(image_watershed2d, samplingrate, method, min_size, cell_num, mi
     return labels_wo_bd, labels_clear, min_size, cell_num
 
 
-def watershed_2d_markers(image_pred, mask, z_range=21):
+def recalculate_cell_boundaries(segmentation_xyz: ndarray, cell_overlaps_mask: ndarray, sampling_xy: tuple = (1, 1)):
     """
     Recalculate cell boundaries when cell regions are overlapping
-    
+
     Parameters
     ----------
-    image_pred :
-        the label image of cells
-    mask :
-        the image of the overlapping regions (0: bg; 1: one cell; >1: multiple cells)
-    z_range :
-        number of layers
+    segmentation_xyz : numpy array
+        A 3D label image of cells.
+    cell_overlaps_mask : numpy array
+        A 3D image indicating overlapping regions (0: background; 1: one cell; >1: multiple cells).
+    sampling_xy : tuple, optional
+        The resolution ratio of a pixel in x-y plane.
 
     Returns
     -------
-    labels_ws :
-        the recalculated label image
+    numpy array
+        The recalculated label image after watershed segmentation.
     """
-    labels_ws = np.zeros(image_pred.shape, dtype='int')
-    for z in range(z_range):
-        bn_image = np.logical_or(image_pred[:, :, z] > 0, mask[:, :, z] > 1)
-        markers = image_pred[:, :, z]
-        markers[np.where(mask[:, :, z] > 1)] = 0
-        dist = distance_transform_edt(mask[:, :, z] > 1, sampling=[1, 1])
-        labels_ws[:, :, z] = watershed(dist, markers, mask=bn_image)
+    # Create an empty numpy array to hold the recalculated label image
+    recalculated_labels = np.zeros(segmentation_xyz.shape, dtype='int')
 
-    return labels_ws
+    # Loop over each z-slice of the label image
+    for z in range(segmentation_xyz.shape[2]):
+        print(f"Recalculating... cell boundary at z = {z+1}", end="\r")
+        # Create a binary image indicating the presence of cells or overlapping regions
+        mask_image = np.logical_or(segmentation_xyz[:, :, z] > 0, cell_overlaps_mask[:, :, z] > 1)
+
+        # Set the markers for the watershed segmentation to the label image, excluding overlapping regions
+        markers = segmentation_xyz[:, :, z]
+        markers[cell_overlaps_mask[:, :, z] > 1] = 0
+
+        # Calculate the Euclidean distance transform of the overlapping regions binary image
+        distance_map = distance_transform_edt(cell_overlaps_mask[:, :, z] > 1, sampling=sampling_xy)
+
+        # Perform the watershed segmentation and store the result in the output array
+        recalculated_labels[:, :, z] = watershed(distance_map, markers, mask=mask_image)
+
+    # Return the recalculated label image
+    return recalculated_labels
