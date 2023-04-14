@@ -1,7 +1,5 @@
-import io
-import sys
 from pathlib import Path
-from typing import List, Union, Tuple
+from typing import List, Tuple
 
 import numpy as np
 import scipy
@@ -9,12 +7,10 @@ from matplotlib import pyplot as plt
 from matplotlib.patches import ConnectionPatch
 from numpy import ndarray
 from scipy.special import softmax
-from sklearn.decomposition import PCA
 import tensorflow.keras as ks
-from sklearn.neighbors import NearestNeighbors
 
 from CellTracker.coord_image_transformer import Coordinates
-
+from CellTracker.ffn import initial_matching_ffn, normalize_points, FFN
 
 BETA, LAMBDA, MAX_ITERATION = (3, 3, 2000)
 K_POINTS = 20
@@ -48,9 +44,12 @@ class TrackerLite:
 
         self.coords_dir = Path(coords_dir)
         self.ffn_model_path = ffn_model_path
+        self.ffn_model = FFN()
 
         try:
-            self.ffn_model = ks.models.load_model(ffn_model_path)
+            dummy_input = np.random.random((1, 122))
+            _ = self.ffn_model(dummy_input)
+            self.ffn_model.load_weights(ffn_model_path)
         except (OSError, ValueError) as e:
             raise ValueError(f"Failed to load the FFN model from {ffn_model_path}: {e}") from e
 
@@ -81,16 +80,22 @@ class TrackerLite:
         if confirmed_coord_t1 is None:
             confirmed_coord_t1 = segmented_pos_t1
 
-        matching_matrix = initial_matching_ffn(self.ffn_model, confirmed_coord_t1.real, segmented_pos_t2.real, K_POINTS)
-        normalized_prob, _ = simple_match(matching_matrix)
-        tracked_pos_t2, _ = prgls_quick(normalized_prob, segmented_pos_t2.real, confirmed_coord_t1.real,
-                                        beta=beta, lambda_=lambda_)
+        # Normalize point sets
+        confirmed_coords_norm_t1, (mean_t1, scale_t1) = normalize_points(confirmed_coord_t1.real, return_para=True)
+        segmented_coords_norm_t2 = (segmented_pos_t2.real - mean_t1) / scale_t1
 
-        fig = plot_prgls_prediction(confirmed_coord_t1.real, segmented_pos_t2.real, tracked_pos_t2)
+        matching_matrix = initial_matching_ffn(self.ffn_model, confirmed_coords_norm_t1, segmented_coords_norm_t2, K_POINTS)
+        normalized_prob, _ = simple_match(matching_matrix)
+
+        tracked_coords_norm_t2, _ = prgls_quick(normalized_prob, segmented_coords_norm_t2, confirmed_coords_norm_t1,
+                                        beta=beta, lambda_=lambda_)
+        tracked_coords_t2 =  tracked_coords_norm_t2 * scale_t1 + mean_t1
+
+        fig = plot_prgls_prediction(confirmed_coord_t1.real, segmented_pos_t2.real, tracked_coords_t2)
         if save_fig:
             fig.savefig(self.track_results_dir / "figure"/ f"matching_{str(t2).zfill(4)}.png", facecolor='white')
             plt.close()
-        return Coordinates(tracked_pos_t2,
+        return Coordinates(tracked_coords_t2,
                            interpolation_factor=self.proofed_coords_vol1.interpolation_factor,
                            voxel_size=self.proofed_coords_vol1.voxel_size,
                            dtype="real")
@@ -103,10 +108,13 @@ class TrackerLite:
         if confirmed_coord_t1 is None:
             confirmed_coord_t1 = segmented_pos_t1
 
-        matching_matrix = initial_matching_ffn(self.ffn_model, confirmed_coord_t1.real, segmented_pos_t2.real, K_POINTS)
+        confirmed_coords_norm_t1, (mean_t1, scale_t1) = normalize_points(confirmed_coord_t1.real, return_para=True)
+        segmented_coords_norm_t2 = (segmented_pos_t2.real - mean_t1) / scale_t1
+
+        matching_matrix = initial_matching_ffn(self.ffn_model, confirmed_coords_norm_t1, segmented_coords_norm_t2, K_POINTS)
         _, pairs_px2 = simple_match(matching_matrix)
         plot_initial_matching(confirmed_coord_t1.real, segmented_pos_t2.real, pairs_px2)
-        plot_initial_matching(confirmed_coord_t1.real[:,[2,1,0]], segmented_pos_t2.real[:,[2,1,0]], pairs_px2)
+        #plot_initial_matching(confirmed_coord_t1.real[:,[2,1,0]], segmented_pos_t2.real[:,[2,1,0]], pairs_px2)
 
     def _get_segmented_pos(self, t: int) -> Coordinates:
         interp_factor = self.proofed_coords_vol1.interpolation_factor
@@ -267,9 +275,7 @@ def prgls_quick(init_match_mxn, ptrs_tgt_mx3: ndarray, tracked_ref_nx3: ndarray,
     """
     Get coherent movements from the initial matching by PR-GLS algorithm
     """
-    # Normalize point sets
-    tracked_ref_nx3, (mean_ref, scale_ref) = normalize_points(tracked_ref_nx3, return_para=True)
-    ptrs_tgt_mx3 = (ptrs_tgt_mx3 - mean_ref) / scale_ref
+
 
     # Initiate parameters
     ratio_outliers = 0.05  # This is the gamma
@@ -306,90 +312,7 @@ def prgls_quick(init_match_mxn, ptrs_tgt_mx3: ndarray, tracked_ref_nx3: ndarray,
             # print(f"Converged at iteration = {iteration}")
             break
 
-    return predicted_coord_ref_nx3 * scale_ref + mean_ref, posterior_mxn
-
-
-def initial_matching_ffn(ffn_model, ref: ndarray, tgt: ndarray, k_ptrs: int) -> ndarray:
-    """
-    This function compute initial matching between all pairs of points in reference and target points set.
-
-    Parameters
-    ----------
-    ffn_model :
-        The pretrained FFN model
-    ref :
-        The positions of the cells in the first volume
-    tgt :
-        The positions of the cells in the second volume
-    k_ptrs :
-        The number of neighboring points used for FFN
-
-    Returns
-    -------
-    corr :
-        The correspondence matrix between two point sets
-    """
-    nbors_ref = NearestNeighbors(n_neighbors=k_ptrs + 1).fit(ref)
-    nbors_tgt = NearestNeighbors(n_neighbors=k_ptrs + 1).fit(tgt)
-
-    ref_x_flat_batch = np.zeros((ref.shape[0], k_ptrs * 3 + 1), dtype='float32')
-    tgt_x_flat_batch = np.zeros((tgt.shape[0], k_ptrs * 3 + 1), dtype='float32')
-
-    for ref_i in range(ref.shape[0]):
-        distance_ref, indices_ref = nbors_ref.kneighbors(ref[ref_i:ref_i + 1, :],
-                                                         return_distance=True)
-
-        mean_dist_ref = np.mean(distance_ref)
-        ref_x = (ref[indices_ref[0, 1:k_ptrs + 1], :] - ref[indices_ref[0, 0], :]) / mean_dist_ref
-        ref_x_flat = np.zeros(k_ptrs * 3 + 1)
-        ref_x_flat[0:k_ptrs * 3] = ref_x.reshape(k_ptrs * 3)
-        ref_x_flat[k_ptrs * 3] = mean_dist_ref
-
-        ref_x_flat_batch[ref_i, :] = ref_x_flat.reshape(1, k_ptrs * 3 + 1)
-
-    ref_x_flat_batch_meshgrid = np.tile(ref_x_flat_batch, (tgt.shape[0], 1, 1)).reshape(
-        (ref.shape[0] * tgt.shape[0], k_ptrs * 3 + 1))
-
-    for tgt_i in range(tgt.shape[0]):
-        distance_tgt, indices_tgt = nbors_tgt.kneighbors(tgt[tgt_i:tgt_i + 1, :],
-                                                         return_distance=True)
-        mean_dist_tgt = np.mean(distance_tgt)
-        tgt_x = (tgt[indices_tgt[0, 1:k_ptrs + 1], :] - tgt[indices_tgt[0, 0], :]) / mean_dist_tgt
-        tgt_x_flat = np.zeros(k_ptrs * 3 + 1)
-        tgt_x_flat[0:k_ptrs * 3] = tgt_x.reshape(k_ptrs * 3)
-        tgt_x_flat[k_ptrs * 3] = mean_dist_tgt
-
-        tgt_x_flat_batch[tgt_i, :] = tgt_x_flat.reshape(1, k_ptrs * 3 + 1)
-
-    tgt_x_flat_batch_meshgrid = np.tile(tgt_x_flat_batch, (ref.shape[0], 1, 1)).transpose((1, 0, 2)).reshape(
-        (ref.shape[0] * tgt.shape[0], k_ptrs * 3 + 1))
-
-    corr = np.reshape(ffn_model.predict([ref_x_flat_batch_meshgrid, tgt_x_flat_batch_meshgrid], batch_size=1024),
-                      (tgt.shape[0], ref.shape[0]))
-    return corr
-
-
-def normalize_points(points: ndarray, return_para: bool = False) -> Union[ndarray, Tuple[ndarray, Tuple[any, any]]]:
-    if points.ndim != 2:
-        raise ValueError(f"Points should be a 2D table, but get {points.ndim}D")
-    if points.shape[1] != 3:
-        raise ValueError(f"Points should have 3D coordinates, but get {points.shape[1]}D")
-
-    # Compute the mean and PCA of the input points
-    mean = np.mean(points, axis=0)
-    pca = PCA(n_components=1)
-    pca.fit(points)
-
-    # Compute the standard deviation of the projection
-    std = np.std(pca.transform(points)[:, 0])
-
-    # Normalize the points
-    norm_points = (points - mean) / (3 * std)
-
-    if return_para:
-        return norm_points, (mean, std)
-    else:
-        return norm_points
+    return predicted_coord_ref_nx3, posterior_mxn
 
 
 def dist_squares(ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray) -> ndarray:
