@@ -84,7 +84,7 @@ def predict_and_save_coordinates(images_path: str, model: StarDist3D, coords_pat
             _, details = model.predict_instances(x)
             # Save predicted instance coordinates as numpy arrays
             filepath = _coords_path / f"coords{str(t).zfill(4)}.npy"
-            np.save(filepath, details["points"])
+            np.save(filepath, details["points"][:, [1,2,0]])
             pbar.update(1)
     print(f"All images from t={smallest_number} to t={largest_number} have been Segmented")
 

@@ -1,4 +1,3 @@
-import os.path
 from glob import glob
 from pathlib import Path
 from typing import Tuple, List
@@ -12,33 +11,19 @@ import skimage.measure as skm
 import scipy.ndimage.measurements as ndm
 from tifffile import imread
 
-from CellTracker.track import _get_coordinates
 from CellTracker.watershed import recalculate_cell_boundaries
 
 
 class CoordsToImageTransformer:
-    # region_list_bool: List[ndarray]
-    # region_width: List[Tuple[int, int, int]]
-    # region_xyz_min: List[Tuple[int, int, int]]
-    # pad_x: int
-    # pad_y: int
-    # pad_z: int
+
     proofed_segmentation: ndarray
-    # siz_xyz: ImageSize
-    # labels_padding_zeros: ndarray
-    # seg_cells_interpolated_corrected: ndarray
-    # segmentation_manual_relabels_: ndarray
-    # slice_in_interp: slice
-    # coord_vol1_manual: Coordinates
+    z_slice_original_labels: slice
     use_8_bit: bool
 
     def __init__(self, track_results_folder: str, voxel_size: tuple):
         self.voxel_size = np.asarray(voxel_size)
-        self.track_results_folder = track_results_folder
-        Path(track_results_folder).mkdir(parents=True, exist_ok=True)
-        # self.pars = pars
-        # self.paths = pars.paths
-        # self.cell_num = 0
+        self.track_results_folder = Path(track_results_folder) / "tracked_labels"
+        self.track_results_folder.mkdir(parents=True, exist_ok=True)
 
     def load_segmentation(self, files_path: str):
         """
@@ -55,7 +40,7 @@ class CoordsToImageTransformer:
         self.proofed_segmentation, _, _ = relabel_sequential(proofed_segmentation)
 
         # Print a message confirming that the proofed segmentation has been loaded and its shape
-        print(f"Loaded the proofed segmentations at vol 1. Shape: {proofed_segmentation.shape}")
+        print(f"Loaded the proofed segmentations at vol 1 with {np.count_nonzero(np.unique(proofed_segmentation))} cells")
 
     def interpolate(self, interpolation_factor: int, smooth_sigma: float = 2.5):
         """
@@ -116,9 +101,11 @@ class CoordsToImageTransformer:
 
         # Check if 8-bit is needed for saving the image
         self.use_8_bit = self.auto_corrected_segmentation.max() <= 255
+        print(
+            f"The interpolated segmentations at vol 1 contains {np.count_nonzero(np.unique(self.auto_corrected_segmentation))} cells")
 
         # Save labels in the first volume (interpolated)
-        filename = os.path.join(self.track_results_folder, "track_results_t%04i_z%04i.tif")
+        filename = str(self.track_results_folder / "track_results_t%04i_z%04i.tif")
         save_tracked_cell_images(self.auto_corrected_segmentation, filename, t=1, use_8_bit=self.use_8_bit)
 
         print("Calculating coordinates of cell centers...")
@@ -128,22 +115,16 @@ class CoordsToImageTransformer:
             self.auto_corrected_segmentation,
             range(1, self.auto_corrected_segmentation.max() + 1)
         )
-        self.coord_vol1 = Coordinates(np.array(coord_vol1), interpolation_factor, self.voxel_size, dtype="interp")
+        self.coord_vol1 = Coordinates(np.array(coord_vol1), interpolation_factor, self.voxel_size, dtype="raw")
 
-    def create_interpolated_image(self,
-                                  movements_nx3: ndarray = None,
-                                  cells_on_boundary_local = None):
-        """Transform the predicted movements to the moved labels in 3D image"""
-        i_tracked_cells_corrected, i_overlap_corrected = self.move_cells(movements_nx3)
-        # re-calculate boundaries by _watershed
-        i_tracked_cells_corrected[i_overlap_corrected > 1] = 0
-        for i in np.where(cells_on_boundary_local == 1)[0]:
-            i_tracked_cells_corrected[i_tracked_cells_corrected == (i + 1)] = 0
-        tracked_labels = recalculate_cell_boundaries(i_tracked_cells_corrected[:, :, self.Z_RANGE_INTERP],
-                                                     i_overlap_corrected[:, :, self.Z_RANGE_INTERP])
-        return tracked_labels
+    def move_cells_in_3d_image(self, movements_nx3: ndarray = None, cells_missed: List[int] = None):
+        interpolated_labels, cell_overlaps_mask = self.move_cells(movements_nx3=movements_nx3, cells_missed=cells_missed)
+        return recalculate_cell_boundaries(
+            interpolated_labels[:, :, self.z_slice_original_labels],
+            cell_overlaps_mask[:, :, self.z_slice_original_labels],
+            sampling_xy=self.voxel_size[:2])
 
-    def move_cells(self, movements_nx3: ndarray = None, cells_missed: List[int] = None, ):
+    def move_cells(self, movements_nx3: ndarray = None, cells_missed: List[int] = None):
         """
         Generate a image with labels indicating the moved cells.
 
@@ -173,8 +154,8 @@ class CoordsToImageTransformer:
             if label in cells_missed:
                 continue
             bbox_moved = self.add_slices_with_change(bbox, movements_nx3[i])
-            output_img[bbox_moved] += subimage * label
-            mask[bbox_moved] += subimage * 1
+            output_img[bbox_moved] += (subimage * label).astype(output_img.dtype)
+            mask[bbox_moved] += (subimage * 1).astype(mask.dtype)
         return output_img, mask
 
     @staticmethod
@@ -188,24 +169,6 @@ class CoordsToImageTransformer:
             new_stop = s.stop + int(c) if s.stop is not None else None
             new_slices.append(slice(new_start, new_stop, s.step))
         return tuple(new_slices)
-
-    # def cal_subregions(self):
-    #     """
-    #     Calculate the subregions of cells and the padded images to accelerate the accurate correction in tracking.
-    #
-    #     See Also
-    #     --------
-    #     _transform_cells_quick
-    #     """
-    #     # Compute subregions of each cells for quick "accurate correction"
-    #     seg_16 = self.seg_cells_interpolated_corrected.astype("int16")
-    #
-    #     self.region_list_bool, self.region_width, self.region_xyz_min = get_subregions(seg_16, seg_16.max())
-    #     self.pad_x, self.pad_y, self.pad_z = np.max(self.region_width, axis=0)
-    #     pad_width = ((self.pad_x, self.pad_x),
-    #                  (self.pad_y, self.pad_y),
-    #                  (self.pad_z, self.pad_z))
-    #     self.labels_padding_zeros = np.pad(seg_16, pad_width=pad_width, mode='constant') * 0
 
 
 def gaussian_interpolation_3d(label_image, interpolation_factor=10, smooth_sigma=5) -> \
@@ -229,9 +192,6 @@ def gaussian_interpolation_3d(label_image, interpolation_factor=10, smooth_sigma
     mask : numpy.ndarray
         Mask image indicating the overlapping of multiple cells (0: background; 1: one cell; >1: multiple cells)
     """
-    #assert interpolation_factor <= 10, "Interpolation factor should <= 10!"
-    #repeated_label_image = np.repeat(label_image, interpolation_factor, axis=2)
-    #shape_interp = repeated_label_image.shape
     bboxes: List[Tuple[slice, slice, slice]] = ndm.find_objects(label_image)
     subregions = []
 
