@@ -6,8 +6,8 @@ Author: Chentao Wen
 
 import numpy as np
 import matplotlib.pyplot as plt
-import cv2
 import matplotlib as mpl
+from tifffile import imread
 
 mpl.rcParams["axes.spines.right"] = False
 mpl.rcParams["axes.spines.top"] = False
@@ -58,8 +58,8 @@ def _read_image(frame, layer_num, path_raw, path_tracked):
     images_raw = []
     images_label = []
     for z in range(1, layer_num + 1):
-        images_raw.append(cv2.imread(path_raw % (frame, z), -1))
-        images_label.append(cv2.imread(path_tracked % (frame, z), -1))
+        images_raw.append(imread(path_raw % (frame, z)))
+        images_label.append(imread(path_tracked % (frame, z)))
     images_raw = np.array(images_raw)
     images_label = np.array(images_label)
     return images_label, images_raw

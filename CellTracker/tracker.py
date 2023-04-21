@@ -18,7 +18,6 @@ import time
 from functools import reduce
 from pathlib import Path
 
-import cv2
 import matplotlib as mpl
 import matplotlib.image as mgimg
 import numpy as np
@@ -33,9 +32,9 @@ from scipy.stats import trim_mean
 from skimage.measure import label
 from skimage.segmentation import relabel_sequential, find_boundaries
 
-from .coord_image_transformer import save_tracked_labels, gaussian_interpolation_3d
 from .preprocess import _make_folder, _normalize_image, _normalize_label, load_image
-from .track import pr_gls_quick, initial_matching_quick, get_reference_vols, get_subregions, tracking_plot_xy, tracking_plot_zx
+from .track import pr_gls_quick, initial_matching_quick, get_reference_vols, get_subregions, tracking_plot_xy, \
+    tracking_plot_zx, gaussian_filter
 from .unet3d import unet3_prediction, _divide_img, _augmentation_generator
 from .watershed import watershed_2d, watershed_3d, recalculate_cell_boundaries
 
@@ -133,9 +132,10 @@ def read_image_ts(vol, path, name, z_range, print_=False):
     img_array : numpy.ndarray
         An array of the image with shape (row, column, layer)
     """
+    from tifffile import imread
     image_raw = []
     for z in range(z_range[0], z_range[1]):
-        image_raw.append(cv2.imread(path + name % (vol, z), -1))
+        image_raw.append(imread(path + name % (vol, z)))
     img_array = np.array(image_raw).transpose((1, 2, 0))
     if print_:
         print("Load images with shape:", img_array.shape)
@@ -163,6 +163,29 @@ def save_automatic_segmentation(labels_xyz: ndarray, folder_path, use_8_bit: boo
     for z in range(1, labels_xyz.shape[2] + 1):
         img2d = labels_xyz[:, :, z - 1].astype(dtype)
         Image.fromarray(img2d).save(os.path.join(folder_path, "auto_vol1", "auto_vol1_z%04i.tif"%z))
+
+
+def save_img3ts(z_range, img, path, t, use_8_bit: bool=True):
+    """
+    Save a 3D image at time t as 2D image sequence
+    Parameters
+    ----------
+    z_range : range
+        The range of layers to be saved
+    img : numpy.array
+        The 3D image to be saved
+    path : str
+        The path of the image files to be saved.
+        It should use formatted string to indicate volume number and then layer number, e.g. "xxx_t%04d_z%04i.tif"
+    t : int
+        The volume number for the image to be saved
+    use_8_bit: bool
+        The array will be transformed to 8-bit or 16-bit before saving as image.
+    """
+    dtype = np.uint8 if use_8_bit else np.uint16
+    for i, z in enumerate(z_range):
+        img2d = (img[:, :, z]).astype(dtype)
+        Image.fromarray(img2d).save(path % (t, i + 1))
 
 
 class Draw:
@@ -575,7 +598,7 @@ class Segmentation:
         use_8_bit = True if self.segresult.segmentation_auto.max() <= 255 else False
 
         # save the segmented cells of volume #1
-        save_automatic_segmentation(z_siz=self.z_siz, labels_xyz=self.segresult.segmentation_auto,
+        save_automatic_segmentation(labels_xyz=self.segresult.segmentation_auto,
                                     folder_path=self.paths.folder, use_8_bit=use_8_bit)
         print(f"Segmented volume 1 and saved it")
 
@@ -1040,8 +1063,8 @@ class Tracker(Segmentation, Draw):
         self.segmentation_manual_relabels = self.seg_cells_interpolated_corrected[:, :, self.Z_RANGE_INTERP]
 
         # save labels in the first volume (interpolated)
-        save_tracked_labels(self.segmentation_manual_relabels,
-                            self.paths.folder, t=1, use_8_bit=self.use_8_bit)
+        save_img3ts(range(0, self.z_siz), self.segmentation_manual_relabels,
+                    self.paths.track_results + "track_results_t%04i_z%04i.tif", t=1, use_8_bit=self.use_8_bit)
 
         # calculate coordinates of cell centers at t=1
         center_points_t0 = ndm.center_of_mass(self.segmentation_manual_relabels > 0,
@@ -1063,8 +1086,8 @@ class Tracker(Segmentation, Draw):
 
     def _interpolate(self):
         """Interpolate/smoothen a 3D image"""
-        seg_cells_interpolated, seg_cell_or_bg = gaussian_interpolation_3d(
-            self.segmentation_manual_relabels, interpolation_factor=self.z_scaling, smooth_sigma=2.5)
+        seg_cells_interpolated, seg_cell_or_bg = gaussian_filter(
+            self.segmentation_manual_relabels, z_scaling=self.z_scaling, smooth_sigma=2.5)
         seg_cells_interpolated_corrected = recalculate_cell_boundaries(seg_cells_interpolated, seg_cell_or_bg)
         return seg_cells_interpolated_corrected[5:self.x_siz + 5,
                5:self.y_siz + 5, 5:self.z_siz * self.z_scaling + 5]
@@ -1464,8 +1487,8 @@ class Tracker(Segmentation, Draw):
         """
         # skip frames that cannot be tracked
         if target_volume in self.miss_frame:
-            save_tracked_labels(self.tracked_labels,
-                                self.paths.folder, target_volume, self.use_8_bit)
+            save_img3ts(range(0, self.z_siz), self.tracked_labels,
+                        self.paths.track_results + "track_results_t%04i_z%04i.tif", target_volume, self.use_8_bit)
             self.history.r_displacements.append(self.history.r_displacements[-1])
             self.history.r_segmented_coordinates.append(self.segresult.r_coordinates_segment)
             self.history.r_tracked_coordinates.append(
@@ -1495,8 +1518,8 @@ class Tracker(Segmentation, Draw):
         self.tracked_labels = self._transform_motion_to_image(self.cells_on_boundary, i_disp_from_vol1_updated)
 
         # save tracked labels
-        save_tracked_labels(self.tracked_labels,
-                            self.paths.folder, target_volume, self.use_8_bit)
+        save_img3ts(range(0, self.z_siz), self.tracked_labels,
+                    self.paths.track_results + "track_results_t%04i_z%04i.tif", target_volume, self.use_8_bit)
 
         self._draw_matching_6panel(target_volume, axc6, r_coor_predicted_mean, i_disp_from_vol1_updated)
         fig.canvas.draw()

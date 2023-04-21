@@ -319,6 +319,48 @@ def initial_matching(fnn_model,ref,tgt,k_ptrs):
     return corr
 
 
+def gaussian_filter(img, z_scaling=10, smooth_sigma=5):
+    """
+    Generate smoothed label image of cells
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Label image
+    z_scaling : int
+        Factor of interpolations along z axis, should be <10
+    smooth_sigma : float
+        sigma used for making Gaussian blur
+    Returns
+    -------
+    output_img : numpy.ndarray
+        Generated smoothed label image
+    mask : numpy.ndarray
+        Mask image indicating the overlapping of multiple cells (0: background; 1: one cell; >1: multiple cells)
+    """
+    img_interp = np.repeat(img, z_scaling, axis=2)
+    shape_interp = img_interp.shape
+    output_img = np.zeros((shape_interp[0] + 10, shape_interp[1] + 10, shape_interp[2] + 10), dtype='int')
+    mask = output_img.copy()
+
+    for label in range(1, np.max(img) + 1):
+        from skimage.filters import gaussian
+        print(f"Interpolating... cell:{label}", end="\r")
+        x_max, x_min, y_max, y_min, z_max, z_min, subregion_pad, voxels = _get_coordinates(label, img_interp)
+
+        percentage = 1 - np.divide(voxels, np.size(subregion_pad), dtype='float')
+
+        img_smooth = gaussian(subregion_pad, sigma=smooth_sigma, mode='constant')
+
+        threshold = np.percentile(img_smooth, percentage * 100)
+
+        cell_region_interp = img_smooth > threshold
+
+        output_img[x_min:x_max + 11, y_min:y_max + 11, z_min:z_max + 11] += cell_region_interp * label
+        mask[x_min:x_max + 11, y_min:y_max + 11, z_min:z_max + 11] += cell_region_interp * 1
+
+    return output_img, mask
+
+
 def transform_cells(img3d, vectors3d):
     """
     Move individual cells in the label image.

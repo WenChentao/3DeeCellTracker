@@ -4,17 +4,13 @@ Author: Chentao Wen
 
 """
 import os
-from ctypes import Union
-from typing import Tuple
 
-import cv2
-from numpy import ndarray
-from scipy import ndimage
 import numpy as np
-from sklearn.decomposition import PCA
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Conv3D, Input
 import tensorflow.keras as keras
+from scipy import ndimage
+from tensorflow.keras.layers import Conv3D, Input
+from tensorflow.keras.models import Model
+from tifffile import imread
 
 
 def _make_folder(path_i, print_=True):
@@ -79,7 +75,7 @@ def load_image(folder_path, print_=True):
     img_file_path = _get_files(folder_path)
     img = []
     for img_path in img_file_path:
-        img.append(cv2.imread(img_path, -1))
+        img.append(imread(img_path))
     img_array = np.array(img).transpose((1, 2, 0))
     if print_:
         print("Load images with shape:", img_array.shape)
@@ -129,7 +125,7 @@ def conv3d_keras(filter_size, img3d_siz):
 
     Returns
     -------
-    keras.Model
+    tf.keras.Model
         The keras model to apply 3D convolution
     """
     inputs = Input((img3d_siz[0], img3d_siz[1], img3d_siz[2], 1))

@@ -9,28 +9,26 @@ from __future__ import print_function, unicode_literals, absolute_import, divisi
 
 import re
 import sys
+from glob import glob
 from typing import List
 
 import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
+from PIL import Image
+from csbdeep.utils import Path, normalize
 from numpy import ndarray
+from stardist import Rays_GoldenSpiral
+from stardist import fill_label_holes, random_label_cmap, calculate_extents, gputools_available
+from stardist.models import Config3D
 from stardist.utils import _normalize_grid
+from tifffile import imread
+from tqdm import tqdm
 
 from CellTracker.stardist3dcustom import StarDist3DCustom
 
 UP_LIMIT = 400000
 matplotlib.rcParams["image.interpolation"] = None
-import matplotlib.pyplot as plt
-
-from glob import glob
-from tqdm import tqdm
-from tifffile import imread
-from csbdeep.utils import Path, normalize
-from PIL import Image
-
-from stardist import fill_label_holes, random_label_cmap, calculate_extents, gputools_available
-from stardist import Rays_GoldenSpiral
-from stardist.models import Config3D
 
 np.random.seed(42)
 lbl_cmap = random_label_cmap()
