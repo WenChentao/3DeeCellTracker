@@ -26,7 +26,8 @@ setuptools.setup(
         "scipy==1.8.0",
         "pillow==9.1.0",
         "scikit-image==0.15.0",
-        "stardist==0.8.3"
+        "stardist==0.8.3",
+        "notebook==6.4.10"
     ],
-    python_requires='>=3.7',
+    python_requires='>=3.8',
 )

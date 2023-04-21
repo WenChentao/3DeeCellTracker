@@ -6,65 +6,71 @@
 
 ## Updates:
 
-**3DeeCellTracker v0.4.5 was released with following issues fixed (2022.06.03)**
-- Solved an activity load bug.
+**3DeeCellTracker v0.5.0-alpha will be released soon**
+- Allows you to use StarDist3D for segmentation
+- Reduces the requirements for fine-tuning parameters
 
 ## Installation
 
-* Create a conda environment for a PC with GPU including prerequisite packages using the 3DCT.yml file:
+To install 3DeeCellTracker, please follow the instructions below:
 
-```console
-$ conda env create -f 3DCT.yml
-```
+### Prerequisites
+- A computer with an NVIDIA GPU that supports CUDA.
+- [Anaconda](https://www.anaconda.com/products/individual) or [Miniconda](https://conda.io/miniconda.html) installed.
 
-* (NOT RECOMMEND) Users can create a conda environment for a PC with only CPU, but it will be slow and may fail.
-```console
-$ conda env create -f 3DCT-CPU.yml
-```
+### Steps
+1. Create a new conda environment and activate it by running the following commands in your terminal:
 
-* Install the 3DeeCellTracker package solely by pip
+   ```console
+   $ conda create -n track python=3.8 pip
+   $ conda activate track
+   ```
+   
+2. Install [TensorFlow](https://www.tensorflow.org/install).
+3. Install 3DeeCellTracker by running the following command in your terminal:
+   ```console
+   $ pip install 3DeeCellTracker
+   ```
+   After completing the installation steps, you can start using 3DeeCellTracker for your 3D cell tracking tasks within 
+   the jupyter notebooks we have provided (See below). 
+   If you encounter any issues or have any questions, please refer to the project's documentation 
+   or raise an issue in the GitHub repository.
 
-```console
-$ pip install 3DeeCellTracker
-```
-
-* Update the 3DeeCellTracker package to the latest version
-
-```console
-$ pip install --upgrade 3DeeCellTracker
-```
-
-For detailed instructions, see [here](Doc/Enviroment.md).
 ## Quick Start
-To learn how to track cells use 3DeeCellTracker, see following notebooks for examples:
-1. Track cells in deforming organs: 
-    - [**Single mode (clear notebook)**](Examples/use_unet/single_mode_worm1-clear.ipynb);
-    - [**single mode (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/single_mode_worm1.html)
-
-
-2. Track cells in freely moving animals: 
-    - [**Ensemble mode (clear notebook)**](Examples/use_unet/ensemble_mode_worm4-clear.ipynb)
-    - [**Ensemble mode (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/ensemble_mode_worm4.html)
-
-
-3. Train a new 3D U-Net for segmenting cells in new optical conditions: 
+To learn how to track cells using 3DeeCellTracker, please refer to the following notebooks for examples. 
+We recommend using StarDist for segmentation, as we have optimized the StarDist-based tracking programs for more convenient and quick cell tracking.
+1. Train a custom deep neural network for segmenting cells in new optical conditions: 
+    - [**Train 3D StarDist (notebook with results)**]()
     - [**Train 3D U-Net (clear notebook)**](Examples/use_unet/3D_U_Net_training-clear.ipynb).
     - [**Train 3D U-Net (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/3D_U_Net_training.html).
+ 
+2. Track cells in deforming organs: 
+    - [**Single mode + StarDist (notebook with results)**]();
+    - [**Single mode + UNet (clear notebook)**](Examples/use_unet/single_mode_worm1-clear.ipynb);
+    - [**single mode + UNet (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/single_mode_worm1.html)
+
+3. Track cells in freely moving animals: 
+    - [**Ensemble mode + StarDist (notebook with results)**]();
+    - [**Ensemble mode + UNet (clear notebook)**](Examples/use_unet/ensemble_mode_worm4-clear.ipynb)
+    - [**Ensemble mode + UNet (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/ensemble_mode_worm4.html)
+
    
-The data and model files for demonstrating above notebooks can be downloaded [**here**](https://osf.io/dt76c/).
+The data and model files for demonstrating above notebooks can be downloaded here: 
+- [**StarDist-based notebooks**](https://osf.io/pgr95/).
+- [**UNet-based notebooks**](https://osf.io/dt76c/).
+
 
 **Note**: Codes above were based on the latest version. 
 For old programs used in eLife 2021, please check the "[**Deprecated_programs**](Deprecated_programs)" folder.
 
-## A frequently reported issue and its solution
-Multiple users have reported that when running the tracker.match() 
-function, a ValueError of shape mismatch occurs. And they were 
-discovered to be the result of an incorrect setting of _siz_xyz_, 
-which should be (height, width, depth) of the 3D image. 
-If you encounter the same error, please double-check that it is 
-correctly set.
+## Frequently Reported Issue and Solution (for v0.4)
 
-## Video Tutorials
+Multiple users have reported encountering a `ValueError` of shape mismatch when running the `tracker.match()` function. 
+After investigation, it was found that the issue resulted from an incorrect setting of `siz_xyz`, 
+which should be set to the dimensions of the 3D image as (height, width, depth). 
+
+
+## Video Tutorials (for v0.4)
 We have made tutorials explaining how to use our software. See links below (videos in Youtube):
 
 [Tutorial 1: Install 3DeeCellTracker and train the 3D U-Net](https://www.youtube.com/watch?v=ctt6o3DY2bA)
@@ -75,8 +81,8 @@ We have made tutorials explaining how to use our software. See links below (vide
 
 [Tutorial 4: Manually correct the cell segmentation](https://www.youtube.com/watch?v=e7xWaccH63o)
 
-## A Text Tutorial 
-We have wrote a tutorial explaining how to install and use 3DeeCellTracker. See [Bio-protocol, 2022](https://bio-protocol.org/e4319)
+## A Text Tutorial (for v0.4)
+We have written a tutorial explaining how to install and use 3DeeCellTracker. See [Bio-protocol, 2022](https://bio-protocol.org/e4319)
 
 ## How it works
 We designed this pipeline for segmenting and tracking cells in 3D + T images in deforming organs. The methods have been explained in [Wen et al. bioRxiv 2018]( https://doi.org/10.1101/385567) and in [Wen et al. eLife, 2021](https://elifesciences.org/articles/59187).
