@@ -38,18 +38,18 @@ For detailed instructions, see [here](Doc/Enviroment.md).
 ## Quick Start
 To learn how to track cells use 3DeeCellTracker, see following notebooks for examples:
 1. Track cells in deforming organs: 
-    - [**Single mode (clear notebook)**](Examples/single_mode_worm1-clear.ipynb);
-    - [**single mode (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/single_mode_worm1.html)
+    - [**Single mode (clear notebook)**](Examples/use_unet/single_mode_worm1-clear.ipynb);
+    - [**single mode (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/single_mode_worm1.html)
 
 
 2. Track cells in freely moving animals: 
-    - [**Ensemble mode (clear notebook)**](Examples/ensemble_mode_worm4-clear.ipynb)
-    - [**Ensemble mode (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/ensemble_mode_worm4.html)
+    - [**Ensemble mode (clear notebook)**](Examples/use_unet/ensemble_mode_worm4-clear.ipynb)
+    - [**Ensemble mode (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/ensemble_mode_worm4.html)
 
 
 3. Train a new 3D U-Net for segmenting cells in new optical conditions: 
-    - [**Train 3D U-Net (clear notebook)**](Examples/3D_U_Net_training-clear.ipynb).
-    - [**Train 3D U-Net (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/3D_U_Net_training.html).
+    - [**Train 3D U-Net (clear notebook)**](Examples/use_unet/3D_U_Net_training-clear.ipynb).
+    - [**Train 3D U-Net (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/3D_U_Net_training.html).
    
 The data and model files for demonstrating above notebooks can be downloaded [**here**](https://osf.io/dt76c/).
 
