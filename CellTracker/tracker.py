@@ -33,7 +33,7 @@ from scipy.stats import trim_mean
 from skimage.measure import label
 from skimage.segmentation import relabel_sequential, find_boundaries
 
-from .coord_image_transformer import save_tracked_cell_images, gaussian_interpolation_3d
+from .coord_image_transformer import save_tracked_labels, gaussian_interpolation_3d
 from .preprocess import _make_folder, _normalize_image, _normalize_label, load_image
 from .track import pr_gls_quick, initial_matching_quick, get_reference_vols, get_subregions, tracking_plot_xy, tracking_plot_zx
 from .unet3d import unet3_prediction, _divide_img, _augmentation_generator
@@ -153,8 +153,7 @@ def save_automatic_segmentation(labels_xyz: ndarray, folder_path, use_8_bit: boo
     labels_xyz : numpy.ndarray
         The 3D image to be saved. Shape: (row, column, layer)
     folder_path : str
-        The path of folder to save the segmentation.
-        It should use formatted string to indicate volume number and then layer number, e.g. "xxx_t%04d_z%04i.tif"
+        The path of folder to save the results.
     use_8_bit: bool
         The array will be transformed to 8-bit or 16-bit before saving as image.
     """
@@ -163,7 +162,7 @@ def save_automatic_segmentation(labels_xyz: ndarray, folder_path, use_8_bit: boo
     dtype = np.uint8 if use_8_bit else np.uint16
     for z in range(1, labels_xyz.shape[2] + 1):
         img2d = labels_xyz[:, :, z - 1].astype(dtype)
-        Image.fromarray(img2d).save(os.path.join(folder_path, "auto_vol1_z%04i.tif"%z))
+        Image.fromarray(img2d).save(os.path.join(folder_path, "auto_vol1", "auto_vol1_z%04i.tif"%z))
 
 
 class Draw:
@@ -577,7 +576,7 @@ class Segmentation:
 
         # save the segmented cells of volume #1
         save_automatic_segmentation(z_siz=self.z_siz, labels_xyz=self.segresult.segmentation_auto,
-                                    folder_path=self.paths.auto_segmentation_vol1 + "auto_t%04i_z%04i.tif", use_8_bit=use_8_bit)
+                                    folder_path=self.paths.folder, use_8_bit=use_8_bit)
         print(f"Segmented volume 1 and saved it")
 
     def _segment(self, vol, method, print_shape=False):
@@ -1041,8 +1040,8 @@ class Tracker(Segmentation, Draw):
         self.segmentation_manual_relabels = self.seg_cells_interpolated_corrected[:, :, self.Z_RANGE_INTERP]
 
         # save labels in the first volume (interpolated)
-        save_tracked_cell_images(self.segmentation_manual_relabels,
-                                 self.paths.track_results + "track_results_t%04i_z%04i.tif", t=1, use_8_bit=self.use_8_bit)
+        save_tracked_labels(self.segmentation_manual_relabels,
+                            self.paths.folder, t=1, use_8_bit=self.use_8_bit)
 
         # calculate coordinates of cell centers at t=1
         center_points_t0 = ndm.center_of_mass(self.segmentation_manual_relabels > 0,
@@ -1465,8 +1464,8 @@ class Tracker(Segmentation, Draw):
         """
         # skip frames that cannot be tracked
         if target_volume in self.miss_frame:
-            save_tracked_cell_images(self.tracked_labels,
-                                     self.paths.track_results + "track_results_t%04i_z%04i.tif", target_volume, self.use_8_bit)
+            save_tracked_labels(self.tracked_labels,
+                                self.paths.folder, target_volume, self.use_8_bit)
             self.history.r_displacements.append(self.history.r_displacements[-1])
             self.history.r_segmented_coordinates.append(self.segresult.r_coordinates_segment)
             self.history.r_tracked_coordinates.append(
@@ -1496,8 +1495,8 @@ class Tracker(Segmentation, Draw):
         self.tracked_labels = self._transform_motion_to_image(self.cells_on_boundary, i_disp_from_vol1_updated)
 
         # save tracked labels
-        save_tracked_cell_images(self.tracked_labels,
-                                 self.paths.track_results + "track_results_t%04i_z%04i.tif", target_volume, self.use_8_bit)
+        save_tracked_labels(self.tracked_labels,
+                            self.paths.folder, target_volume, self.use_8_bit)
 
         self._draw_matching_6panel(target_volume, axc6, r_coor_predicted_mean, i_disp_from_vol1_updated)
         fig.canvas.draw()

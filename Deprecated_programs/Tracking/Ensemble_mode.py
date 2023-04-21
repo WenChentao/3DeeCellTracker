@@ -28,7 +28,7 @@ from scipy.ndimage import median_filter
 from CellTracker.preprocess import lcn_gpu
 from CellTracker.unet3d import unet3_b, unet3_prediction
 from CellTracker.watershed import watershed_2d, watershed_3d, \
-    watershed_2d_markers
+    recalculate_cell_boundaries
 from CellTracker.interpolate_labels import gaussian_filter
 from CellTracker.track import initial_matching, pr_gls, transform_cells, \
     tracking_plot, tracking_plot_zx
@@ -413,7 +413,7 @@ segmentation_manual_relabels = np.load("segmentation_manual_relabels.npy")
 # interpolate layers in z axis
 print("interpolating...")
 seg_cells_interpolated, seg_cell_or_bg = gaussian_filter(segmentation_manual_relabels,z_scaling=z_scaling, smooth_sigma=2.5)
-seg_cells_interpolated_corrected = watershed_2d_markers(seg_cells_interpolated, seg_cell_or_bg, z_range=z_siz*z_scaling+10)
+seg_cells_interpolated_corrected = recalculate_cell_boundaries(seg_cells_interpolated, seg_cell_or_bg)
 seg_cells_interpolated_corrected = seg_cells_interpolated_corrected[5:x_siz+5,5:y_siz+5,5:z_siz*z_scaling+5]
 
 # save labels in the first volume (interpolated)
@@ -514,8 +514,8 @@ for volume in range(2,volume_num+1):
     
     # re-calculate boundaries of overlapped cells using watershed
     tracked_cells_corrected[np.where(overlap_corrected>1)]=0
-    label_T_watershed = watershed_2d_markers(tracked_cells_corrected[:,:,z_scaling//2:z_siz*z_scaling:z_scaling], 
-                                             overlap_corrected[:,:,z_scaling//2:z_siz*z_scaling:z_scaling], z_range=z_siz)
+    label_T_watershed = recalculate_cell_boundaries(tracked_cells_corrected[:, :, z_scaling // 2:z_siz * z_scaling:z_scaling],
+                                             overlap_corrected[:, :, z_scaling // 2:z_siz * z_scaling:z_scaling])
     
     ####################################################    
     # save tracked labels and tracking information

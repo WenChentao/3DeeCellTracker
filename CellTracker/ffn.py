@@ -1,4 +1,5 @@
 import os
+from glob import glob
 from pathlib import Path
 from typing import Tuple, Generator, Union
 
@@ -9,6 +10,7 @@ from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Input, Dense, BatchNormalization, LeakyReLU, Concatenate
+from tifffile import imread
 from tqdm import tqdm
 
 from CellTracker.synthesize import add_seg_errors, points_to_features
@@ -83,15 +85,38 @@ def features_of_points_ffn_quick(points_nx3: ndarray, points_tgt_nx3: ndarray, k
 
 
 class TrainFFN:
-    def __init__(self, points1_path: str, points2_path: str, model_name: str):
+    def __init__(self, model_name: str, points1_path: str = None, segmentation1_path: str = None, voxel_size: tuple = (1, 1, 1)):
+        """Set the model name and load/process a points set
+        Notes
+        -----
+        segmentation1_path and voxel_size are used only when points1_path is None
+        """
         self.path_model = Path("./ffn_model")
         self.path_model.mkdir(exist_ok=True, parents=True)
         (self.path_model / "weights").mkdir(exist_ok=True, parents=True)
         self.model_name = model_name
         self.current_epoch = 1
         self.model = FFN()
-        self.points_t1 = normalize_points(np.loadtxt(points1_path))
-        self.points_t2 = normalize_points(np.loadtxt(points2_path))
+        if points1_path is not None:
+            self.points_t1 = normalize_points(np.loadtxt(points1_path))
+
+        elif segmentation1_path is not None:
+            slice_paths = sorted(glob(segmentation1_path))
+            if len(slice_paths) == 0:
+                # Raise an error if no image slices are found in the specified directory
+                raise FileNotFoundError(f"No image in {segmentation1_path} was found")
+
+            # Load the proofed segmentation and relabel it to sequential integers
+            proofed_segmentation = imread(slice_paths).transpose((1, 2, 0))
+            import scipy.ndimage.measurements as ndm
+            points_t1 = np.asarray(
+                ndm.center_of_mass(proofed_segmentation > 0,
+                                   proofed_segmentation, range(1, proofed_segmentation.max() + 1)
+                                   )
+            )
+            self.points_t1 = normalize_points(points_t1 * np.asarray(voxel_size)[None, :])
+        else:
+            raise ValueError("Either the segmentation1_path or the points1_path should be provided")
         self.optimizer = tf.keras.optimizers.Adam()
         self.points_generator = DataGeneratorFFN(self.points_t1)
 
@@ -133,33 +158,6 @@ class TrainFFN:
         self.model.load_weights(str(Path(self.path_model) / (weights_name + f"epoch{step}.h5")))
 
         print(f"Loaded the trained FFN model at step {step}")
-
-
-# class FFN(nn.Module):
-#     def __init__(self):
-#         super().__init__()
-#         self.feat_layer1 = nn.Sequential(
-#             nn.Linear(61, 512),
-#             nn.BatchNorm1d(512),
-#             nn.LeakyReLU(inplace=True)
-#         )
-#         self.combine_feat = torch.cat
-#         self.combine_feat2 = nn.Sequential(
-#             nn.Linear(1024, 512),
-#             nn.BatchNorm1d(512),
-#             nn.LeakyReLU(inplace=True)
-#         )
-#         self.pred = nn.Sequential(
-#             nn.Linear(512, 1),
-#             nn.Sigmoid()
-#         )
-#
-#     def forward(self, x: Tuple[any, any]):
-#         feat_x1 = self.feat_layer1(x[:, :61])
-#         feat_x2 = self.feat_layer1(x[:, 61:])
-#         combined_feat = self.combine_feat((feat_x1, feat_x2), dim=1)
-#         combined_feat2 = self.combine_feat2(combined_feat)
-#         return self.pred(combined_feat2)
 
 
 class FFN(Model):

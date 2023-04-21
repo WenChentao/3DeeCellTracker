@@ -16,6 +16,8 @@ import numpy as np
 from numpy import ndarray
 from stardist.utils import _normalize_grid
 
+from CellTracker.stardist3dcustom import StarDist3DCustom
+
 UP_LIMIT = 400000
 matplotlib.rcParams["image.interpolation"] = None
 import matplotlib.pyplot as plt
@@ -24,17 +26,18 @@ from glob import glob
 from tqdm import tqdm
 from tifffile import imread
 from csbdeep.utils import Path, normalize
+from PIL import Image
 
 from stardist import fill_label_holes, random_label_cmap, calculate_extents, gputools_available
 from stardist import Rays_GoldenSpiral
-from stardist.models import Config3D, StarDist3D
+from stardist.models import Config3D
 
 np.random.seed(42)
 lbl_cmap = random_label_cmap()
 
 
 def load_stardist_model(model_name: str = "stardist"):
-    return StarDist3D(None, name=model_name, basedir='models')
+    return StarDist3DCustom(None, name=model_name, basedir='models')
 
 
 def load_2d_slices_at_time(slice_paths: str, t: int):
@@ -47,20 +50,19 @@ def load_2d_slices_at_time(slice_paths: str, t: int):
     return normalize(x, 1, 99.8, axis=axis_norm)
 
 
-def predict_and_save_coordinates(images_path: str, model: StarDist3D, coords_path: str):
+def predict_and_save(images_path: str, model: StarDist3DCustom, results_folder: str):
     """
-    Load 2D slices of a 3D image stack obtained at time t and predict instance coordinates using a trained StarDist3D model.
+    Load 2D slices of a 3D image stack obtained at time t and predict instance coordinates using a trained StarDist3DCustom model.
     Save the predicted coordinates as numpy arrays in a folder.
 
     Args:
         images_path (str): The file path of the 3D image stack with 2D slices at each time point.
-        model (StarDist3D): A trained StarDist3D model for instance segmentation of 3D image stacks.
-        coords_path (str): The folder path to save the predicted instance coordinates as numpy arrays.
-        t_start (int, optional): The time point to start processing. Defaults to 1.
+        model (StarDist3DCustom): A trained StarDist3DCustom model for instance segmentation of 3D image stacks.
+        results_folder (str): The folder path to save the results.
     """
     # Check if the folder exists and create it if necessary
-    _coords_path = Path(coords_path)
-    _coords_path.mkdir(parents=True, exist_ok=True)
+    _seg_path = Path(results_folder) / "seg"
+    _seg_path.mkdir(parents=True, exist_ok=True)
 
     # Get the list of image file names
     images_path_search = Path(images_path)
@@ -81,12 +83,25 @@ def predict_and_save_coordinates(images_path: str, model: StarDist3D, coords_pat
                 # Handle missing image files
                 print(f"Warning: Segmentation has been stopped since images at t={t - 1} cannot be loaded!")
                 break
-            _, details = model.predict_instances(x)
+            (labels, details), prob_map = model.predict_instances(x)
             # Save predicted instance coordinates as numpy arrays
-            filepath = _coords_path / f"coords{str(t).zfill(4)}.npy"
-            np.save(filepath, details["points"][:, [1,2,0]])
+            coords_filepath = str(_seg_path / f"coords{str(t).zfill(4)}.npy")
+            prob_filepath = str(_seg_path / f"prob{str(t).zfill(4)}.npy")
+            np.save(coords_filepath, details["points"][:, [1,2,0]])
+            np.save(prob_filepath, prob_map.transpose((1, 2, 0)))
+            if t == smallest_number:
+                save_auto_seg_vol1(labels.transpose((1, 2, 0)), results_folder)
             pbar.update(1)
     print(f"All images from t={smallest_number} to t={largest_number} have been Segmented")
+
+
+def save_auto_seg_vol1(labels_xyz, results_folder):
+    _seg_path = Path(results_folder) / "auto_vol1"
+    _seg_path.mkdir(parents=True, exist_ok=True)
+    dtype = np.uint8 if labels_xyz.max() <= 255 else np.uint16
+    for z in range(1, labels_xyz.shape[2] + 1):
+        img2d = labels_xyz[:, :, z - 1].astype(dtype)
+        Image.fromarray(img2d).save(str(_seg_path / ("auto_vol1_z%04i.tif" % z)))
 
 
 def save_arrays_to_folder(arrays, folder_path):
@@ -109,7 +124,7 @@ def save_arrays_to_folder(arrays, folder_path):
 
 
 def load_training_images(path_train_images: str, path_train_labels: str, max_projection: bool):
-    """Load images for training StarDist3D"""
+    """Load images for training StarDist3DCustom"""
     X = sorted(glob(path_train_images))
     Y = sorted(glob(path_train_labels))
     assert len(X) > 0 and len(Y) > 0
@@ -211,7 +226,7 @@ def configure(Y: List[ndarray], n_channel: int, up_limit: int = UP_LIMIT, model_
         # alternatively, try this:
         # limit_gpu_memory(None, allow_growth=True)
 
-    model = StarDist3D(conf, name=model_name, basedir='models')
+    model = StarDist3DCustom(conf, name=model_name, basedir='models')
 
     median_size = calculate_extents(Y, np.median)
     fov = np.array(model._axes_tile_overlap('ZYX'))
@@ -303,3 +318,4 @@ def augmenter(x, y):
     x, y = random_fliprot(x, y, axis=(1, 2))
     x = random_intensity_change(x)
     return x, y
+

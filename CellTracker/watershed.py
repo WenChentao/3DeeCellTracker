@@ -108,7 +108,8 @@ def watershed_3d(image_watershed2d, samplingrate, method, min_size, cell_num, mi
     return labels_wo_bd, labels_clear, min_size, cell_num
 
 
-def recalculate_cell_boundaries(segmentation_xyz: ndarray, cell_overlaps_mask: ndarray, sampling_xy: tuple = (1, 1)):
+def recalculate_cell_boundaries(segmentation_xyz: ndarray, cell_overlaps_mask: ndarray, sampling_xy: tuple = (1, 1),
+                                print_message: bool = True):
     """
     Recalculate cell boundaries when cell regions are overlapping
 
@@ -131,7 +132,8 @@ def recalculate_cell_boundaries(segmentation_xyz: ndarray, cell_overlaps_mask: n
 
     # Loop over each z-slice of the label image
     for z in range(segmentation_xyz.shape[2]):
-        print(f"Recalculating... cell boundary at z = {z+1}", end="\r")
+        if print_message:
+            print(f"Recalculating... cell boundary at z = {z+1}", end="\r")
         # Create a binary image indicating the presence of cells or overlapping regions
         mask_image = np.logical_or(segmentation_xyz[:, :, z] > 0, cell_overlaps_mask[:, :, z] > 1)
 
