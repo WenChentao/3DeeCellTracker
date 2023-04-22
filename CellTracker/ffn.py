@@ -85,13 +85,14 @@ def features_of_points_ffn_quick(points_nx3: ndarray, points_tgt_nx3: ndarray, k
 
 
 class TrainFFN:
-    def __init__(self, model_name: str, points1_path: str = None, segmentation1_path: str = None, voxel_size: tuple = (1, 1, 1)):
+    def __init__(self, model_name: str, points1_path: str = None, segmentation1_path: str = None, voxel_size: tuple = (1, 1, 1),
+                 basedir: str = "./ffn_models"):
         """Set the model name and load/process a points set
         Notes
         -----
         segmentation1_path and voxel_size are used only when points1_path is None
         """
-        self.path_model = Path("./ffn_model")
+        self.path_model = Path(basedir)
         self.path_model.mkdir(exist_ok=True, parents=True)
         (self.path_model / "weights").mkdir(exist_ok=True, parents=True)
         self.model_name = model_name

@@ -1,3 +1,5 @@
+import re
+from glob import glob
 from pathlib import Path
 from typing import List, Tuple
 
@@ -10,6 +12,7 @@ from scipy.stats import trim_mean
 
 from CellTracker.coord_image_transformer import Coordinates, plot_prgls_prediction, plot_two_pointset_scatters
 from CellTracker.ffn import initial_matching_ffn, normalize_points, FFN
+from CellTracker.stardistwrapper import load_2d_slices_at_time
 
 FIGURE = "figure"
 
@@ -30,14 +33,14 @@ class TrackerLite:
     A class that tracks cells in 3D time-lapse images using a trained FFN model.
     """
 
-    def __init__(self, results_dir: str, ffn_model_path: str,
-                 proofed_coords_vol1: Coordinates, miss_frame: List[int] = None):
+    def __init__(self, results_dir: str, ffn_model_name: str,
+                 proofed_coords_vol1: Coordinates, miss_frame: List[int] = None, basedir: str = "ffn_models"):
         """
         Initialize a new instance of the TrackerLite class.
 
         Args:
             results_dir: The path to the directory containing the results.
-            ffn_model_path: The path to the FFN model file.
+            ffn_model_name: The filename without extension to the FFN model file.
             proofed_coords_vol1: The confirmed cell positions at time step t1.
             miss_frame: A list of missing frames.
         """
@@ -49,15 +52,15 @@ class TrackerLite:
         (self.results_dir / TRACK_RESULTS / COORDS_REAL).mkdir(parents=True, exist_ok=True)
         (self.results_dir / TRACK_RESULTS / LABELS).mkdir(parents=True, exist_ok=True)
 
-        self.ffn_model_path = ffn_model_path
+        self.ffn_model_path = Path(basedir) / (ffn_model_name + ".h5")
         self.ffn_model = FFN()
 
         try:
             dummy_input = np.random.random((1, 122))
             _ = self.ffn_model(dummy_input)
-            self.ffn_model.load_weights(ffn_model_path)
+            self.ffn_model.load_weights(str(self.ffn_model_path))
         except (OSError, ValueError) as e:
-            raise ValueError(f"Failed to load the FFN model from {ffn_model_path}: {e}") from e
+            raise ValueError(f"Failed to load the FFN model from {self.ffn_model_path}: {e}") from e
 
         self.proofed_coords_vol1 = proofed_coords_vol1
         self.miss_frame = [] if miss_frame is None else miss_frame
@@ -95,17 +98,18 @@ class TrackerLite:
                                                        beta=beta, lambda_=lambda_)
         tracked_coords_t2 =  tracked_coords_norm_t2 * scale_t1 + mean_t1
         if draw_fig:
-            fig = plot_prgls_prediction(confirmed_coord_t1.real, segmented_pos_t2.real, tracked_coords_t2)
+            fig = plot_prgls_prediction(confirmed_coord_t1.real, segmented_pos_t2.real, tracked_coords_t2, t1, t2)
+
         return Coordinates(tracked_coords_t2,
                            interpolation_factor=self.proofed_coords_vol1.interpolation_factor,
                            voxel_size=self.proofed_coords_vol1.voxel_size,
                            dtype="real")
 
-    def predict_cell_positions_ensemble(self, skip_volumes: List[int], t2: int, coord_t1: Coordinates,
+    def predict_cell_positions_ensemble(self, skipped_volumes: List[int], t2: int, coord_t1: Coordinates,
                                         beta: float, lambda_: float, sampling_number: int = 20,
                                         adjacent: bool = False):
         coord_prgls = []
-        for t1 in get_volumes_list(current_vol=t2, skip_volumes=skip_volumes, sampling_number=sampling_number,
+        for t1 in get_volumes_list(current_vol=t2, skip_volumes=skipped_volumes, sampling_number=sampling_number,
                                    adjacent=adjacent):
             loaded_coord_t1 = np.load(str(self.results_dir / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(4)}.npy"))
             loaded_coord_t1_ = Coordinates(loaded_coord_t1, coord_t1.interpolation_factor, coord_t1.voxel_size, dtype="real")
@@ -128,7 +132,7 @@ class TrackerLite:
 
         matching_matrix = initial_matching_ffn(self.ffn_model, confirmed_coords_norm_t1, segmented_coords_norm_t2, K_POINTS)
         _, pairs_px2 = simple_match(matching_matrix)
-        plot_initial_matching(confirmed_coord_t1.real, segmented_pos_t2.real, pairs_px2)
+        plot_initial_matching(confirmed_coord_t1.real, segmented_pos_t2.real, pairs_px2, t1, t2)
         #plot_initial_matching(confirmed_coord_t1.real[:,[2,1,0]], segmented_pos_t2.real[:,[2,1,0]], pairs_px2)
 
     def _get_segmented_pos(self, t: int) -> Coordinates:
@@ -139,8 +143,54 @@ class TrackerLite:
                           interpolation_factor=interp_factor, voxel_size=voxel_size, dtype="raw")
         return pos
 
+    def activities(self, raw_path: str, discard_ratio: float = 0.1):
+        tracked_labels_path = self.results_dir / TRACK_RESULTS / LABELS
+        filenames = glob(str(tracked_labels_path / "*t*.tif"))
+        assert len(filenames) > 0, f"No labels files were found in {tracked_labels_path / '*t*.tif'}"
+        numbers = [int(re.findall(r"t(\d+)", f)[0]) for f in filenames]
+        smallest_number = min(numbers)
+        largest_number = max(numbers)
 
-def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, fig_width_px=1200, dpi=96):
+        for t in range(smallest_number, largest_number+1):
+            print(f"{t=}...", end="\r")
+            try:
+                # Load 2D slices at time t
+                raw = load_2d_slices_at_time(raw_path, t=t)
+            except FileNotFoundError:
+                # Handle missing image files
+                print(f"Warning: Raw images at t={t - 1} cannot be loaded! Stop calculation!")
+                break
+
+            try:
+                # Load 2D slices at time t
+                labels_img = load_2d_slices_at_time(str(tracked_labels_path / "*t%04i*.tif"), t=t, do_normalize=False)
+            except FileNotFoundError:
+                # Handle missing image files
+                print(f"Warning: Label images at t={t - 1} cannot be loaded!")
+                if t == smallest_number:
+                    print("Warning: stop calculation!")
+                    break
+                else:
+                    print(f"Warning: skip volume {t-1}!")
+                    activities[t - smallest_number, :] = np.nan
+                    continue
+
+            if t == smallest_number:
+                cell_num = np.max(labels_img)
+                activities = np.zeros((largest_number - smallest_number + 1, cell_num))
+
+            per = (1 - discard_ratio) * 100
+            for label in range(1, cell_num + 1):
+                intensity_label_i = raw[labels_img == label]
+                if intensity_label_i.size == 0:
+                    activities[t - smallest_number, label - 1] = np.nan
+                else:
+                    threshold = np.percentile(intensity_label_i, per)
+                    activities[t - smallest_number, label-1] = np.mean(intensity_label_i[intensity_label_i > threshold])
+        return activities
+
+
+def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, fig_width_px=1200, dpi=96):
     """Draws the initial matching between two sets of 3D points and their matching relationships.
 
     Args:
@@ -163,7 +213,7 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
         1] == 2, "pairs_px2 should be a 2D array with shape (n, 2)"
 
     # Plot the scatters of the ref_points and tgt_points
-    ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs)
+    ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1, t2)
 
     # Plot the matching relationships between the two sets of points
     for ref_index, tgt_index in pairs_px2:

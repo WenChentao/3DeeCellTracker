@@ -27,6 +27,8 @@ from tqdm import tqdm
 
 from CellTracker.stardist3dcustom import StarDist3DCustom
 
+STARDIST_MODELS = "stardist_models"
+
 UP_LIMIT = 400000
 matplotlib.rcParams["image.interpolation"] = None
 
@@ -34,18 +36,22 @@ np.random.seed(42)
 lbl_cmap = random_label_cmap()
 
 
-def load_stardist_model(model_name: str = "stardist"):
-    return StarDist3DCustom(None, name=model_name, basedir='models')
+def load_stardist_model(model_name: str = "stardist", basedir: str = STARDIST_MODELS):
+    model = StarDist3DCustom(None, name=model_name, basedir=basedir)
+    print(f"Load pretrained stardist model '{model_name}' from folder '{basedir}'")
+    return model
 
 
-def load_2d_slices_at_time(slice_paths: str, t: int):
+def load_2d_slices_at_time(slice_paths: str, t: int, do_normalize: bool = True):
     """Load all 2D slices at time t and normalize the resulted 3D image"""
     slice_paths_at_t = sorted(glob(slice_paths % t))
     if len(slice_paths_at_t) == 0:
         raise FileNotFoundError(f"No image at time {t} was found")
     x = imread(slice_paths_at_t)
-    axis_norm = (0, 1, 2)  # normalize channels independently
-    return normalize(x, 1, 99.8, axis=axis_norm)
+    if do_normalize:
+        axis_norm = (0, 1, 2)  # normalize channels independently
+        return normalize(x, 1, 99.8, axis=axis_norm)
+    return x
 
 
 def predict_and_save(images_path: str, model: StarDist3DCustom, results_folder: str):
@@ -166,7 +172,8 @@ def load_training_images(path_train_images: str, path_train_labels: str, max_pro
     return X, Y, X_trn, Y_trn, X_val, Y_val, n_channel
 
 
-def configure(Y: List[ndarray], n_channel: int, up_limit: int = UP_LIMIT, model_name: str = 'stardist'):
+def configure(Y: List[ndarray], n_channel: int, up_limit: int = UP_LIMIT, model_name: str = 'stardist',
+              basedir: str = STARDIST_MODELS):
     extents = calculate_extents(Y)
     anisotropy = tuple(np.max(extents) / extents)
     print('empirical anisotropy of labeled objects = %s' % str(anisotropy))
@@ -224,7 +231,7 @@ def configure(Y: List[ndarray], n_channel: int, up_limit: int = UP_LIMIT, model_
         # alternatively, try this:
         # limit_gpu_memory(None, allow_growth=True)
 
-    model = StarDist3DCustom(conf, name=model_name, basedir='models')
+    model = StarDist3DCustom(conf, name=model_name, basedir=basedir)
 
     median_size = calculate_extents(Y, np.median)
     fov = np.array(model._axes_tile_overlap('ZYX'))

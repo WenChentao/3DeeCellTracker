@@ -131,11 +131,11 @@ class CoordsToImageTransformer:
         After interpolation/smoothing, the cell boundaries are reassigned by 2d watershed. Then the interpolated cells
         are re-segmented by 3d connectivity to separate cells incorrectly labelled as the same cell.
         """
-        def extract_regions():
+        def extract_regions(segmentation: ndarray):
             self.subregions = gaussian_interpolation_3d(
-                self.proofed_segmentation, interpolation_factor=interpolation_factor, smooth_sigma=smooth_sigma)
+                segmentation, interpolation_factor=interpolation_factor, smooth_sigma=smooth_sigma)
 
-            # Move cells and get interpolated labels
+            # Get interpolated labels image
             interpolated_labels, cell_overlaps_mask = self.move_cells(movements_nx3=None)
 
             # Recalculate cell boundaries
@@ -158,12 +158,12 @@ class CoordsToImageTransformer:
                                              interpolation_factor * self.proofed_segmentation.shape[2],
                                              interpolation_factor)
 
-        self.subregions, self.auto_corrected_segmentation = extract_regions()
+        _, smoothed_labels = extract_regions(self.proofed_segmentation)
 
         # Fix segmentation errors
-        self.auto_corrected_segmentation, was_corrected = fix_labeling_errors(self.auto_corrected_segmentation)
+        corrected_segmentation, _ = fix_labeling_errors(smoothed_labels)
 
-        self.subregions, self.auto_corrected_segmentation = extract_regions()
+        self.subregions, self.auto_corrected_segmentation = extract_regions(corrected_segmentation)
 
         # Check if 8-bit is needed for saving the image
         self.use_8_bit = self.auto_corrected_segmentation.max() <= 255
@@ -226,13 +226,13 @@ class CoordsToImageTransformer:
                 partial_start = new_start - new_start_
                 new_stop_ = s.stop + int(c)
                 new_stop = min(new_stop_, size)
-                partial_stop = size - (new_stop - new_stop_)
+                partial_stop = (s.stop - s.start) - (new_stop_ - new_stop)
                 new_bbox.append(slice(new_start, new_stop, None))
                 partial_bbox.append(slice(partial_start, partial_stop, None))
                 if new_start >= new_stop:
                     raise ValueError(f"Slices are out of range for image of size {image_shape}")
 
-            return tuple(new_bbox), partial_bbox
+            return tuple(new_bbox), tuple(partial_bbox)
 
         if movements_nx3 is None:
             movements_nx3 = np.zeros((len(self.subregions), 3))
@@ -243,11 +243,13 @@ class CoordsToImageTransformer:
 
         output_img = np.repeat(np.zeros_like(self.proofed_segmentation), self.interpolation_factor, axis=2)
         mask = output_img.copy()
+        siz_x, siz_y, siz_z = self.proofed_segmentation.shape
+        interp_shape = (siz_x, siz_y, siz_z * self.interpolation_factor)
         for i, (bbox, subimage) in enumerate(self.subregions):
             label = i + 1
             if label in cells_missed:
                 continue
-            bbox_moved, partial_bbox = add_bbox_with_movements(bbox, movements_nx3[i], self.proofed_segmentation.shape)
+            bbox_moved, partial_bbox = add_bbox_with_movements(bbox, movements_nx3[i], interp_shape)
             output_img[bbox_moved] += (subimage * label).astype(output_img.dtype)[partial_bbox]
             mask[bbox_moved] += (subimage * 1).astype(mask.dtype)[partial_bbox]
         return output_img, mask
@@ -267,7 +269,7 @@ class CoordsToImageTransformer:
                 (z < 0) |
                 (z > z_siz * self.voxel_size[2])
         )
-        boundary_ids = np.where(near_boundary)[0]
+        boundary_ids = np.where(near_boundary)[0] + 1
         return boundary_ids
 
     def accurate_correction(self, t, grid: Tuple[int, int, int], coords: Coordinates, ensemble: bool, max_repetition: int = 20):
@@ -313,14 +315,14 @@ class CoordsToImageTransformer:
 
         return corrected_coords, delta_coords
 
-    def save_tracking_results(self, coords: Coordinates, corrected_labels_image: ndarray, tracker, t1, t2: int, images_path):
+    def save_tracking_results(self, coords: Coordinates, corrected_labels_image: ndarray, tracker, t1: int, t2: int, images_path):
         np.save(str(self.results_folder / TRACK_RESULTS / COORDS_REAL / ("coords%04d.npy" % t2)), coords.real)
         save_tracked_labels(self.results_folder, corrected_labels_image, t2, self.use_8_bit)
         self.save_merged_labels(corrected_labels_image, images_path, t2)
 
         confirmed_coord_t1 = np.load(str(self.results_folder / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(4)}.npy"))
         segmented_pos_t2 = tracker._get_segmented_pos(t2)
-        fig = plot_prgls_prediction(confirmed_coord_t1, segmented_pos_t2.real, coords.real)
+        fig = plot_prgls_prediction(confirmed_coord_t1, segmented_pos_t2.real, coords.real, t1, t2)
         fig.savefig(self.results_folder / TRACK_RESULTS / "figure" / f"matching_{str(t2).zfill(4)}.png", facecolor='white')
         plt.close()
 
@@ -412,7 +414,8 @@ def fix_labeling_errors(segmentation: np.ndarray) -> Tuple[np.ndarray, bool]:
     return new_segmentation, was_corrected
 
 
-def plot_prgls_prediction(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray, fig_width_px=1200, dpi=96):
+def plot_prgls_prediction(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray, t1: int, t2: int,
+                          fig_width_px=1200, dpi=96):
     """Draws the initial matching between two sets of 3D points and their matching relationships.
 
     Args:
@@ -435,7 +438,7 @@ def plot_prgls_prediction(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_pt
         1] == 3, "predicted_ref_ptrs should be a 2D array with shape (n, 3)"
 
     # Plot the scatters of the ref_points and tgt_points
-    ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs)
+    ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1, t2)
 
     # Plot the matching relationships between the two sets of points
     for ref_ptr, tgt_ptr in zip(ref_ptrs, predicted_ref_ptrs):
@@ -451,7 +454,7 @@ def plot_prgls_prediction(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_pt
     return fig
 
 
-def plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs):
+def plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1: int, t2: int):
     # Calculate the figure size based on the input width and dpi
     fig_width_in = fig_width_px / dpi  # convert to inches assuming the given dpi
     fig_height_in = fig_width_in / 1.618  # set height to golden ratio
@@ -474,11 +477,11 @@ def plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs):
 
     # Set plot titles or y-axis labels based on the layout
     if top_down:
-        ax1.set_ylabel("Point Set t1")
-        ax2.set_ylabel("Point Set t2")
+        ax1.set_ylabel(f"Point Set t={t1}")
+        ax2.set_ylabel(f"Point Set t={t2}")
     else:
-        ax1.set_title("Point Set t1")
-        ax2.set_title("Point Set t2")
+        ax1.set_title(f"Point Set t={t1}")
+        ax2.set_title(f"Point Set t={t2}")
     return ax1, ax2, fig
 
 

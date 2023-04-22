@@ -7,8 +7,9 @@
 ## Updates:
 
 **3DeeCellTracker v0.5.0-alpha will be released soon**
-- Allows you to use StarDist3D for segmentation
+- Allows you to use [StarDist3D](https://github.com/stardist/stardist) for segmentation
 - Reduces the requirements for fine-tuning parameters
+- Decouples the code to facilitate reuse by third-party developers.
 
 ## Installation
 

@@ -12,15 +12,16 @@ from tifffile import imread
 mpl.rcParams["axes.spines.right"] = False
 mpl.rcParams["axes.spines.top"] = False
 
-def get_activities(path_raw, path_tracked, volume_num, layer_num):
+
+def get_activities(raw_path: str, tracked_labels_path: str, volume_num: int, layer_num: int):
     """
     Get activities of all cells
 
     Parameters
     ----------
-    path_raw : str
+    raw_path : str
         The path of the images for extracting activities
-    path_tracked : str
+    tracked_labels_path : str
         The path of the tracked labels
     volume_num : int
         The number of the volumes
@@ -32,7 +33,7 @@ def get_activities(path_raw, path_tracked, volume_num, layer_num):
     activities : numpy.ndarray
         The extracted activities with shape (volume, label)
     """
-    images_label, images_raw = _read_image(1, layer_num, path_raw, path_tracked)
+    images_label, images_raw = _read_image(1, layer_num, raw_path, tracked_labels_path)
     cell_num = np.max(images_label)
     activities = np.zeros((volume_num, cell_num))
     discard_ratio = 0.1
@@ -42,7 +43,7 @@ def get_activities(path_raw, path_tracked, volume_num, layer_num):
 
         # read raw images and labels
         if frame>=2:
-            images_label, images_raw = _read_image(frame, layer_num, path_raw, path_tracked)
+            images_label, images_raw = _read_image(frame, layer_num, raw_path, tracked_labels_path)
 
         # calculate mean intensities of each cell of top 90% area
         for label in range(1, cell_num + 1):
@@ -101,7 +102,7 @@ def optimize_row_column(duration, n_signals, figsize):
     return row_n, column_n
 
 
-def draw_signals(signals, ylim_upper=None, ylim_lower=None, figsize=(40, 20)):
+def draw_signals(signals, ylim_upper=None, ylim_lower=None, figsize=(20, 10)):
     """
     Draw signals in multiple subplots
 
@@ -139,4 +140,4 @@ def draw_signals(signals, ylim_upper=None, ylim_lower=None, figsize=(40, 20)):
             if row<row_n-1:
                 axes[row, column].get_xaxis().set_visible(False)
     plt.subplots_adjust(left=0.02, bottom=0.02, right=0.98, top=0.98, wspace=0.2, hspace=0.2)
-    return fig, axes
+
