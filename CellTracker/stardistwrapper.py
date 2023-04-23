@@ -131,8 +131,8 @@ def load_training_images(path_train_images: str, path_train_labels: str, max_pro
     """Load images for training StarDist3DCustom"""
     X = sorted(glob(path_train_images))
     Y = sorted(glob(path_train_labels))
-    assert len(X) > 0 and len(Y) > 0
-    assert all(Path(x).name == Path(y).name for x, y in zip(X,Y))
+    assert len(X) > 0 and len(Y) > 0, "Error: No images found in either X or Y."
+    assert all(Path(x).name == Path(y).name for x, y in zip(X,Y)), "Error: Filenames in X and Y do not match."
     X = list(map(imread, X))
     Y = list(map(imread, Y))
     n_channel = 1 if X[0].ndim == 3 else X[0].shape[-1]
