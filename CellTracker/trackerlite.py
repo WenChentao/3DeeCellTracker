@@ -90,13 +90,14 @@ class TrackerLite:
         segmented_coords_norm_t2 = (segmented_pos_t2.real - mean_t1) / scale_t1
         segmented_coords_norm_t1 = (segmented_pos_t1.real - mean_t1) / scale_t1
 
-        matching_matrix = initial_matching_ffn(self.ffn_model, segmented_coords_norm_t1, segmented_coords_norm_t2, K_POINTS)
+        matching_matrix = initial_matching_ffn(self.ffn_model, segmented_coords_norm_t1, segmented_coords_norm_t2,
+                                               K_POINTS)
         normalized_prob, _ = simple_match(matching_matrix)
 
         tracked_coords_norm_t2, _ = prgls_with_two_ref(normalized_prob, segmented_coords_norm_t2,
                                                        segmented_coords_norm_t1, confirmed_coords_norm_t1,
                                                        beta=beta, lambda_=lambda_)
-        tracked_coords_t2 =  tracked_coords_norm_t2 * scale_t1 + mean_t1
+        tracked_coords_t2 = tracked_coords_norm_t2 * scale_t1 + mean_t1
         if draw_fig:
             fig = plot_prgls_prediction(confirmed_coord_t1.real, segmented_pos_t2.real, tracked_coords_t2, t1, t2)
 
@@ -111,13 +112,15 @@ class TrackerLite:
         coord_prgls = []
         for t1 in get_volumes_list(current_vol=t2, skip_volumes=skipped_volumes, sampling_number=sampling_number,
                                    adjacent=adjacent):
-            loaded_coord_t1 = np.load(str(self.results_dir / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(4)}.npy"))
-            loaded_coord_t1_ = Coordinates(loaded_coord_t1, coord_t1.interpolation_factor, coord_t1.voxel_size, dtype="real")
+            loaded_coord_t1 = np.load(
+                str(self.results_dir / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(4)}.npy"))
+            loaded_coord_t1_ = Coordinates(loaded_coord_t1, coord_t1.interpolation_factor, coord_t1.voxel_size,
+                                           dtype="real")
             coord_prgls.append(self.predict_cell_positions(t1=t1, t2=t2, confirmed_coord_t1=loaded_coord_t1_, beta=beta,
-                                                     lambda_=lambda_).real)
+                                                           lambda_=lambda_).real)
         return Coordinates(trim_mean(coord_prgls, 0.1, axis=0),
-                    interpolation_factor=self.proofed_coords_vol1.interpolation_factor,
-                    voxel_size=self.proofed_coords_vol1.voxel_size, dtype="real")
+                           interpolation_factor=self.proofed_coords_vol1.interpolation_factor,
+                           voxel_size=self.proofed_coords_vol1.voxel_size, dtype="real")
 
     def match_by_ffn(self, t1: int, t2: int, confirmed_coord_t1: Coordinates = None):
         assert t2 not in self.miss_frame
@@ -130,10 +133,11 @@ class TrackerLite:
         confirmed_coords_norm_t1, (mean_t1, scale_t1) = normalize_points(confirmed_coord_t1.real, return_para=True)
         segmented_coords_norm_t2 = (segmented_pos_t2.real - mean_t1) / scale_t1
 
-        matching_matrix = initial_matching_ffn(self.ffn_model, confirmed_coords_norm_t1, segmented_coords_norm_t2, K_POINTS)
+        matching_matrix = initial_matching_ffn(self.ffn_model, confirmed_coords_norm_t1, segmented_coords_norm_t2,
+                                               K_POINTS)
         _, pairs_px2 = simple_match(matching_matrix)
         plot_initial_matching(confirmed_coord_t1.real, segmented_pos_t2.real, pairs_px2, t1, t2)
-        #plot_initial_matching(confirmed_coord_t1.real[:,[2,1,0]], segmented_pos_t2.real[:,[2,1,0]], pairs_px2)
+        # plot_initial_matching(confirmed_coord_t1.real[:,[2,1,0]], segmented_pos_t2.real[:,[2,1,0]], pairs_px2)
 
     def _get_segmented_pos(self, t: int) -> Coordinates:
         interp_factor = self.proofed_coords_vol1.interpolation_factor
@@ -151,7 +155,7 @@ class TrackerLite:
         smallest_number = min(numbers)
         largest_number = max(numbers)
 
-        for t in range(smallest_number, largest_number+1):
+        for t in range(smallest_number, largest_number + 1):
             print(f"{t=}...", end="\r")
             try:
                 # Load 2D slices at time t
@@ -171,7 +175,7 @@ class TrackerLite:
                     print("Warning: stop calculation!")
                     break
                 else:
-                    print(f"Warning: skip volume {t-1}!")
+                    print(f"Warning: skip volume {t - 1}!")
                     activities[t - smallest_number, :] = np.nan
                     continue
 
@@ -186,11 +190,13 @@ class TrackerLite:
                     activities[t - smallest_number, label - 1] = np.nan
                 else:
                     threshold = np.percentile(intensity_label_i, per)
-                    activities[t - smallest_number, label-1] = np.mean(intensity_label_i[intensity_label_i > threshold])
+                    activities[t - smallest_number, label - 1] = np.mean(
+                        intensity_label_i[intensity_label_i > threshold])
         return activities
 
 
-def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, fig_width_px=1200, dpi=96):
+def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, fig_width_px=1200,
+                          dpi=96):
     """Draws the initial matching between two sets of 3D points and their matching relationships.
 
     Args:
@@ -223,7 +229,7 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
 
         # Draw a connection between the matched points in the two subplots using the `ConnectionPatch` class
         con = ConnectionPatch(xyA=pt2, xyB=pt1, coordsA="data", coordsB="data",
-                          axesA=ax2, axesB=ax1, color="C1")
+                              axesA=ax2, axesB=ax1, color="C1")
         ax2.add_artist(con)
 
 
@@ -241,7 +247,7 @@ def simple_match(initial_match_matrix: ndarray, threshold=0.1) -> ndarray:
         match_matrix[tgt_index, :] = 0
         match_matrix[:, ref_index] = 0
     pairs_px2 = np.array(pairs_list)
-    normalized_prob = np.full_like(match_matrix, 0.1 / (match_matrix.shape[1] -1))
+    normalized_prob = np.full_like(match_matrix, 0.1 / (match_matrix.shape[1] - 1))
     for ref, tgt in pairs_px2:
         normalized_prob[tgt, ref] = 0.9
     return normalized_prob, pairs_px2
@@ -254,7 +260,6 @@ def prgls_quick(init_match_mxn, ptrs_tgt_mx3: ndarray, tracked_ref_nx3: ndarray,
     Get coherent movements from the initial matching by PR-GLS algorithm
     """
 
-
     # Initiate parameters
     ratio_outliers = 0.05  # This is the gamma
     distance_weights_nxn = gaussian_kernel(tracked_ref_nx3, tracked_ref_nx3, beta ** 2)  # This is the Gram matrix
@@ -266,11 +271,13 @@ def prgls_quick(init_match_mxn, ptrs_tgt_mx3: ndarray, tracked_ref_nx3: ndarray,
     ############################################################################
     for iteration in range(1, max_iteration):
         # E-step: update posterior probability P_mxn
-        posterior_mxn = estimate_posterior(init_match_mxn, sigma_square, predicted_coord_ref_nx3, ptrs_tgt_mx3, ratio_outliers)
+        posterior_mxn = estimate_posterior(init_match_mxn, sigma_square, predicted_coord_ref_nx3, ptrs_tgt_mx3,
+                                           ratio_outliers)
 
         # M-step: update predicted positions of reference set
         # movements_basis_3xn is the parameter C
-        movements_basis_3xn = solve_movements_ref(sigma_square, lambda_, posterior_mxn, predicted_coord_ref_nx3, ptrs_tgt_mx3, distance_weights_nxn)
+        movements_basis_3xn = solve_movements_ref(sigma_square, lambda_, posterior_mxn, predicted_coord_ref_nx3,
+                                                  ptrs_tgt_mx3, distance_weights_nxn)
         movements_ref_nx3 = np.dot(movements_basis_3xn, distance_weights_nxn).T
         if iteration > 1:
             predicted_coord_ref_nx3 += movements_ref_nx3  # The first estimation is not reliable thus is discarded
@@ -314,11 +321,13 @@ def prgls_with_two_ref(init_match_mxn, ptrs_tgt_mx3: ndarray, prts_ref_nx3: ndar
     ############################################################################
     for iteration in range(1, max_iteration):
         # E-step: update posterior probability P_mxn
-        posterior_mxn = estimate_posterior(init_match_mxn, sigma_square, predicted_coord_ref_nx3, ptrs_tgt_mx3, ratio_outliers)
+        posterior_mxn = estimate_posterior(init_match_mxn, sigma_square, predicted_coord_ref_nx3, ptrs_tgt_mx3,
+                                           ratio_outliers)
 
         # M-step: update predicted positions of reference set
         # movements_basis_3xn is the parameter C
-        movements_basis_3xn = solve_movements_ref(sigma_square, lambda_, posterior_mxn, predicted_coord_ref_nx3, ptrs_tgt_mx3, distance_weights_nxn)
+        movements_basis_3xn = solve_movements_ref(sigma_square, lambda_, posterior_mxn, predicted_coord_ref_nx3,
+                                                  ptrs_tgt_mx3, distance_weights_nxn)
         movements_ref_nx3 = np.dot(movements_basis_3xn, distance_weights_nxn).T
         movements_tracked_lx3 = np.dot(movements_basis_3xn, distance_weights_nxl).T
         if iteration > 1:
@@ -360,7 +369,8 @@ def gaussian_kernel(ptrs_ref_nx3, ptrs_tgt_mx3, sigma_square: float) -> ndarray:
 def estimate_posterior(prior_p_mxn: ndarray, initial_sigma_square: float, predicted_ref_nx3: ndarray,
                        ptrs_tgt_mx3: ndarray, ratio_outliers: float, vol: float = 1) -> ndarray:
     p_pos_j_when_j_match_i_mxn = gaussian_kernel(predicted_ref_nx3, ptrs_tgt_mx3, initial_sigma_square)
-    p_pos_j_and_j_match_i_mxn = (1 - ratio_outliers) * prior_p_mxn * p_pos_j_when_j_match_i_mxn / (2 * np.pi * initial_sigma_square) ** 1.5
+    p_pos_j_and_j_match_i_mxn = (1 - ratio_outliers) * prior_p_mxn * p_pos_j_when_j_match_i_mxn / (
+                2 * np.pi * initial_sigma_square) ** 1.5
     posterior_sum_m = np.sum(p_pos_j_and_j_match_i_mxn, axis=1) + ratio_outliers / vol
     posterior_mxn = p_pos_j_and_j_match_i_mxn / posterior_sum_m[:, None]
     return posterior_mxn
@@ -408,7 +418,8 @@ def evenly_distributed_volumes(current_vol: int, sampling_number: int) -> List[i
     return list(range(start, current_vol - interval + 1, interval))
 
 
-def get_volumes_list(current_vol: int, skip_volumes: List[int], sampling_number: int = 20, adjacent: bool = False) -> List[int]:
+def get_volumes_list(current_vol: int, skip_volumes: List[int], sampling_number: int = 20, adjacent: bool = False) -> \
+List[int]:
     if current_vol - 1 < sampling_number:
         vols_list = list(range(1, current_vol))
     else:
@@ -418,4 +429,3 @@ def get_volumes_list(current_vol: int, skip_volumes: List[int], sampling_number:
             vols_list = evenly_distributed_volumes(current_vol, sampling_number)
     vols_list = [vol for vol in vols_list if vol not in skip_volumes]
     return vols_list
-

@@ -80,7 +80,6 @@ class Coordinates:
 
 
 class CoordsToImageTransformer:
-
     auto_corrected_segmentation: ndarray
     subregions: List[Tuple[Tuple[slice, slice, slice], ndarray]]
     proofed_segmentation: ndarray
@@ -103,11 +102,12 @@ class CoordsToImageTransformer:
             raise FileNotFoundError(f"No image in {manual_vol1_path} was found")
 
         # Load the proofed segmentation and relabel it to sequential integers
-        proofed_segmentation = imread(slice_paths).transpose((1,2,0))
+        proofed_segmentation = imread(slice_paths).transpose((1, 2, 0))
         self.proofed_segmentation, _, _ = relabel_sequential(proofed_segmentation)
 
         # Print a message confirming that the proofed segmentation has been loaded and its shape
-        print(f"Loaded the proofed segmentations at vol 1 with {np.count_nonzero(np.unique(proofed_segmentation))} cells")
+        print(
+            f"Loaded the proofed segmentations at vol 1 with {np.count_nonzero(np.unique(proofed_segmentation))} cells")
 
     def interpolate(self, interpolation_factor: int, smooth_sigma: float = 2.5):
         """
@@ -131,6 +131,7 @@ class CoordsToImageTransformer:
         After interpolation/smoothing, the cell boundaries are reassigned by 2d watershed. Then the interpolated cells
         are re-segmented by 3d connectivity to separate cells incorrectly labelled as the same cell.
         """
+
         def extract_regions(segmentation: ndarray):
             self.subregions = gaussian_interpolation_3d(
                 segmentation, interpolation_factor=interpolation_factor, smooth_sigma=smooth_sigma)
@@ -186,7 +187,8 @@ class CoordsToImageTransformer:
         np.save(str(coords_real_path / "coords0001.npy"), np.asarray(coord_vol1))
 
     def move_cells_in_3d_image(self, movements_nx3: ndarray = None, cells_missed: Set[int] = None):
-        interpolated_labels, cell_overlaps_mask = self.move_cells(movements_nx3=movements_nx3, cells_missed=cells_missed)
+        interpolated_labels, cell_overlaps_mask = self.move_cells(movements_nx3=movements_nx3,
+                                                                  cells_missed=cells_missed)
         return recalculate_cell_boundaries(
             interpolated_labels[:, :, self.z_slice_original_labels],
             cell_overlaps_mask[:, :, self.z_slice_original_labels],
@@ -265,14 +267,15 @@ class CoordsToImageTransformer:
                 (x < boundary_xy) |
                 (y < boundary_xy) |
                 (x > (x_siz - boundary_xy) * self.voxel_size[0]) |
-                (y > (y_siz - boundary_xy) * self.voxel_size[1] ) |
+                (y > (y_siz - boundary_xy) * self.voxel_size[1]) |
                 (z < 0) |
                 (z > z_siz * self.voxel_size[2])
         )
         boundary_ids = np.where(near_boundary)[0] + 1
         return boundary_ids
 
-    def accurate_correction(self, t, grid: Tuple[int, int, int], coords: Coordinates, ensemble: bool, max_repetition: int = 20):
+    def accurate_correction(self, t, grid: Tuple[int, int, int], coords: Coordinates, ensemble: bool,
+                            max_repetition: int = 20):
         """Correct center positions of cells based on the probability map"""
         prob_map = np.load(str(self.results_folder / SEG / ("prob%04d.npy" % t)))
         prob_map = np.repeat(np.repeat(np.repeat(prob_map, grid[1], axis=0), grid[2], axis=1), grid[0], axis=2)
@@ -304,26 +307,31 @@ class CoordsToImageTransformer:
 
         # remove the overlapped regions from each label (marker for watershed)
         labels_image[mask_image > 1] = 0
-        positions_of_new_centers = ndm.center_of_mass(prob_img, labels_image, range(1, self.auto_corrected_segmentation.max() + 1))
+        positions_of_new_centers = ndm.center_of_mass(prob_img, labels_image,
+                                                      range(1, self.auto_corrected_segmentation.max() + 1))
         positions_of_new_centers = np.asarray(positions_of_new_centers)
 
         lost_cells = np.isnan(positions_of_new_centers[:, 0])
         positions_of_new_centers[lost_cells, :] = coords.raw[lost_cells, :]
 
-        corrected_coords = Coordinates(positions_of_new_centers, self.interpolation_factor, self.voxel_size, dtype="raw")
+        corrected_coords = Coordinates(positions_of_new_centers, self.interpolation_factor, self.voxel_size,
+                                       dtype="raw")
         delta_coords = corrected_coords - coords
 
         return corrected_coords, delta_coords
 
-    def save_tracking_results(self, coords: Coordinates, corrected_labels_image: ndarray, tracker, t1: int, t2: int, images_path):
+    def save_tracking_results(self, coords: Coordinates, corrected_labels_image: ndarray, tracker, t1: int, t2: int,
+                              images_path):
         np.save(str(self.results_folder / TRACK_RESULTS / COORDS_REAL / ("coords%04d.npy" % t2)), coords.real)
         save_tracked_labels(self.results_folder, corrected_labels_image, t2, self.use_8_bit)
         self.save_merged_labels(corrected_labels_image, images_path, t2)
 
-        confirmed_coord_t1 = np.load(str(self.results_folder / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(4)}.npy"))
+        confirmed_coord_t1 = np.load(
+            str(self.results_folder / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(4)}.npy"))
         segmented_pos_t2 = tracker._get_segmented_pos(t2)
         fig = plot_prgls_prediction(confirmed_coord_t1, segmented_pos_t2.real, coords.real, t1, t2)
-        fig.savefig(self.results_folder / TRACK_RESULTS / "figure" / f"matching_{str(t2).zfill(4)}.png", facecolor='white')
+        fig.savefig(self.results_folder / TRACK_RESULTS / "figure" / f"matching_{str(t2).zfill(4)}.png",
+                    facecolor='white')
         plt.close()
 
     def save_merged_labels(self, corrected_labels_image, images_path, t):
@@ -347,7 +355,8 @@ class CoordsToImageTransformer:
         (self.results_folder / TRACK_RESULTS / MERGED_LABELS).mkdir(parents=True, exist_ok=True)
         (self.results_folder / TRACK_RESULTS / MERGED_LABELS_XZ).mkdir(parents=True, exist_ok=True)
         merged_labels.save(str(self.results_folder / TRACK_RESULTS / MERGED_LABELS / ("merged_labels_t%04d.png" % t)))
-        merged_labels_xz.save(str(self.results_folder / TRACK_RESULTS / MERGED_LABELS_XZ / ("merged_labels_xz_t%04d.png" % t)))
+        merged_labels_xz.save(
+            str(self.results_folder / TRACK_RESULTS / MERGED_LABELS_XZ / ("merged_labels_xz_t%04d.png" % t)))
 
 
 def save_tracked_labels(results_folder: Path, labels_xyz: ndarray, t: int, use_8_bit: bool):
@@ -385,7 +394,8 @@ def gaussian_interpolation_3d(label_image, interpolation_factor=10, smooth_sigma
                                   sigma=smooth_sigma, mode='constant')
         threshold = np.percentile(img_smooth, percentage * 100)
         interpolated_bbox = (bbox[0], bbox[1],
-                             slice(bbox[2].start * interpolation_factor, bbox[2].stop * interpolation_factor, bbox[2].step))
+                             slice(bbox[2].start * interpolation_factor, bbox[2].stop * interpolation_factor,
+                                   bbox[2].step))
         subregions.append((interpolated_bbox, img_smooth > threshold))
     return subregions
 
@@ -443,12 +453,12 @@ def plot_prgls_prediction(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_pt
     # Plot the matching relationships between the two sets of points
     for ref_ptr, tgt_ptr in zip(ref_ptrs, predicted_ref_ptrs):
         # Get the coordinates of the matched points in the two point sets
-        pt1 = np.asarray([ref_ptr[1], -ref_ptr[ 0]])
+        pt1 = np.asarray([ref_ptr[1], -ref_ptr[0]])
         pt2 = np.asarray([tgt_ptr[1], -tgt_ptr[0]])
 
         # Draw a connection between the matched points in the two subplots using the `ConnectionPatch` class
         con = ConnectionPatch(xyA=pt2, xyB=pt1, coordsA="data", coordsB="data",
-                          axesA=ax2, axesB=ax1, color="C1")
+                              axesA=ax2, axesB=ax1, color="C1")
         ax2.add_artist(con)
 
     return fig
@@ -464,10 +474,10 @@ def plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1: int, t
     top_down = ref_range_x + tgt_range_x >= ref_range_y + tgt_range_y
     # Create the figure and subplots
     if top_down:
-        #print("Using top-down layout")
+        # print("Using top-down layout")
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(fig_width_in, fig_height_in))
     else:
-        #print("Using left-right layout")
+        # print("Using left-right layout")
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(fig_width_in, fig_height_in))
     # Plot the point sets on the respective subplots
     ax1.scatter(ref_ptrs[:, 1], -ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')

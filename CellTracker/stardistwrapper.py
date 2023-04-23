@@ -4,7 +4,6 @@ Author: Chentao Wen
 Modification Description: This module is a wrapper of 3D StarDist modified according to 2_training.ipynb in GitHub StarDist repository
 """
 
-
 from __future__ import print_function, unicode_literals, absolute_import, division
 
 import re
@@ -78,7 +77,7 @@ def predict_and_save(images_path: str, model: StarDist3DCustom, results_folder: 
     largest_number = max(numbers)
 
     # Process images and predict instance coordinates
-    with tqdm(total=largest_number-smallest_number+1, desc="Segmenting images", ncols=50) as pbar:
+    with tqdm(total=largest_number - smallest_number + 1, desc="Segmenting images", ncols=50) as pbar:
         for t in range(smallest_number, largest_number + 1):
             try:
                 # Load 2D slices at time t
@@ -91,7 +90,7 @@ def predict_and_save(images_path: str, model: StarDist3DCustom, results_folder: 
             # Save predicted instance coordinates as numpy arrays
             coords_filepath = str(_seg_path / f"coords{str(t).zfill(4)}.npy")
             prob_filepath = str(_seg_path / f"prob{str(t).zfill(4)}.npy")
-            np.save(coords_filepath, details["points"][:, [1,2,0]])
+            np.save(coords_filepath, details["points"][:, [1, 2, 0]])
             np.save(prob_filepath, prob_map.transpose((1, 2, 0)))
             if t == smallest_number:
                 save_auto_seg_vol1(labels.transpose((1, 2, 0)), results_folder)
@@ -122,7 +121,7 @@ def save_arrays_to_folder(arrays, folder_path):
 
     # Loop over the arrays and save them to the folder with numbered filenames
     for i, arr in enumerate(arrays):
-        filename = f"coords{str(i+1).zfill(4)}.npy"
+        filename = f"coords{str(i + 1).zfill(4)}.npy"
         filepath = path / filename
         np.save(filepath, arr)
 
@@ -132,7 +131,7 @@ def load_training_images(path_train_images: str, path_train_labels: str, max_pro
     X = sorted(glob(path_train_images))
     Y = sorted(glob(path_train_labels))
     assert len(X) > 0 and len(Y) > 0, "Error: No images found in either X or Y."
-    assert all(Path(x).name == Path(y).name for x, y in zip(X,Y)), "Error: Filenames in X and Y do not match."
+    assert all(Path(x).name == Path(y).name for x, y in zip(X, Y)), "Error: Filenames in X and Y do not match."
     X = list(map(imread, X))
     Y = list(map(imread, Y))
     n_channel = 1 if X[0].ndim == 3 else X[0].shape[-1]
@@ -200,12 +199,12 @@ def configure(Y: List[ndarray], n_channel: int, up_limit: int = UP_LIMIT, model_
     if scaling < 1:
         train_patch_size = train_patch_size * scaling
     # 3. can be divided by div_by (related to unet architecture)
-    unet_n_depth = 2 #
+    unet_n_depth = 2  #
     grid_norm = _normalize_grid(grid, 3)
-    unet_pool = 2,2,2
+    unet_pool = 2, 2, 2
     div_by = tuple(p ** unet_n_depth * g for p, g in zip(unet_pool, grid_norm))
     print(f"{div_by=}")
-    train_patch_size = [int(d*(i//d)) for i, d in zip(train_patch_size, div_by)]
+    train_patch_size = [int(d * (i // d)) for i, d in zip(train_patch_size, div_by)]
     # 4. size of x and y should be the same (since augmentation will flip x-y axes)
     train_patch_size[1] = train_patch_size[2] = min(train_patch_size[1:])
 
@@ -251,8 +250,8 @@ def print_dict(my_dict: dict):
 def plot_img_label_center_slice(img, lbl, img_title="image (XY slice)", lbl_title="label (XY slice)", z=None):
     if z is None:
         z = img.shape[0] // 2
-    fig, (ai,al) = plt.subplots(1,2, figsize=(15,7), gridspec_kw=dict(width_ratios=(1.25,1)))
-    im = ai.imshow(img[z], cmap='gray', clim=(0,1))
+    fig, (ai, al) = plt.subplots(1, 2, figsize=(15, 7), gridspec_kw=dict(width_ratios=(1.25, 1)))
+    im = ai.imshow(img[z], cmap='gray', clim=(0, 1))
     ai.set_title(img_title)
     fig.colorbar(im, ax=ai)
     al.imshow(lbl[z], cmap=lbl_cmap)
@@ -265,23 +264,24 @@ def plot_img_label_max_projection(img, lbl, img_title="image (max projection/x-y
     fig_width_in = fig_width_px / dpi  # convert to inches assuming 96 dpi
     fig_height_in = fig_width_in / 1.618  # set height to golden ratio
     # Create a new figure with the calculated size
-    fig, (ai,al) = plt.subplots(1,2, figsize=(fig_width_in, fig_height_in))
+    fig, (ai, al) = plt.subplots(1, 2, figsize=(fig_width_in, fig_height_in))
 
-    ai.imshow(img.max(axis=0), clim=(0,1), vmin=0, vmax=1)
+    ai.imshow(img.max(axis=0), clim=(0, 1), vmin=0, vmax=1)
     ai.set_title(img_title)
     al.imshow(lbl.max(axis=0), cmap=lbl_cmap)
     al.set_title(lbl_title)
     plt.tight_layout()
 
 
-def plot_img_label_max_projection_xz(img, lbl, img_title="image (max projection/x-z)", lbl_title="label (max projection)",
-                                  fig_width_px=1200, dpi=96, scale_z: int = 1):
+def plot_img_label_max_projection_xz(img, lbl, img_title="image (max projection/x-z)",
+                                     lbl_title="label (max projection)",
+                                     fig_width_px=1200, dpi=96, scale_z: int = 1):
     fig_width_in = fig_width_px / dpi  # convert to inches assuming 96 dpi
     fig_height_in = fig_width_in / 1.618  # set height to golden ratio
     # Create a new figure with the calculated size
-    fig, (ai,al) = plt.subplots(1,2, figsize=(fig_width_in, fig_height_in))
+    fig, (ai, al) = plt.subplots(1, 2, figsize=(fig_width_in, fig_height_in))
 
-    ai.imshow(img.max(axis=1), clim=(0,1), vmin=0, vmax=1, aspect=scale_z)
+    ai.imshow(img.max(axis=1), clim=(0, 1), vmin=0, vmax=1, aspect=scale_z)
     ai.set_title(img_title)
     al.imshow(lbl.max(axis=1), cmap=lbl_cmap, aspect=scale_z)
     al.set_title(lbl_title)
@@ -323,4 +323,3 @@ def augmenter(x, y):
     x, y = random_fliprot(x, y, axis=(1, 2))
     x = random_intensity_change(x)
     return x, y
-
