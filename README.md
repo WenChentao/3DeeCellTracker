@@ -41,17 +41,17 @@ To install 3DeeCellTracker, please follow the instructions below:
 To learn how to track cells using 3DeeCellTracker, please refer to the following notebooks for examples. 
 We recommend using StarDist for segmentation, as we have optimized the StarDist-based tracking programs for more convenient and quick cell tracking.
 1. Train a custom deep neural network for segmenting cells in new optical conditions: 
-    - [**Train 3D StarDist (notebook with results)**]()
+    - [**Train 3D StarDist (notebook with results)**](Examples/use_stardist/train_stardist.ipynb)
     - [**Train 3D U-Net (clear notebook)**](Examples/use_unet/3D_U_Net_training-clear.ipynb).
     - [**Train 3D U-Net (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/3D_U_Net_training.html).
  
 2. Track cells in deforming organs: 
-    - [**Single mode + StarDist (notebook with results)**]();
+    - [**Single mode + StarDist (notebook with results)**](Examples/use_stardist/track_worm1_stardist_single_mode.ipynb);
     - [**Single mode + UNet (clear notebook)**](Examples/use_unet/single_mode_worm1-clear.ipynb);
     - [**single mode + UNet (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/single_mode_worm1.html)
 
 3. Track cells in freely moving animals: 
-    - [**Ensemble mode + StarDist (notebook with results)**]();
+    - [**Ensemble mode + StarDist (notebook with results)**](Examples/use_stardist/track_worm4_stardist_ensemble_mode.ipynb);
     - [**Ensemble mode + UNet (clear notebook)**](Examples/use_unet/ensemble_mode_worm4-clear.ipynb)
     - [**Ensemble mode + UNet (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/ensemble_mode_worm4.html)
 
