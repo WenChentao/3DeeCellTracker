@@ -6,7 +6,7 @@ tifffile==2023.2.28
 tqdm==4.64.0
 matplotlib==3.5.1
 scipy==1.8.0
-pillow==9.1.0
+pillow==9.3.0
 scikit-image==0.15.0
 csbdeep==0.7.3
 stardist==0.8.3
