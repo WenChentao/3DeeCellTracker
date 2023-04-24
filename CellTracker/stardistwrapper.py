@@ -29,7 +29,7 @@ from CellTracker.stardist3dcustom import StarDist3DCustom
 STARDIST_MODELS = "stardist_models"
 
 UP_LIMIT = 400000
-matplotlib.rcParams["image.interpolation"] = None
+matplotlib.rcParams["image.interpolation"] = "none"
 
 np.random.seed(42)
 lbl_cmap = random_label_cmap()

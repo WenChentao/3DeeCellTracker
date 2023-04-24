@@ -15,13 +15,14 @@
 - Decouples the code to facilitate reuse by third-party developers.
 
 
-- A computer with an NVIDIA GPU that supports CUDA. We have tested our program on demo data in an NVIDIA GeForce RTX GPU 3080Ti in 
-Ubuntu 20.04.
-
 
 ## Installation
 
 To install 3DeeCellTracker, please follow the instructions below:
+
+> Note: We have tested the installation and the tracking programs in two environments:
+> 1. (Local) Ubuntu 20.04; NVIDIA GeForce RTX 3080Ti; Tensorflow 2.5.0
+> 2. (Google Colab) Tensorflow 2.12.0 (You need to upload your data for tracking)
 
 ### Prerequisites
 - A computer with an NVIDIA GPU that supports CUDA.
