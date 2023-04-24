@@ -5,6 +5,8 @@
 **3DeeCellTracker** is a deep-learning based pipeline for tracking cells in 3D time-lapse images of deforming/moving organs ([eLife, 2021](https://elifesciences.org/articles/59187)).
 
 ## Updates:
+**3DeeCellTracker v0.5.2-alpha has been released**
+- fixed a potential bug related to matplotlib
 
 **3DeeCellTracker v0.5.1-alpha has been released**
 - Updated versions of some packages in requirements.txt and setup.cfg
@@ -42,7 +44,7 @@ To install 3DeeCellTracker, please follow the instructions below:
 3. Install the 3DeeCellTracker package by running the following command in your terminal:
 
    ```console
-   $ pip install 3DeeCellTracker==0.5.1a0
+   $ pip install 3DeeCellTracker==0.5.2a0
    ```
 4. Once the installation is complete, you can start using 3DeeCellTracker for your 3D cell tracking tasks within the Jupyter notebooks provided in the GitHub repository.
 
