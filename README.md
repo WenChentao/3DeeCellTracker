@@ -6,7 +6,10 @@
 
 ## Updates:
 
-**3DeeCellTracker v0.5.0-alpha will be released soon**
+**3DeeCellTracker v0.5.1-alpha has been released**
+- Updated versions of some packages in requirements.txt and setup.cfg
+
+**3DeeCellTracker v0.5.0-alpha has been released**
 - Allows you to use [StarDist3D](https://github.com/stardist/stardist) for segmentation
 - Reduces the requirements for fine-tuning parameters
 - Decouples the code to facilitate reuse by third-party developers.
@@ -16,7 +19,7 @@
 To install 3DeeCellTracker, please follow the instructions below:
 
 ### Prerequisites
-- A computer with an NVIDIA GPU that supports CUDA.
+- A computer with an NVIDIA GPU that supports CUDA. We have tested all examples in a Nvidia Geforce GPU 3090.
 - [Anaconda](https://www.anaconda.com/products/individual) or [Miniconda](https://conda.io/miniconda.html) installed.
 
 ### Steps
@@ -27,10 +30,10 @@ To install 3DeeCellTracker, please follow the instructions below:
    $ conda activate track
    ```
    
-2. Install [TensorFlow](https://www.tensorflow.org/install).
+2. Install [TensorFlow](https://www.tensorflow.org/install). We have tested Tensorflow 2.5.0 in our computer.
 3. Install 3DeeCellTracker by running the following command in your terminal:
    ```console
-   $ pip install 3DeeCellTracker
+   $ pip install 3DeeCellTracker==0.5.0a0
    ```
    After completing the installation steps, you can start using 3DeeCellTracker for your 3D cell tracking tasks within 
    the jupyter notebooks we have provided (See below). 

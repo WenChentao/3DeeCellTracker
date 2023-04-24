@@ -1,3 +1,13 @@
+### 2023.04.24
+3DeeCellTracker v0.5.1-alpha was released with following issues fixed
+- updated versions of some packages in the requirements.txt and setup.cfg
+
+### 2023.04.23
+3DeeCellTracker v0.5.0-alpha was released with following new features
+- Provides a wrapper allows you to use [StarDist3D](https://github.com/stardist/stardist) for segmentation
+- Reduces the requirements for fine-tuning parameters
+- Decouples the code to facilitate reuse by third-party developers.
+
 ### 2021.12.02
 3DeeCellTracker v0.4.1 was released with following issues fixed
 - Solved the bug "the directions of arrows showing the accurate correction are opposite"
