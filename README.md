@@ -2,7 +2,7 @@
 [![PyPI](https://img.shields.io/pypi/v/3DeeCellTracker)](https://pypi.org/project/3DeeCellTracker/) [![PyPI - Downloads](https://img.shields.io/pypi/dm/3DeeCellTracker)](https://pypi.org/project/3DeeCellTracker/) [![GitHub](https://img.shields.io/github/license/WenChentao/3DeeCellTracker)](https://github.com/WenChentao/3DeeCellTracker/blob/master/LICENSE)
 [![Youtube](https://img.shields.io/badge/YouTube-Demo-red)](https://www.youtube.com/watch?v=ctt6o3DY2bA&list=PLGY0oNQomrHERP08iEj-MsluFW8xQJujP)
 
-**3DeeCellTracker** is a deep-learning based pipeline for tracking cells in 3D time lapse images of deforming/moving organs ([eLife, 2021](https://elifesciences.org/articles/59187)).
+**3DeeCellTracker** is a deep-learning based pipeline for tracking cells in 3D time-lapse images of deforming/moving organs ([eLife, 2021](https://elifesciences.org/articles/59187)).
 
 ## Updates:
 
@@ -14,13 +14,19 @@
 - Reduces the requirements for fine-tuning parameters
 - Decouples the code to facilitate reuse by third-party developers.
 
+
+- A computer with an NVIDIA GPU that supports CUDA. We have tested our program on demo data in an NVIDIA GeForce RTX GPU 3080Ti in 
+Ubuntu 20.04.
+
+
 ## Installation
 
 To install 3DeeCellTracker, please follow the instructions below:
 
 ### Prerequisites
-- A computer with an NVIDIA GPU that supports CUDA. We have tested all examples in a Nvidia Geforce GPU 3090.
+- A computer with an NVIDIA GPU that supports CUDA.
 - [Anaconda](https://www.anaconda.com/products/individual) or [Miniconda](https://conda.io/miniconda.html) installed.
+- TensorFlow 2.x installed.
 
 ### Steps
 1. Create a new conda environment and activate it by running the following commands in your terminal:
@@ -29,20 +35,20 @@ To install 3DeeCellTracker, please follow the instructions below:
    $ conda create -n track python=3.8 pip
    $ conda activate track
    ```
-   
-2. Install [TensorFlow](https://www.tensorflow.org/install). We have tested Tensorflow 2.5.0 in our computer.
-3. Install 3DeeCellTracker by running the following command in your terminal:
+
+2. Install TensorFlow 2.x by following the instructions provided in the [TensorFlow installation guide](https://www.tensorflow.org/install).
+
+3. Install the 3DeeCellTracker package by running the following command in your terminal:
+
    ```console
-   $ pip install 3DeeCellTracker==0.5.0a0
+   $ pip install 3DeeCellTracker==0.5.1a0
    ```
-   After completing the installation steps, you can start using 3DeeCellTracker for your 3D cell tracking tasks within 
-   the jupyter notebooks we have provided (See below). 
-   If you encounter any issues or have any questions, please refer to the project's documentation 
-   or raise an issue in the GitHub repository.
+4. Once the installation is complete, you can start using 3DeeCellTracker for your 3D cell tracking tasks within the Jupyter notebooks provided in the GitHub repository.
+
+If you encounter any issues or have any questions, please refer to the project's documentation or raise an issue in the GitHub repository.
 
 ## Quick Start
-To learn how to track cells using 3DeeCellTracker, please refer to the following notebooks for examples. 
-We recommend using StarDist for segmentation, as we have optimized the StarDist-based tracking programs for more convenient and quick cell tracking.
+To learn how to track cells using 3DeeCellTracker, please refer to the following notebooks for examples. We recommend using StarDist for segmentation, as we have optimized the StarDist-based tracking programs for more convenient and quick cell tracking. Users can also use the old way with 3D U-Net.
 1. Train a custom deep neural network for segmenting cells in new optical conditions: 
     - [**Train 3D StarDist (notebook with results)**](Examples/use_stardist/train_stardist.ipynb)
     - [**Train 3D U-Net (clear notebook)**](Examples/use_unet/3D_U_Net_training-clear.ipynb).
@@ -60,12 +66,9 @@ We recommend using StarDist for segmentation, as we have optimized the StarDist-
 
    
 The data and model files for demonstrating above notebooks can be downloaded here: 
-- [**StarDist-based notebooks**](https://osf.io/pgr95/).
-- [**UNet-based notebooks**](https://osf.io/dt76c/).
+- [**Data for StarDist-based notebooks**](https://osf.io/pgr95/).
+- [**Data for UNet-based notebooks**](https://osf.io/dt76c/).
 
-
-**Note**: Codes above were based on the latest version. 
-For old programs used in eLife 2021, please check the "[**Deprecated_programs**](Deprecated_programs)" folder.
 
 ## Frequently Reported Issue and Solution (for v0.4)
 
@@ -90,6 +93,7 @@ We have written a tutorial explaining how to install and use 3DeeCellTracker. Se
 
 ## How it works
 We designed this pipeline for segmenting and tracking cells in 3D + T images in deforming organs. The methods have been explained in [Wen et al. bioRxiv 2018]( https://doi.org/10.1101/385567) and in [Wen et al. eLife, 2021](https://elifesciences.org/articles/59187).
+The original programs used in eLife 2021 was contained in the "[**Deprecated_programs**](Deprecated_programs)" folder.
 
 **Overall procedures of our method** ([Wen et al. eLife, 2021–Figure 1](https://elifesciences.org/articles/59187/figures#content))
 
@@ -104,19 +108,17 @@ We designed this pipeline for segmenting and tracking cells in 3D + T images in 
 
 ## Citation
 
-If you used this package in your research and is interested in citing it here's how you do it:
+If you used this package in your research, please cite our paper:
 
-```
-@article{
-author = {Wen, Chentao and Miura, Takuya and Voleti, Venkatakaushik and Yamaguchi, Kazushi and Tsutsumi, Motosuke and Yamamoto, Kei and Otomo, Kohei and Fujie, Yukako and Teramoto, Takayuki and Ishihara, Takeshi and Aoki, Kazuhiro and Nemoto, Tomomi and Hillman, Elizabeth MC and Kimura, Koutarou D},
-doi = {10.7554/eLife.59187},
-journal = {eLife},
-month = {mar},
-title = {{3DeeCellTracker, a deep learning-based pipeline for segmenting and tracking cells in 3D time lapse images}},
-volume = {10},
-year = {2021}
-}
-```
+- Chentao Wen, Takuya Miura, Venkatakaushik Voleti, Kazushi Yamaguchi, Motosuke Tsutsumi, Kei Yamamoto, Kohei Otomo, Yukako Fujie, Takayuki Teramoto, Takeshi Ishihara, Kazuhiro Aoki, Tomomi Nemoto, Elizabeth MC Hillman, Koutarou D Kimura (2021) 3DeeCellTracker, a deep learning-based pipeline for segmenting and tracking cells in 3D time lapse images eLife 10:e59187
+
+Depending on the segmentation method you used (StarDist3D or U-Net3D), you may also cite either of 
+following papers:
+- Martin Weigert, Uwe Schmidt, Robert Haase, Ko Sugawara, and Gene Myers.
+Star-convex Polyhedra for 3D Object Detection and Segmentation in Microscopy.
+The IEEE Winter Conference on Applications of Computer Vision (WACV), Snowmass Village, Colorado, March 2020
+
+- Çiçek, Ö., Abdulkadir, A., Lienkamp, S.S., Brox, T., Ronneberger, O. (2016). 3D U-Net: Learning Dense Volumetric Segmentation from Sparse Annotation. In: Ourselin, S., Joskowicz, L., Sabuncu, M., Unal, G., Wells, W. (eds) Medical Image Computing and Computer-Assisted Intervention – MICCAI 2016. MICCAI 2016. Lecture Notes in Computer Science(), vol 9901. Springer, Cham.
 
 ## Acknowledgements
 We wish to thank **JetBrains** for supporting this project 
