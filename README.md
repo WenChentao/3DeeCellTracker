@@ -68,8 +68,9 @@ To learn how to track cells using 3DeeCellTracker, please refer to the following
     - [**Ensemble mode + UNet (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/ensemble_mode_worm4.html)
 
 4. (Optional) Train FFN with custom data:
-    - [**Train FFN with coordinates in a .csv file (notebook with results)**](Examples/use_stardist/train_ffn_with_coordinates_csv.ipynb)
-   
+    - [**Use coordinates in a .csv file (notebook with results)**](Examples/use_stardist/train_ffn_with_coordinates_csv.ipynb)
+    - [**Use manually corrected segmentation saved as label images (notebook with results)**](Examples/use_stardist/train_ffn_with_label_image.ipynb)
+
 The data and model files for demonstrating above notebooks can be downloaded here: 
 - [**Data for StarDist-based notebooks**](https://osf.io/pgr95/).
 - [**Data for UNet-based notebooks**](https://osf.io/dt76c/).
