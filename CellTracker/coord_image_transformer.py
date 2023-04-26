@@ -446,7 +446,24 @@ class CoordsToImageTransformer:
 
     def _correction_once(self, prob_img: ndarray, coords: Coordinates, boundary_ids: Set[int]):
         """
-        Correct the tracking for once
+        Perform one correction iteration on the coordinates based on the probability image and the
+        provided coordinates.
+
+        Parameters
+        ----------
+        prob_img : ndarray
+            The probability image as a 3D array.
+        coords : Coordinates
+            The Coordinates object containing the original 3D cell coordinates.
+        boundary_ids : Set[int]
+            A set of integers representing the IDs of cells on the boundary.
+
+        Returns
+        -------
+        corrected_coords : Coordinates
+            The corrected 3D cell coordinates after applying the correction.
+        delta_coords : Coordinates
+            The difference in 3D cell coordinates between the corrected and original coordinates.
         """
         # generate labels image after applying the movements
         displacements_from_vol1 = coords - self.coord_vol1
