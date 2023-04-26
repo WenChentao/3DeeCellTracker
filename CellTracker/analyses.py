@@ -1,7 +1,5 @@
 """
-A module for analyses after tracking
-Author: Chentao Wen
-
+This module provides tools for analyzing the activities from the tracked cells
 """
 
 import numpy as np

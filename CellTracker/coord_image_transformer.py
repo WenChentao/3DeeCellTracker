@@ -1,39 +1,48 @@
-import os
 from glob import glob
 from pathlib import Path
 from typing import Tuple, List, Set
 
 import numpy as np
+import scipy.ndimage.measurements as ndm
+import skimage.filters as skf
+import skimage.measure as skm
 from PIL import Image
 from matplotlib import pyplot as plt
 from matplotlib.patches import ConnectionPatch
 from numpy import ndarray
-import skimage.filters as skf
 from skimage.segmentation import relabel_sequential
-import skimage.measure as skm
-import scipy.ndimage.measurements as ndm
 from tifffile import imread
 
 from CellTracker.stardistwrapper import lbl_cmap, load_2d_slices_at_time
 from CellTracker.watershed import recalculate_cell_boundaries
 
-TRACK_RESULTS_ENSEMBLE = "track_results_ensemble"
-
 MERGED_LABELS_XZ = "merged_labels_xz"
-
 MERGED_LABELS = "merged_labels"
-
 SEG = "seg"
-
 COORDS_REAL = "coords_real"
-
 LABELS = "labels"
-
 TRACK_RESULTS = "track_results"
 
 
 class Coordinates:
-    def __init__(self, coords: np.ndarray, interpolation_factor: int, voxel_size: ndarray, dtype: str = "raw"):
+    """
+        A class to represent 3D coordinates and perform transformations between different coordinate systems.
+
+        Attributes:
+            interpolation_factor (int): The interpolation factor for the z-coordinate.
+            voxel_size (np.ndarray): A 1D numpy array with the voxel size in each dimension (x, y, z).
+    """
+
+    def __init__(self, coords: ndarray, interpolation_factor: int, voxel_size: ndarray, dtype: str = "raw"):
+        """
+        Initialize the Coordinates object with given parameters.
+
+        Args:
+            coords (np.ndarray): A 2D numpy array with shape (n, 3) representing n coordinates in 3D space.
+            interpolation_factor (int): The interpolation factor for the z-coordinate.
+            voxel_size (np.ndarray): A 1D numpy array with the voxel size in each dimension (x, y, z).
+            dtype (str, optional): The type of coordinates provided. Can be "raw", "real", or "interp". Defaults to "raw".
+        """
         self.interpolation_factor = interpolation_factor
         self.voxel_size = np.asarray(voxel_size)
         if dtype == "raw":
@@ -46,24 +55,63 @@ class Coordinates:
             ).astype(np.float32)
 
     def __add__(self, other: 'Coordinates') -> 'Coordinates':
+        """
+        Add two Coordinates objects.
+
+        Args:
+            other (Coordinates): Another Coordinates object.
+
+        Returns:
+            Coordinates: A new Coordinates object representing the addition of the two input Coordinates objects.
+        """
         return Coordinates(self._raw + other._raw, self.interpolation_factor, self.voxel_size, 'raw')
 
     def __sub__(self, other: 'Coordinates') -> 'Coordinates':
+        """
+        Subtract one Coordinates object from another.
+
+        Args:
+            other (Coordinates): Another Coordinates object.
+
+        Returns:
+            Coordinates: A new Coordinates object representing the difference between the two input Coordinates objects.
+        """
         return Coordinates(self._raw - other._raw, self.interpolation_factor, self.voxel_size, 'raw')
 
     @staticmethod
-    def _transform_z(coords_nx3: np.ndarray, factor_x3: ndarray) -> np.ndarray:
-        """Transform the z-coordinate by scaling with factor"""
+    def _transform_z(coords_nx3: ndarray, factor_x3: ndarray) -> np.ndarray:
+        """
+        Transform the z-coordinate by scaling with factor.
+
+        Args:
+            coords_nx3 (np.ndarray): A 2D numpy array with shape (n, 3) representing n coordinates in 3D space.
+            factor_x3 (np.ndarray): A 1D numpy array with scaling factors for each dimension (x, y, z).
+
+        Returns:
+            np.ndarray: A 2D numpy array with the transformed coordinates.
+        """
         new_coords = coords_nx3.copy()
         new_coords = new_coords * factor_x3[None, :]
         return new_coords
 
     @property
     def real(self) -> np.ndarray:
+        """
+        Convert raw coordinates to real coordinates.
+
+        Returns:
+            np.ndarray: A 2D numpy array with the real coordinates.
+        """
         return self._transform_z(self._raw, self.voxel_size)
 
     @property
     def interp(self) -> np.ndarray:
+        """
+        Convert raw coordinates to interpolated coordinates.
+
+        Returns:
+            np.ndarray: A 2D numpy array    with the interpolated coordinates.
+        """
         return np.round(
             self._transform_z(
                 self._raw, np.asarray((1, 1, self.interpolation_factor))
@@ -72,14 +120,29 @@ class Coordinates:
 
     @property
     def raw(self):
+        """
+        Convert the internal raw coordinates to integer values.
+
+        Returns:
+            np.ndarray: A 2D numpy array with the raw coordinates as integers.
+        """
         return np.round(self._raw).astype(np.int32)
 
     @property
     def cell_num(self) -> int:
+        """
+        Get the number of cells (coordinates) in the Coordinates object.
+
+        Returns:
+            int: The number of cells (coordinates) in the Coordinates object.
+        """
         return self._raw.shape[0]
 
 
 class CoordsToImageTransformer:
+    """
+    A class to transform cell coordinates into an image with the cells represented as labeled regions.
+    """
     auto_corrected_segmentation: ndarray
     subregions: List[Tuple[Tuple[slice, slice, slice], ndarray]]
     proofed_segmentation: ndarray
@@ -88,12 +151,27 @@ class CoordsToImageTransformer:
     use_8_bit: bool
 
     def __init__(self, results_folder: str, voxel_size: tuple):
+        """
+        Initialize the CoordsToImageTransformer with a specified results folder and voxel size.
+
+        Parameters
+        ----------
+        results_folder : str
+            Path to the folder where the results will be saved.
+        voxel_size : tuple
+            Voxel size in the format (x, y, z).
+        """
         self.voxel_size = np.asarray(voxel_size)
         self.results_folder = Path(results_folder)
 
-    def load_segmentation(self, manual_vol1_path: str):
+    def load_segmentation(self, manual_vol1_path: str) -> None:
         """
         Load the proofed segmentation from a directory containing image slices.
+
+        Parameters
+        ----------
+        manual_vol1_path : str
+            The path to the image slices of the manually corrected segmentation.
         """
         # Get list of paths to image slices
         slice_paths = sorted(glob(manual_vol1_path))
@@ -109,7 +187,7 @@ class CoordsToImageTransformer:
         print(
             f"Loaded the proofed segmentations at vol 1 with {np.count_nonzero(np.unique(proofed_segmentation))} cells")
 
-    def interpolate(self, interpolation_factor: int, smooth_sigma: float = 2.5):
+    def interpolate(self, interpolation_factor: int, smooth_sigma: float = 2.5) -> None:
         """
         Interpolate the images along z axis and save the results in "track_results_xxx" folder
 
@@ -187,6 +265,21 @@ class CoordsToImageTransformer:
         np.save(str(coords_real_path / "coords0001.npy"), np.asarray(coord_vol1))
 
     def move_cells_in_3d_image(self, movements_nx3: ndarray = None, cells_missed: Set[int] = None):
+        """
+        Move cells in the 3D image according to the provided movements_nx3 and recalculate cell boundaries.
+
+        Parameters
+        ----------
+        movements_nx3 : Optional[ndarray], default=None
+            A 2D NumPy array of size n x 3, containing the movements for each cell. If not provided, no movements will be applied.
+        cells_missed : Optional[Set[int]], default=None
+            A set of cell indices that were missed during the tracking process. If not provided, all cells are assumed to be tracked.
+
+        Returns
+        -------
+        output : ndarray
+            The new image with moved cells and recalculated cell boundaries.
+        """
         interpolated_labels, cell_overlaps_mask = self.move_cells(movements_nx3=movements_nx3,
                                                                   cells_missed=cells_missed)
         return recalculate_cell_boundaries(
@@ -196,26 +289,43 @@ class CoordsToImageTransformer:
 
     def move_cells(self, movements_nx3: ndarray = None, cells_missed: Set[int] = None):
         """
-        Generate an image with labels indicating the moved cells.
+        Generate an image with labels indicating the moved cells and a mask image indicating the overlapping regions
 
         Parameters
         ----------
-        cells_missed
-        movements_nx3 :
-            Movements of each cell
+        movements_nx3 : ndarray, optional
+            Movements of each cell, by default None.
+        cells_missed : Set[int], optional
+            A set of cell indices that were missed during the tracking process, by default None.
 
         Returns
         -------
         output : numpy.ndarray
-            The new image with moved cells
+            The new image with moved cells.
         mask : numpy.ndarray
-            The new image with the
+            The new image with the overlapping regions.
         """
 
         def add_bbox_with_movements(bbox: Tuple[slice, slice, slice], movements: ndarray, image_shape: tuple):
             """
             Add movements to the start and stop indices of the given slices and return the updated slices
             and the partial slices indicating how to clip the bbox when the target is out of range.
+
+            Parameters
+            ----------
+            bbox : Tuple[slice, slice, slice]
+                A tuple of slices representing the bounding box.
+            movements : ndarray
+                A 1x3 NumPy array representing the movements to apply to the bounding box.
+            image_shape : tuple
+                A tuple of integers representing the shape of the 3D image.
+
+            Returns
+            -------
+            new_bbox : Tuple[slice, slice, slice]
+                The updated bounding box with applied movements.
+            partial_bbox : Tuple[slice, slice, slice]
+                The partial slices indicating how to clip the bounding box when the target is out of range.
             """
             if len(bbox) != 3 or len(movements) != 3 or len(image_shape) != 3:
                 raise ValueError("bbox, movements_1x3 and image_shape must be (3,) shape")
@@ -257,6 +367,23 @@ class CoordsToImageTransformer:
         return output_img, mask
 
     def get_cells_on_boundary(self, coordinates_real_nx3: ndarray, ensemble: bool, boundary_xy: int = 6):
+        """
+        Get the indices of cells that are on the boundary of the image.
+
+        Parameters
+        ----------
+        coordinates_real_nx3 : ndarray
+            A 2D NumPy array of size n x 3 containing the real coordinates of the cells.
+        ensemble : bool
+            If True, the boundary_xy is ignored.
+        boundary_xy : int, default=6
+            Used to further reduce the size of the image boundary in the xy plane. Ignored if ensemble is True.
+
+        Returns
+        -------
+        boundary_ids : ndarray
+            A 1D NumPy array containing the indices of cells that are on the boundary.
+        """
         if ensemble:
             boundary_xy = 0
 
@@ -274,9 +401,31 @@ class CoordsToImageTransformer:
         boundary_ids = np.where(near_boundary)[0] + 1
         return boundary_ids
 
-    def accurate_correction(self, t, grid: Tuple[int, int, int], coords: Coordinates, ensemble: bool,
+    def accurate_correction(self, t: int, grid: Tuple[int, int, int], coords: Coordinates, ensemble: bool,
                             max_repetition: int = 20):
-        """Correct center positions of cells based on the probability map"""
+        """
+        Correct center positions of cells based on the probability map.
+
+        Parameters
+        ----------
+        t : int
+            The time point at which the correction is performed.
+        grid : Tuple[int, int, int]
+            A tuple representing the grid used in generating the probability map
+        coords : Coordinates
+            The coordinates of cell centers.
+        ensemble : bool
+            A boolean indicating whether the tracking is based on ensemble mode
+        max_repetition : int, optional
+            The maximum number of repetitions for the correction process, by default 20.
+
+        Returns
+        -------
+        coords : Coordinates
+            The corrected coordinates of cell centers.
+        corrected_labels_image : ndarray
+            The corrected labels image.
+        """
         prob_map = np.load(str(self.results_folder / SEG / ("prob%04d.npy" % t)))
         prob_map = np.repeat(np.repeat(np.repeat(prob_map, grid[1], axis=0), grid[2], axis=1), grid[0], axis=2)
         if prob_map.shape != self.proofed_segmentation.shape:
@@ -321,7 +470,26 @@ class CoordsToImageTransformer:
         return corrected_coords, delta_coords
 
     def save_tracking_results(self, coords: Coordinates, corrected_labels_image: ndarray, tracker, t1: int, t2: int,
-                              images_path):
+                              images_path: str):
+        """
+        Save the tracking results, including coordinates, corrected labels image, and a visualization of the matching
+        process.
+
+        Parameters
+        ----------
+        coords : Coordinates
+            The corrected coordinates of cell centers.
+        corrected_labels_image : ndarray
+            The corrected labels image.
+        tracker : TrackerLite
+            The tracker object responsible for tracking cells.
+        t1 : int
+            The first time point.
+        t2 : int
+            The second time point.
+        images_path : str
+            The path to the directory containing the raw images.
+        """
         np.save(str(self.results_folder / TRACK_RESULTS / COORDS_REAL / ("coords%04d.npy" % t2)), coords.real)
         save_tracked_labels(self.results_folder, corrected_labels_image, t2, self.use_8_bit)
         self.save_merged_labels(corrected_labels_image, images_path, t2)
@@ -334,7 +502,19 @@ class CoordsToImageTransformer:
                     facecolor='white')
         plt.close()
 
-    def save_merged_labels(self, corrected_labels_image, images_path, t):
+    def save_merged_labels(self, corrected_labels_image: ndarray, images_path: str, t: int):
+        """
+        Save the merged labels, which is an overlay of the labels and raw images.
+
+        Parameters
+        ----------
+        corrected_labels_image : ndarray
+            The corrected labels image.
+        images_path : str
+            The path to the directory containing the raw images.
+        t : int
+            The time point at which the merged labels are saved.
+        """
         labels_rgb = lbl_cmap.colors[corrected_labels_image.max(axis=2)]
         labels_rgb = Image.fromarray((labels_rgb * 255).astype(np.uint8))
 
@@ -360,6 +540,20 @@ class CoordsToImageTransformer:
 
 
 def save_tracked_labels(results_folder: Path, labels_xyz: ndarray, t: int, use_8_bit: bool):
+    """
+    Save tracked label images to the specified folder.
+
+    Parameters
+    ----------
+    results_folder : Path
+        The path to the folder where the tracked labels will be saved.
+    labels_xyz : ndarray
+        A 3D NumPy array containing the label images.
+    t : int
+        The time step of the tracked labels.
+    use_8_bit : bool
+        If True, the images will be saved as 8-bit images; otherwise, as 16-bit images.
+    """
     tracked_labels_path = results_folder / TRACK_RESULTS / LABELS
     tracked_labels_path.mkdir(parents=True, exist_ok=True)
     dtype = np.uint8 if use_8_bit else np.uint16
@@ -371,16 +565,22 @@ def save_tracked_labels(results_folder: Path, labels_xyz: ndarray, t: int, use_8
 def gaussian_interpolation_3d(label_image, interpolation_factor=10, smooth_sigma=5) -> \
         List[Tuple[Tuple[slice, slice, slice], ndarray]]:
     """
-    Generate smoothed label image of cells
+    Generate interpolated/smoothed cell regions.
 
     Parameters
     ----------
-    label_image : numpy.ndarray
-        Label image
-    interpolation_factor : int
-        Factor of interpolations along z axis, should be < 10
-    smooth_sigma : float
-        sigma used for making Gaussian blur
+    label_image : ndarray
+        A 3D NumPy array containing the label image.
+    interpolation_factor : int, default=10
+        The factor of interpolations along the z-axis.
+    smooth_sigma : float, default=5
+        The sigma used for Gaussian blur.
+
+    Returns
+    -------
+    subregions : List[Tuple[Tuple[slice, slice, slice], ndarray]]
+        A list of tuples, where each tuple contains a tuple of slices (representing the bounding box)
+        and a NumPy array of the smoothed label image for the corresponding cell.
     """
     bboxes: List[Tuple[slice, slice, slice]] = ndm.find_objects(label_image)
     subregions = []
@@ -402,17 +602,19 @@ def gaussian_interpolation_3d(label_image, interpolation_factor=10, smooth_sigma
 
 def fix_labeling_errors(segmentation: np.ndarray) -> Tuple[np.ndarray, bool]:
     """
-    Relabel the separate cells that were incorrectly labeled as the same one
+    Relabel the separated cells that were incorrectly labeled as the same one.
 
     Parameters
     ----------
-    segmentation :
-        the input label image with separated cells that were labeled as the same one
+    segmentation : ndarray
+        A 3D NumPy array containing the input label image with separated cells that were labeled as the same one.
 
     Returns
     -------
-    new_segmentation :
-        the corrected label image
+    new_segmentation : ndarray
+        A 3D NumPy array containing the corrected label image.
+    was_corrected : bool
+        True if the segmentation was corrected; False otherwise.
     """
     num_cells = np.size(np.unique(segmentation)) - 1
     new_segmentation = skm.label(segmentation, connectivity=3)
@@ -426,19 +628,31 @@ def fix_labeling_errors(segmentation: np.ndarray) -> Tuple[np.ndarray, bool]:
 
 def plot_prgls_prediction(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray, t1: int, t2: int,
                           fig_width_px=1200, dpi=96):
-    """Draws the initial matching between two sets of 3D points and their matching relationships.
-
-    Args:
-        ref_ptrs (ndarray): A 2D array of shape (n, 3) containing the positions of reference points.
-        tgt_ptrs (ndarray): A 2D array of shape (n, 3) containing the positions of target points.
-        predicted_ref_ptrs (ndarray): A 2D array of shape (n, 3) containing the predicted positions of reference points
-        fig_width_px (int): The width of the output figure in pixels. Default is 1200.
-        dpi (int): The resolution of the output figure in dots per inch. Default is 96.
-
-    Raises:
-        AssertionError: If the inputs have invalid shapes or data types.
     """
+    Draws the initial matching between two sets of 3D points and their matching relationships.
 
+    Parameters
+    ----------
+    ref_ptrs : ndarray
+        A 2D array of shape (n, 3) containing the positions of reference points.
+    tgt_ptrs : ndarray
+        A 2D array of shape (n, 3) containing the positions of target points.
+    predicted_ref_ptrs : ndarray
+        A 2D array of shape (n, 3) containing the predicted positions of reference points.
+    t1 : int
+        The time step of the reference points.
+    t2 : int
+        The time step of the target points.
+    fig_width_px : int, optional
+        The width of the output figure in pixels. Default is 1200.
+    dpi : int, optional
+        The resolution of the output figure in dots per inch. Default is 96.
+
+    Raises
+    ------
+    AssertionError
+        If the inputs have invalid shapes or data types.
+    """
     # Validate the inputs
     assert isinstance(ref_ptrs, ndarray) and ref_ptrs.ndim == 2 and ref_ptrs.shape[
         1] == 3, "ref_ptrs should be a 2D array with shape (n, 3)"
@@ -464,7 +678,34 @@ def plot_prgls_prediction(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_pt
     return fig
 
 
-def plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1: int, t2: int):
+def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarray, tgt_ptrs: ndarray, t1: int, t2: int):
+    """
+    Creates a figure with two subplots showing two sets of 3D points.
+
+    Parameters
+    ----------
+    dpi : float
+        The resolution of the output figure in dots per inch.
+    fig_width_px : float
+        The width of the output figure in pixels.
+    ref_ptrs : ndarray
+        A 2D array of shape (n, 3) containing the positions of reference points.
+    tgt_ptrs : ndarray
+        A 2D array of shape (n, 3) containing the positions of target points.
+    t1 : int
+        The time step of the reference points.
+    t2 : int
+        The time step of the target points.
+
+    Returns
+    -------
+    ax1 : matplotlib.axes.Axes
+        The first Axes object of the subplots.
+    ax2 : matplotlib.axes.Axes
+        The second Axes object of the subplots.
+    fig : matplotlib.figure.Figure
+        The Figure object containing the two subplots.
+    """
     # Calculate the figure size based on the input width and dpi
     fig_width_in = fig_width_px / dpi  # convert to inches assuming the given dpi
     fig_height_in = fig_width_in / 1.618  # set height to golden ratio
@@ -496,6 +737,16 @@ def plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1: int, t
 
 
 def unify_xy_lims(ax1, ax2):
+    """
+    Set the x and y limits of two matplotlib axes to be the same.
+
+    Parameters
+    ----------
+    ax1 : matplotlib.axes.Axes
+        The first Axes object.
+    ax2 : matplotlib.axes.Axes
+        The second Axes object.
+    """
     # Determine the shared x_lim and y_lim
     x_lim = [min(ax1.get_xlim()[0], ax2.get_xlim()[0]), max(ax1.get_xlim()[1], ax2.get_xlim()[1])]
     y_lim = [min(ax1.get_ylim()[0], ax2.get_ylim()[0]), max(ax1.get_ylim()[1], ax2.get_ylim()[1])]
