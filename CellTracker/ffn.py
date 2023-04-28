@@ -1,4 +1,3 @@
-import os
 from glob import glob
 from pathlib import Path
 from typing import Tuple, Generator, Union
@@ -9,7 +8,7 @@ from numpy import ndarray
 from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 from tensorflow.keras import Model
-from tensorflow.keras.layers import Input, Dense, BatchNormalization, LeakyReLU, Concatenate
+from tensorflow.keras.layers import Dense, BatchNormalization, LeakyReLU, Concatenate
 from tifffile import imread
 from tqdm import tqdm
 
@@ -23,18 +22,31 @@ k_ptrs = 20  # number of neighbors for calculating relative coordinates
 # parameters for generating data and for training
 affine_level = 0.2
 random_movement_level = 0.001
-epochs = 30
-steps_per_epoch = 60
 batch_size = 128
 NUMBER_FEATURES = 61
 
 
 def affine_transform(points: ndarray, affine_level: float, rand_move_level: float) -> ndarray:
-    """generate affine transformed points
+    """
+    Generate affine transformed points.
 
     Notes
     -----
-    points should have been normalized to have average of 0
+    Points should have been normalized to have an average of 0.
+
+    Parameters
+    ----------
+    points : ndarray
+        A 2D array of shape (n, 3) containing the 3D coordinates of the points.
+    affine_level : float
+        The level of the affine transformation to be applied.
+    rand_move_level : float
+        The level of the random movement to be applied.
+
+    Returns
+    -------
+    ndarray
+        A 2D array of shape (n, 3) containing the affine transformed points.
     """
     random_transform = (np.random.rand(3, 3) - 0.5) * affine_level
     random_movements = (np.random.rand(*points.shape) - 0.5) * 4 * rand_move_level
@@ -42,13 +54,75 @@ def affine_transform(points: ndarray, affine_level: float, rand_move_level: floa
     return ptrs_affine
 
 
-class DataGeneratorFFN:
+def features_of_points_ffn_quick(points_nx3: ndarray, points_tgt_nx3: ndarray, k_neighbors: int, number_features: int,
+                             knn_model) -> ndarray:
+    """
+    Compute the features of the input points as inputs for the feed-forward neural network (FFN).
 
+    Parameters
+    ----------
+    points_nx3 : ndarray
+        A 2D array of shape (n, 3) containing the 3D coordinates of the reference points.
+    points_tgt_nx3 : ndarray
+        A 2D array of shape (n, 3) containing the 3D coordinates of the target points.
+    k_neighbors : int
+        The number of nearest neighbors to be considered for each point.
+    number_features : int
+        The number of features to be extracted from the points.
+    knn_model : KNN model
+        A pre-fitted KNN model used for computing the nearest neighbors.
+
+    Returns
+    -------
+    ndarray
+        A 2D array of shape (n, number_features) containing the extracted features.
+    """
+    distances_nxk, neighbors_indexes_nxk = knn_model.kneighbors(points_tgt_nx3)
+    dist_mean_nx1x1 = np.mean(distances_nxk, axis=1)[:, None, None]
+    neighbor_points_nxkx3 = points_nx3[neighbors_indexes_nxk[:, 1:k_neighbors + 1], :]
+    coordinates_relative_nxkx3 = (neighbor_points_nxkx3 - points_tgt_nx3[:, None, :]) / dist_mean_nx1x1
+
+    x_nxf = np.zeros((points_nx3.shape[0], number_features))
+    x_nxf[:, 0:k_neighbors * 3] = coordinates_relative_nxkx3.reshape((-1, k_neighbors * 3))
+    x_nxf[:, k_neighbors * 3] = dist_mean_nx1x1[:, 0, 0]
+    return x_nxf
+
+
+class DataGeneratorFFN:
+    """
+    A data generator class for the feed-forward neural network (FFN) model.
+
+    Attributes
+    ----------
+    train_data_gen : generator
+        A generator that yields training data batches.
+    """
     def __init__(self, points_normalized_nx3: ndarray):
+        """
+        Initialize the DataGeneratorFFN class.
+
+        Parameters
+        ----------
+        points_normalized_nx3 : ndarray
+            A 2D array of shape (n, 3), containing the 3D coordinates of the normalized points.
+        """
         self.train_data_gen = self.generator_train_data(points_normalized_nx3)
 
     @staticmethod
     def generator_train_data(points_nx3: ndarray) -> Generator:
+        """
+        Generate training data batches.
+
+        Parameters
+        ----------
+        points_nx3 : ndarray
+            A 2D array of shape (n, 3) containing the 3D coordinates of the points.
+
+        Returns
+        -------
+        Generator
+            A generator that yields training data batches.
+        """
         n = points_nx3.shape[0]
         num_sets = 20
         sample_num_one_set = n * 2
@@ -69,19 +143,6 @@ class DataGeneratorFFN:
             for i in range(sample_num // batch_size):
                 yield x_mxf[random_indexes[i * batch_size:(i + 1) * batch_size], :], \
                       y_mx1[random_indexes[i * batch_size:(i + 1) * batch_size], :]
-
-
-def features_of_points_ffn_quick(points_nx3: ndarray, points_tgt_nx3: ndarray, k_neighbors: int, number_features: int,
-                             knn_model) -> ndarray:
-    distances_nxk, neighbors_indexes_nxk = knn_model.kneighbors(points_tgt_nx3)
-    dist_mean_nx1x1 = np.mean(distances_nxk, axis=1)[:, None, None]
-    neighbor_points_nxkx3 = points_nx3[neighbors_indexes_nxk[:, 1:k_neighbors + 1], :]
-    coordinates_relative_nxkx3 = (neighbor_points_nxkx3 - points_tgt_nx3[:, None, :]) / dist_mean_nx1x1
-
-    x_nxf = np.zeros((points_nx3.shape[0], number_features))
-    x_nxf[:, 0:k_neighbors * 3] = coordinates_relative_nxkx3.reshape((-1, k_neighbors * 3))
-    x_nxf[:, k_neighbors * 3] = dist_mean_nx1x1[:, 0, 0]
-    return x_nxf
 
 
 class TrainFFN:
@@ -162,6 +223,14 @@ class TrainFFN:
 
 
 class FFN(Model):
+    """
+    A feedforward neural network (FFN) model class, inheriting from TensorFlow's Model class.
+
+    This class defines a custom architecture for a feedforward neural network that is
+    designed to process input data, combine features, and produce a prediction using a sigmoid
+    activation function.
+    """
+
     def __init__(self):
         super().__init__()
         self.feat_layer1 = self._build_feat_layer1()
@@ -259,6 +328,30 @@ def initial_matching_ffn(ffn_model, ref: ndarray, tgt: ndarray, k_ptrs: int) -> 
 
 
 def normalize_points(points: ndarray, return_para: bool = False) -> Union[ndarray, Tuple[ndarray, Tuple[any, any]]]:
+    """
+    Normalize a set of 3D points by centering them at their mean and scaling them by three times
+    their standard deviation along the principal component.
+
+    Parameters
+    ----------
+    points : ndarray
+        A 2D array of shape (n, 3) containing the 3D coordinates of the points.
+    return_para : bool, optional
+        If True, the function returns the mean and scaling factor used for normalization.
+        Default is False.
+
+    Returns
+    -------
+    Union[ndarray, Tuple[ndarray, Tuple[any, any]]]
+        If return_para is False, returns the normalized points as a 2D array of shape (n, 3).
+        If return_para is True, returns a tuple containing the normalized points and a tuple with
+        the mean and scaling factor.
+
+    Raises
+    ------
+    ValueError
+        If the input points array is not a 2D array or if it does not contain 3D coordinates.
+    """
     if points.ndim != 2:
         raise ValueError(f"Points should be a 2D table, but get {points.ndim}D")
     if points.shape[1] != 3:
