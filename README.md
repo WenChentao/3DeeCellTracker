@@ -58,12 +58,12 @@ To learn how to track cells using 3DeeCellTracker, please refer to the following
     - [**Train 3D U-Net (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/3D_U_Net_training.html)
  
 2. Track cells in deforming organs: 
-    - [**Single mode + StarDist (notebook with results)**](Examples/use_stardist/track_worm1_stardist_single_mode.ipynb)
+    - [**Single mode + StarDist (notebook with results)**](Examples/use_stardist/track_stardist_single_mode.ipynb)
     - [**Single mode + UNet (clear notebook)**](Examples/use_unet/single_mode_worm1-clear.ipynb)
     - [**single mode + UNet (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/single_mode_worm1.html)
 
 3. Track cells in freely moving animals: 
-    - [**Ensemble mode + StarDist (notebook with results)**](Examples/use_stardist/track_worm4_stardist_ensemble_mode.ipynb)
+    - [**Ensemble mode + StarDist (notebook with results)**](Examples/use_stardist/track_stardist_ensemble_mode.ipynb)
     - [**Ensemble mode + UNet (clear notebook)**](Examples/use_unet/ensemble_mode_worm4-clear.ipynb)
     - [**Ensemble mode + UNet (results)**](https://wenchentao.github.io//3DeeCellTracker/Examples/use_unet/ensemble_mode_worm4.html)
 
