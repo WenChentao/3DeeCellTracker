@@ -12,18 +12,15 @@ from scipy.stats import trim_mean
 
 from CellTracker.coord_image_transformer import Coordinates, plot_prgls_prediction, plot_two_pointset_scatters
 from CellTracker.ffn import initial_matching_ffn, normalize_points, FFN
+from CellTracker.robust_match import find_greedy_matches, find_robust_matches
 from CellTracker.stardistwrapper import load_2d_slices_at_time
 
 FIGURE = "figure"
-
 COORDS_REAL = "coords_real"
-
+MATCH_METHOD = "robust" # Either "greedy" or "robust"
 LABELS = "labels"
-
 TRACK_RESULTS = "track_results"
-
 SEG = "seg"
-
 BETA, LAMBDA, MAX_ITERATION = (3, 3, 2000)
 K_POINTS = 20
 
@@ -92,7 +89,7 @@ class TrackerLite:
 
         matching_matrix = initial_matching_ffn(self.ffn_model, segmented_coords_norm_t1, segmented_coords_norm_t2,
                                                K_POINTS)
-        normalized_prob, _ = simple_match(matching_matrix)
+        normalized_prob, _ = get_match_pairs(matching_matrix, segmented_coords_norm_t2, confirmed_coords_norm_t1)
 
         tracked_coords_norm_t2, _ = prgls_with_two_ref(normalized_prob, segmented_coords_norm_t2,
                                                        segmented_coords_norm_t1, confirmed_coords_norm_t1,
@@ -138,7 +135,7 @@ class TrackerLite:
         segmented_coords_norm_t2 = (segmented_pos_t2.real - mean_t1) / scale_t1
         matching_matrix = initial_matching_ffn(self.ffn_model, confirmed_coords_norm_t1, segmented_coords_norm_t2,
                                                K_POINTS)
-        _, pairs_px2 = simple_match(matching_matrix)
+        _, pairs_px2 = get_match_pairs(matching_matrix, segmented_coords_norm_t2, confirmed_coords_norm_t1)
         return pairs_px2
 
     def _get_segmented_pos(self, t: int) -> Coordinates:
@@ -235,29 +232,29 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
         ax2.add_artist(con)
 
 
-def simple_match(initial_match_matrix: ndarray, threshold=0.1) -> ndarray:
+def get_match_pairs(initial_match_matrix: ndarray, segmented_coords_norm_t2, confirmed_coords_norm_t1,
+                    threshold=0.1, method = MATCH_METHOD) -> Tuple[ndarray, ndarray]:
     """Match points from two point sets by simply choosing the pairs with the highest probability subsequently"""
-    match_matrix = initial_match_matrix.copy()
-    pairs_list = get_best_pairs(match_matrix, threshold)
-    pairs_px2 = np.array(pairs_list)
-    normalized_prob = np.full_like(match_matrix, 0.1 / (match_matrix.shape[1] - 1))
-    for ref, tgt in pairs_list:
+    if method == "greedy":
+        matched_pairs = find_greedy_matches(initial_match_matrix, threshold)
+    elif method == "robust":
+        differences_matrix = segmented_coords_norm_t2[:, None, :] - confirmed_coords_norm_t1[None, :, :]
+        assert initial_match_matrix.shape + (3,) == differences_matrix.shape
+        matched_pairs = find_greedy_matches(initial_match_matrix, 0.1)
+        matched_pairs = find_robust_matches(matched_pairs, pairwise_differences_matrix=differences_matrix,
+                                                     reference_coords=confirmed_coords_norm_t1)
+    else:
+        raise ValueError("method should be either 'greedy' or 'robust'")
+    matched_pairs = np.asarray(matched_pairs)
+    normalized_prob = cal_norm_prob(initial_match_matrix, matched_pairs)
+    return normalized_prob, matched_pairs
+
+
+def cal_norm_prob(initial_match_matrix, matched_pairs):
+    normalized_prob = np.full_like(initial_match_matrix, 0.1 / (initial_match_matrix.shape[1] - 1))
+    for ref, tgt in matched_pairs:
         normalized_prob[tgt, ref] = 0.9
-    return normalized_prob, pairs_px2
-
-
-def get_best_pairs(match_matrix: ndarray, threshold: float) -> List[Tuple[int, int]]:
-    pairs_list = []
-    for ptr_num in range(match_matrix.shape[1]):
-        max_value = match_matrix.max()
-        if max_value < threshold:
-            break
-        tgt_index, ref_index = np.unravel_index(match_matrix.argmax(), match_matrix.shape)
-        pairs_list.append((ref_index, tgt_index))
-
-        match_matrix[tgt_index, :] = 0
-        match_matrix[:, ref_index] = 0
-    return pairs_list
+    return normalized_prob
 
 
 def prgls_quick(init_match_mxn, ptrs_tgt_mx3: ndarray, tracked_ref_nx3: ndarray,
