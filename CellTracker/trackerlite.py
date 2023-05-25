@@ -130,14 +130,16 @@ class TrackerLite:
         if confirmed_coord_t1 is None:
             confirmed_coord_t1 = segmented_pos_t1
 
+        pairs_px2 = self.match_two_point_sets(confirmed_coord_t1, segmented_pos_t2)
+        plot_initial_matching(confirmed_coord_t1.real, segmented_pos_t2.real, pairs_px2, t1, t2)
+
+    def match_two_point_sets(self, confirmed_coord_t1, segmented_pos_t2):
         confirmed_coords_norm_t1, (mean_t1, scale_t1) = normalize_points(confirmed_coord_t1.real, return_para=True)
         segmented_coords_norm_t2 = (segmented_pos_t2.real - mean_t1) / scale_t1
-
         matching_matrix = initial_matching_ffn(self.ffn_model, confirmed_coords_norm_t1, segmented_coords_norm_t2,
                                                K_POINTS)
         _, pairs_px2 = simple_match(matching_matrix)
-        plot_initial_matching(confirmed_coord_t1.real, segmented_pos_t2.real, pairs_px2, t1, t2)
-        # plot_initial_matching(confirmed_coord_t1.real[:,[2,1,0]], segmented_pos_t2.real[:,[2,1,0]], pairs_px2)
+        return pairs_px2
 
     def _get_segmented_pos(self, t: int) -> Coordinates:
         interp_factor = self.proofed_coords_vol1.interpolation_factor
@@ -236,6 +238,15 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
 def simple_match(initial_match_matrix: ndarray, threshold=0.1) -> ndarray:
     """Match points from two point sets by simply choosing the pairs with the highest probability subsequently"""
     match_matrix = initial_match_matrix.copy()
+    pairs_list = get_best_pairs(match_matrix, threshold)
+    pairs_px2 = np.array(pairs_list)
+    normalized_prob = np.full_like(match_matrix, 0.1 / (match_matrix.shape[1] - 1))
+    for ref, tgt in pairs_list:
+        normalized_prob[tgt, ref] = 0.9
+    return normalized_prob, pairs_px2
+
+
+def get_best_pairs(match_matrix: ndarray, threshold: float) -> List[Tuple[int, int]]:
     pairs_list = []
     for ptr_num in range(match_matrix.shape[1]):
         max_value = match_matrix.max()
@@ -246,11 +257,7 @@ def simple_match(initial_match_matrix: ndarray, threshold=0.1) -> ndarray:
 
         match_matrix[tgt_index, :] = 0
         match_matrix[:, ref_index] = 0
-    pairs_px2 = np.array(pairs_list)
-    normalized_prob = np.full_like(match_matrix, 0.1 / (match_matrix.shape[1] - 1))
-    for ref, tgt in pairs_px2:
-        normalized_prob[tgt, ref] = 0.9
-    return normalized_prob, pairs_px2
+    return pairs_list
 
 
 def prgls_quick(init_match_mxn, ptrs_tgt_mx3: ndarray, tracked_ref_nx3: ndarray,
