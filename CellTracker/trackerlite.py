@@ -5,6 +5,7 @@ from typing import List, Tuple
 
 import numpy as np
 import scipy
+from matplotlib import pyplot as plt
 from matplotlib.patches import ConnectionPatch
 from numpy import ndarray
 from scipy.special import softmax
@@ -12,12 +13,12 @@ from scipy.stats import trim_mean
 
 from CellTracker.coord_image_transformer import Coordinates, plot_prgls_prediction, plot_two_pointset_scatters
 from CellTracker.ffn import initial_matching_ffn, normalize_points, FFN
-from CellTracker.robust_match import find_greedy_matches, find_robust_matches
+from CellTracker.robust_match import find_greedy_matches, find_robust_matches, cal_coherence, hungarian_match
 from CellTracker.stardistwrapper import load_2d_slices_at_time
 
 FIGURE = "figure"
 COORDS_REAL = "coords_real"
-MATCH_METHOD = "robust" # Either "greedy" or "robust"
+MATCH_METHOD = "greedy" # Either "greedy" or "robust"
 LABELS = "labels"
 TRACK_RESULTS = "track_results"
 SEG = "seg"
@@ -232,19 +233,29 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
         ax2.add_artist(con)
 
 
-def get_match_pairs(initial_match_matrix: ndarray, segmented_coords_norm_t2, confirmed_coords_norm_t1,
-                    threshold=0.1, method = MATCH_METHOD) -> Tuple[ndarray, ndarray]:
+def get_match_pairs(initial_match_matrix: ndarray, segmented_coords_norm_t2, segmented_coords_norm_t1,
+                    threshold=0.2, method = MATCH_METHOD) -> Tuple[ndarray, ndarray]:
     """Match points from two point sets by simply choosing the pairs with the highest probability subsequently"""
+    plt.figure()
+    plt.hist(initial_match_matrix.ravel(), bins=50)
     if method == "greedy":
-        matched_pairs = find_greedy_matches(initial_match_matrix, threshold)
+        matched_pairs = hungarian_match(initial_match_matrix, threshold)
+        for i in range(5):
+            coherence = cal_coherence(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2)
+            updated_match_matrix = initial_match_matrix * coherence
+            updated_match_matrix = updated_match_matrix / (updated_match_matrix.max(axis=0) + 1e-6)
+            matched_pairs = hungarian_match(updated_match_matrix, threshold)
     elif method == "robust":
-        differences_matrix = segmented_coords_norm_t2[:, None, :] - confirmed_coords_norm_t1[None, :, :]
+        differences_matrix = segmented_coords_norm_t2[:, None, :] - segmented_coords_norm_t1[None, :, :]
         assert initial_match_matrix.shape + (3,) == differences_matrix.shape
-        matched_pairs = find_greedy_matches(initial_match_matrix, 0.1)
+        matched_pairs = find_greedy_matches(initial_match_matrix, 1e-6)
         matched_pairs = find_robust_matches(matched_pairs, pairwise_differences_matrix=differences_matrix,
-                                                     reference_coords=confirmed_coords_norm_t1)
+                                            reference_coords=segmented_coords_norm_t1)
+    elif method == "hungarian":
+        matched_pairs = hungarian_match(initial_match_matrix, threshold)
+        print(matched_pairs.shape)
     else:
-        raise ValueError("method should be either 'greedy' or 'robust'")
+        raise ValueError("method should be either 'greedy', 'hungarian_match', or 'robust'")
     matched_pairs = np.asarray(matched_pairs)
     normalized_prob = cal_norm_prob(initial_match_matrix, matched_pairs)
     return normalized_prob, matched_pairs
