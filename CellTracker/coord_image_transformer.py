@@ -514,7 +514,7 @@ class CoordsToImageTransformer:
         confirmed_coord_t1 = np.load(
             str(self.results_folder / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(4)}.npy"))
         segmented_pos_t2 = tracker._get_segmented_pos(t2)
-        fig = plot_prgls_prediction(confirmed_coord_t1, segmented_pos_t2.real, coords.real, t1, t2)
+        fig = plot_predicted_movements(confirmed_coord_t1, segmented_pos_t2.real, coords.real, t1, t2)
         fig.savefig(self.results_folder / TRACK_RESULTS / "figure" / f"matching_{str(t2).zfill(4)}.png",
                     facecolor='white')
         plt.close()
@@ -643,8 +643,8 @@ def fix_labeling_errors(segmentation: np.ndarray) -> Tuple[np.ndarray, bool]:
     return new_segmentation, was_corrected
 
 
-def plot_prgls_prediction(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray, t1: int, t2: int,
-                          fig_width_px=1200, dpi=96):
+def plot_predicted_movements(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray, t1: int, t2: int,
+                             fig_width_px=1200, dpi=96):
     """
     Draws the initial matching between two sets of 3D points and their matching relationships.
 
@@ -739,7 +739,11 @@ def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarra
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(fig_width_in, fig_height_in))
     # Plot the point sets on the respective subplots
     ax1.scatter(ref_ptrs[:, 1], -ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')
+    for i, txt in enumerate(range(ref_ptrs.shape[0])):
+        ax1.annotate(txt, (ref_ptrs[i, 1], -ref_ptrs[i, 0]))
     ax2.scatter(tgt_ptrs[:, 1], -tgt_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 2')
+    for i, txt in enumerate(range(tgt_ptrs.shape[0])):
+        ax2.annotate(txt, (tgt_ptrs[i, 1], -tgt_ptrs[i, 0]))
 
     unify_xy_lims(ax1, ax2)
 

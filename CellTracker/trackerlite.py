@@ -4,25 +4,23 @@ from pathlib import Path
 from typing import List, Tuple
 
 import numpy as np
-import scipy
-from matplotlib import pyplot as plt
 from matplotlib.patches import ConnectionPatch
 from numpy import ndarray
-from scipy.special import softmax
+from scipy.interpolate import RBFInterpolator
+from scipy.optimize import linear_sum_assignment
 from scipy.stats import trim_mean
 
-from CellTracker.coord_image_transformer import Coordinates, plot_prgls_prediction, plot_two_pointset_scatters
+from CellTracker.coord_image_transformer import Coordinates, plot_predicted_movements, plot_two_pointset_scatters
 from CellTracker.ffn import initial_matching_ffn, normalize_points, FFN
-from CellTracker.robust_match import find_greedy_matches, find_robust_matches, cal_coherence, hungarian_match
+from CellTracker.robust_match import filter_outliers, calc_min_path
 from CellTracker.stardistwrapper import load_2d_slices_at_time
 
 FIGURE = "figure"
 COORDS_REAL = "coords_real"
-MATCH_METHOD = "greedy" # Either "greedy" or "robust"
 LABELS = "labels"
 TRACK_RESULTS = "track_results"
 SEG = "seg"
-BETA, LAMBDA, MAX_ITERATION = (3, 3, 2000)
+BETA, LAMBDA, MAX_ITERATION = (2.0, 2.0, 2000)
 K_POINTS = 20
 
 
@@ -64,7 +62,8 @@ class TrackerLite:
         self.miss_frame = [] if miss_frame is None else miss_frame
 
     def predict_cell_positions(self, t1: int, t2: int, confirmed_coord_t1: Coordinates = None,
-                               beta: float = BETA, lambda_: float = LAMBDA, draw_fig: bool = False):
+                               beta: float = BETA, lambda_: float = LAMBDA, smoothing=0.01, draw_fig: bool = False,
+                               post_processing: str = "tps"):
         """
         Predicts the positions of cells in a 3D image at time step t2, based on their positions at time step t1.
 
@@ -88,21 +87,53 @@ class TrackerLite:
         segmented_coords_norm_t2 = (segmented_pos_t2.real - mean_t1) / scale_t1
         segmented_coords_norm_t1 = (segmented_pos_t1.real - mean_t1) / scale_t1
 
-        matching_matrix = initial_matching_ffn(self.ffn_model, segmented_coords_norm_t1, segmented_coords_norm_t2,
-                                               K_POINTS)
-        normalized_prob, _ = get_match_pairs(matching_matrix, segmented_coords_norm_t2, confirmed_coords_norm_t1)
-
-        tracked_coords_norm_t2, _ = prgls_with_two_ref(normalized_prob, segmented_coords_norm_t2,
-                                                       segmented_coords_norm_t1, confirmed_coords_norm_t1,
-                                                       beta=beta, lambda_=lambda_)
+        updated_segmented_coords_norm_t1 = segmented_coords_norm_t1.copy()
+        for i in range(3):
+            initial_matching = initial_matching_ffn(self.ffn_model, updated_segmented_coords_norm_t1,
+                                                    segmented_coords_norm_t2,
+                                                    K_POINTS)
+            updated_matching = initial_matching.copy()
+            matched_pairs = get_match_pairs(updated_matching, segmented_coords_norm_t2,
+                                            updated_segmented_coords_norm_t1,
+                                            method=self.match_method, threshold=self.similarity_threshold)
+            normalized_prob = cal_norm_prob(matched_pairs, updated_matching.shape)
+            plot_initial_matching(updated_segmented_coords_norm_t1 * scale_t1 + mean_t1, segmented_pos_t2.real,
+                                  matched_pairs, t1, t2)
+            updated_segmented_coords_norm_t1 = self.predict_new_positions(segmented_coords_norm_t1, matched_pairs,
+                                                                          normalized_prob, post_processing,
+                                                                          segmented_coords_norm_t1,
+                                                                          segmented_coords_norm_t2,
+                                                                          smoothing, beta, lambda_)
+        tracked_coords_norm_t2 = updated_segmented_coords_norm_t1
+        # tracked_coords_norm_t2 = self.predict_new_positions(confirmed_coords_norm_t1, matched_pairs,
+        #                                                     normalized_prob, "tps",
+        #                                                     segmented_coords_norm_t1, segmented_coords_norm_t2,
+        #                                                     smoothing, beta, lambda_)
+        print(f"Matching method: {self.match_method}")
+        print(f"Threshold for similarity: {self.similarity_threshold}")
+        print(f"Post processing method: {post_processing}")
         tracked_coords_t2 = tracked_coords_norm_t2 * scale_t1 + mean_t1
         if draw_fig:
-            fig = plot_prgls_prediction(confirmed_coord_t1.real, segmented_pos_t2.real, tracked_coords_t2, t1, t2)
+            fig = plot_predicted_movements(confirmed_coord_t1.real, segmented_pos_t2.real, tracked_coords_t2, t1, t2)
 
         return Coordinates(tracked_coords_t2,
                            interpolation_factor=self.proofed_coords_vol1.interpolation_factor,
                            voxel_size=self.proofed_coords_vol1.voxel_size,
                            dtype="real")
+
+    def predict_new_positions(self, confirmed_coords_norm_t1, matched_pairs, normalized_prob, post_processing,
+                              segmented_coords_norm_t1, segmented_coords_norm_t2, smoothing: float, beta=BETA,
+                              lambda_=LAMBDA):
+        if post_processing == "tps":
+            tracked_coords_norm_t2 = tps_with_two_ref(matched_pairs, segmented_coords_norm_t2,
+                                                      segmented_coords_norm_t1, confirmed_coords_norm_t1, smoothing)
+        elif post_processing == "prgls":
+            tracked_coords_norm_t2, _ = prgls_with_two_ref(normalized_prob, segmented_coords_norm_t2,
+                                                           segmented_coords_norm_t1, confirmed_coords_norm_t1,
+                                                           beta=beta, lambda_=lambda_)
+        else:
+            raise ValueError("post_prossing should be either 'tps' or 'prgls'")
+        return tracked_coords_norm_t2
 
     def predict_cell_positions_ensemble(self, skipped_volumes: List[int], t2: int, coord_t1: Coordinates,
                                         beta: float, lambda_: float, sampling_number: int = 20,
@@ -120,7 +151,12 @@ class TrackerLite:
                            interpolation_factor=self.proofed_coords_vol1.interpolation_factor,
                            voxel_size=self.proofed_coords_vol1.voxel_size, dtype="real")
 
-    def match_by_ffn(self, t1: int, t2: int, confirmed_coord_t1: Coordinates = None):
+    def match_by_ffn(self, t1: int, t2: int, confirmed_coord_t1: Coordinates = None, similarity_threshold=0.3,
+                     match_method: str = "coherence"):
+        self.match_method = match_method
+        self.similarity_threshold = similarity_threshold
+        print(f"Matching method: {self.match_method}")
+        print(f"Threshold for similarity: {self.similarity_threshold}")
         assert t2 not in self.miss_frame
         segmented_pos_t1 = self._get_segmented_pos(t1)
         segmented_pos_t2 = self._get_segmented_pos(t2)
@@ -134,9 +170,11 @@ class TrackerLite:
     def match_two_point_sets(self, confirmed_coord_t1, segmented_pos_t2):
         confirmed_coords_norm_t1, (mean_t1, scale_t1) = normalize_points(confirmed_coord_t1.real, return_para=True)
         segmented_coords_norm_t2 = (segmented_pos_t2.real - mean_t1) / scale_t1
-        matching_matrix = initial_matching_ffn(self.ffn_model, confirmed_coords_norm_t1, segmented_coords_norm_t2,
-                                               K_POINTS)
-        _, pairs_px2 = get_match_pairs(matching_matrix, segmented_coords_norm_t2, confirmed_coords_norm_t1)
+        initial_matching = initial_matching_ffn(self.ffn_model, confirmed_coords_norm_t1, segmented_coords_norm_t2,
+                                                K_POINTS)
+        updated_matching = initial_matching.copy()
+        pairs_px2 = get_match_pairs(updated_matching, segmented_coords_norm_t2, confirmed_coords_norm_t1,
+                                    threshold=self.similarity_threshold, method=self.match_method)
         return pairs_px2
 
     def _get_segmented_pos(self, t: int) -> Coordinates:
@@ -195,7 +233,7 @@ class TrackerLite:
         return activities
 
 
-def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, fig_width_px=1200,
+def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, fig_width_px=1800,
                           dpi=96):
     """Draws the initial matching between two sets of 3D points and their matching relationships.
 
@@ -233,89 +271,71 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
         ax2.add_artist(con)
 
 
-def get_match_pairs(initial_match_matrix: ndarray, segmented_coords_norm_t2, segmented_coords_norm_t1,
-                    threshold=0.2, method = MATCH_METHOD) -> Tuple[ndarray, ndarray]:
+def coherence_match(updated_match_matrix: ndarray, segmented_coords_norm_t1, segmented_coords_norm_t2, threshold):
+    matched_pairs = greedy_match(updated_match_matrix, threshold)
+    for i in range(5):
+        coherence = calc_min_path(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2)
+        updated_match_matrix = np.sqrt(updated_match_matrix * coherence)
+        matched_pairs = greedy_match(updated_match_matrix, threshold)
+    matched_pairs = filter_outliers(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2, neighbors=10)
+    return matched_pairs
+
+
+def hungarian_match(match_score_matrix_: ndarray, match_score_matrix_updated: ndarray, similarity_threshold: float):
+    row_indices, col_indices = linear_sum_assignment(match_score_matrix_updated, maximize=True)
+    match_pairs = []
+    for r, c in zip(row_indices, col_indices):
+        if match_score_matrix_[r, c] > similarity_threshold and match_score_matrix_updated[r, c] > similarity_threshold:
+            match_pairs.append((c, r))
+    return np.asarray(match_pairs)
+
+
+def greedy_match(updated_match_matrix: ndarray, threshold: float = 1e-6):
+    working_match_score_matrix = updated_match_matrix.copy()
+    match_pairs = []
+    for pair_number in range(working_match_score_matrix.shape[1]):
+        max_match_score = working_match_score_matrix.max()
+        if max_match_score < threshold:
+            break
+        target_index, reference_index = np.unravel_index(working_match_score_matrix.argmax(),
+                                                         working_match_score_matrix.shape)
+        match_pairs.append((reference_index, target_index))
+
+        working_match_score_matrix[target_index, :] = -1
+        working_match_score_matrix[:, reference_index] = -1
+    return np.asarray(match_pairs)
+
+
+def get_match_pairs(updated_match_matrix: ndarray, segmented_coords_norm_t2, segmented_coords_norm_t1,
+                    threshold=0.5, method="coherence") -> ndarray:
     """Match points from two point sets by simply choosing the pairs with the highest probability subsequently"""
-    plt.figure()
-    plt.hist(initial_match_matrix.ravel(), bins=50)
     if method == "greedy":
-        matched_pairs = hungarian_match(initial_match_matrix, threshold)
-        for i in range(5):
-            coherence = cal_coherence(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2)
-            updated_match_matrix = initial_match_matrix * coherence
-            updated_match_matrix = updated_match_matrix / (updated_match_matrix.max(axis=0) + 1e-6)
-            matched_pairs = hungarian_match(updated_match_matrix, threshold)
-    elif method == "robust":
-        differences_matrix = segmented_coords_norm_t2[:, None, :] - segmented_coords_norm_t1[None, :, :]
-        assert initial_match_matrix.shape + (3,) == differences_matrix.shape
-        matched_pairs = find_greedy_matches(initial_match_matrix, 1e-6)
-        matched_pairs = find_robust_matches(matched_pairs, pairwise_differences_matrix=differences_matrix,
-                                            reference_coords=segmented_coords_norm_t1)
-    elif method == "hungarian":
-        matched_pairs = hungarian_match(initial_match_matrix, threshold)
-        print(matched_pairs.shape)
-    else:
-        raise ValueError("method should be either 'greedy', 'hungarian_match', or 'robust'")
-    matched_pairs = np.asarray(matched_pairs)
-    normalized_prob = cal_norm_prob(initial_match_matrix, matched_pairs)
-    return normalized_prob, matched_pairs
+        return greedy_match(updated_match_matrix, threshold)
+    if method == "hungarian":
+        return hungarian_match(updated_match_matrix, updated_match_matrix, threshold)
+    if method == "coherence":
+        return coherence_match(updated_match_matrix, segmented_coords_norm_t1, segmented_coords_norm_t2, threshold)
+    raise ValueError("method should be 'greedy', 'hungarian' or 'coherence'")
 
 
-def cal_norm_prob(initial_match_matrix, matched_pairs):
-    normalized_prob = np.full_like(initial_match_matrix, 0.1 / (initial_match_matrix.shape[1] - 1))
+def cal_norm_prob(matched_pairs, shape):
+    normalized_prob = np.full(shape, 0.1 / (shape[1] - 1))
     for ref, tgt in matched_pairs:
         normalized_prob[tgt, ref] = 0.9
     return normalized_prob
 
 
-def prgls_quick(init_match_mxn, ptrs_tgt_mx3: ndarray, tracked_ref_nx3: ndarray,
-                beta: float, lambda_: float, max_iteration: int = MAX_ITERATION) \
-        -> Tuple[ndarray, ndarray]:
-    """
-    Get coherent movements from the initial matching by PR-GLS algorithm
-    """
-
-    # Initiate parameters
-    ratio_outliers = 0.05  # This is the gamma
-    distance_weights_nxn = gaussian_kernel(tracked_ref_nx3, tracked_ref_nx3, beta ** 2)  # This is the Gram matrix
-    sigma_square = dist_squares(tracked_ref_nx3, ptrs_tgt_mx3).mean() / 3  # This is the sigma^2
-    predicted_coord_ref_nx3 = tracked_ref_nx3.copy()  # This is the T(X)
-
-    ############################################################################
-    # iteratively update predicted_ref_n1x3, ratio_outliers, sigma_square, and posterior_mxn. Plot and save results
-    ############################################################################
-    for iteration in range(1, max_iteration):
-        # E-step: update posterior probability P_mxn
-        posterior_mxn = estimate_posterior(init_match_mxn, sigma_square, predicted_coord_ref_nx3, ptrs_tgt_mx3,
-                                           ratio_outliers)
-
-        # M-step: update predicted positions of reference set
-        # movements_basis_3xn is the parameter C
-        movements_basis_3xn = solve_movements_ref(sigma_square, lambda_, posterior_mxn, predicted_coord_ref_nx3,
-                                                  ptrs_tgt_mx3, distance_weights_nxn)
-        movements_ref_nx3 = np.dot(movements_basis_3xn, distance_weights_nxn).T
-        if iteration > 1:
-            predicted_coord_ref_nx3 += movements_ref_nx3  # The first estimation is not reliable thus is discarded
-        sum_posterior = np.sum(posterior_mxn)
-        ratio_outliers = 1 - sum_posterior / ptrs_tgt_mx3.shape[0]
-
-        # Sometimes this value could become minus due to the inaccurate float representation in computer.
-        # Here I fixed this bug.
-        if ratio_outliers < 1E-4:
-            ratio_outliers = 1E-4
-
-        sigma_square = np.sum(dist_squares(predicted_coord_ref_nx3, ptrs_tgt_mx3) * posterior_mxn) / (3 * sum_posterior)
-
-        # Test convergence:
-        dist_sqrt = np.sqrt(np.sum(np.square(movements_ref_nx3)))
-        if dist_sqrt < 1E-3:
-            # print(f"Converged at iteration = {iteration}")
-            break
-
-    return predicted_coord_ref_nx3, posterior_mxn
+def tps_with_two_ref(matched_pairs: List[Tuple[int, int]], ptrs_tgt_mx3: ndarray, ptrs_ref_nx3: ndarray,
+                     tracked_ref_lx3: ndarray, smoothing: float) -> ndarray:
+    matched_pairs_array = np.asarray(matched_pairs)
+    prts_ref_matched_n1x3 = ptrs_ref_nx3[matched_pairs_array[:, 0], :]
+    prts_tgt_matched_m1x3 = ptrs_tgt_mx3[matched_pairs_array[:, 1], :]
+    tps = RBFInterpolator(prts_ref_matched_n1x3, prts_tgt_matched_m1x3, kernel='thin_plate_spline', smoothing=smoothing)
+    # Apply the TPS transformation to the source points
+    return tps(tracked_ref_lx3)
 
 
-def prgls_with_two_ref(init_match_mxn, ptrs_tgt_mx3: ndarray, prts_ref_nx3: ndarray, tracked_ref_lx3: ndarray,
+def prgls_with_two_ref(normalized_prob_mxn, ptrs_tgt_mx3: ndarray, ptrs_ref_nx3: ndarray, tracked_ref_lx3: ndarray,
                        beta: float, lambda_: float, max_iteration: int = MAX_ITERATION) \
         -> Tuple[ndarray, ndarray]:
     """
@@ -325,10 +345,10 @@ def prgls_with_two_ref(init_match_mxn, ptrs_tgt_mx3: ndarray, prts_ref_nx3: ndar
 
     # Initiate parameters
     ratio_outliers = 0.05  # This is the gamma
-    distance_weights_nxn = gaussian_kernel(prts_ref_nx3, prts_ref_nx3, beta ** 2)  # This is the Gram matrix
-    distance_weights_nxl = gaussian_kernel(tracked_ref_lx3, prts_ref_nx3, beta ** 2)
-    sigma_square = dist_squares(prts_ref_nx3, ptrs_tgt_mx3).mean() / 3  # This is the sigma^2
-    predicted_coord_ref_nx3 = prts_ref_nx3.copy()  # This is the T(X)
+    distance_weights_nxn = gaussian_kernel(ptrs_ref_nx3, ptrs_ref_nx3, beta ** 2)  # This is the Gram matrix
+    distance_weights_nxl = gaussian_kernel(tracked_ref_lx3, ptrs_ref_nx3, beta ** 2)
+    sigma_square = dist_squares(ptrs_ref_nx3, ptrs_tgt_mx3).mean() / 3  # This is the sigma^2
+    predicted_coord_ref_nx3 = ptrs_ref_nx3.copy()  # This is the T(X)
     predicted_coord_ref_lx3 = tracked_ref_lx3.copy()
 
     ############################################################################
@@ -336,7 +356,7 @@ def prgls_with_two_ref(init_match_mxn, ptrs_tgt_mx3: ndarray, prts_ref_nx3: ndar
     ############################################################################
     for iteration in range(1, max_iteration):
         # E-step: update posterior probability P_mxn
-        posterior_mxn = estimate_posterior(init_match_mxn, sigma_square, predicted_coord_ref_nx3, ptrs_tgt_mx3,
+        posterior_mxn = estimate_posterior(normalized_prob_mxn, sigma_square, predicted_coord_ref_nx3, ptrs_tgt_mx3,
                                            ratio_outliers)
 
         # M-step: update predicted positions of reference set
@@ -385,34 +405,10 @@ def estimate_posterior(prior_p_mxn: ndarray, initial_sigma_square: float, predic
                        ptrs_tgt_mx3: ndarray, ratio_outliers: float, vol: float = 1) -> ndarray:
     p_pos_j_when_j_match_i_mxn = gaussian_kernel(predicted_ref_nx3, ptrs_tgt_mx3, initial_sigma_square)
     p_pos_j_and_j_match_i_mxn = (1 - ratio_outliers) * prior_p_mxn * p_pos_j_when_j_match_i_mxn / (
-                2 * np.pi * initial_sigma_square) ** 1.5
+            2 * np.pi * initial_sigma_square) ** 1.5
     posterior_sum_m = np.sum(p_pos_j_and_j_match_i_mxn, axis=1) + ratio_outliers / vol
     posterior_mxn = p_pos_j_and_j_match_i_mxn / posterior_sum_m[:, None]
     return posterior_mxn
-
-
-def softmax_normalize(similarity_matrix_mxn: ndarray) -> ndarray:
-    return scipy.special.softmax(similarity_matrix_mxn, axis=1)
-
-
-def row_wise_normalize(similarity_matrix_mxn: ndarray) -> ndarray:
-    return similarity_matrix_mxn / np.sum(similarity_matrix_mxn, axis=1, keepdims=True)
-
-
-def non_max_suppression_normalize(similarity_matrix_mxn: ndarray, threshold=0.5):
-    n = similarity_matrix_mxn.shape[1]
-    init_match_mxn = np.full_like(similarity_matrix_mxn, fill_value=1 / n)
-    similarity_temp_mxn = similarity_matrix_mxn.copy()
-    for point_in_ref in range(n):
-        similarity_max = similarity_temp_mxn.max()
-        if similarity_max < threshold:
-            break
-        max_row, max_col = np.unravel_index(similarity_temp_mxn.argmax(), similarity_temp_mxn.shape)
-        init_match_mxn[max_row, :] = 0.1 / (n - 1)
-        init_match_mxn[max_row, max_col] = 0.9
-        similarity_temp_mxn[max_row, :] = 0
-        similarity_temp_mxn[:, max_col] = 0
-    return init_match_mxn
 
 
 def solve_movements_ref(initial_sigma_square, lambda_, posterior_mxn, ptrs_ref_nx3, ptrs_tgt_mx3,
@@ -434,7 +430,7 @@ def evenly_distributed_volumes(current_vol: int, sampling_number: int) -> List[i
 
 
 def get_volumes_list(current_vol: int, skip_volumes: List[int], sampling_number: int = 20, adjacent: bool = False) -> \
-List[int]:
+        List[int]:
     if current_vol - 1 < sampling_number:
         vols_list = list(range(1, current_vol))
     else:
