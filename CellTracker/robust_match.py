@@ -2,21 +2,63 @@ from multiprocessing import Pool
 from typing import Tuple, List
 
 import numpy as np
+import scipy.ndimage
 from numpy import ndarray
 from scipy.special import erf
+from skimage import measure
+from skimage.segmentation import relabel_sequential
 from sklearn.covariance import MinCovDet
 from sklearn.neighbors import NearestNeighbors
 
 outlier_detector = MinCovDet()
 
 
-def compute_mahalanobis(moves):
-    outlier_detector.fit(moves)
-    return outlier_detector.mahalanobis(moves)
+def get_full_cell_candidates(coordinates_nx3: ndarray, prob_map_3d: ndarray, threshold: float = 0.3) -> ndarray:
+    """
+    This function returns the extra coordinates are the coordinates of the tiny cells in the prob_map_3d that are not
+    included in the coordinates_nx3.
+    """
+    # Segment of the disconnected cell regions
+    labels_from_prob_map = measure.label(prob_map_3d > threshold , connectivity=1)
+    # Remove the labels if they contain the coordinates_nx3
+    for i, j, k in coordinates_nx3:
+        if labels_from_prob_map[i, j, k] != 0:
+            labels_from_prob_map[labels_from_prob_map == labels_from_prob_map[i, j, k]] = 0
+    # Relabel the remaining labels sequentially
+    labels_from_prob_map, _, _ = relabel_sequential(labels_from_prob_map)
+    coordinates_tiny = scipy.ndimage.center_of_mass(labels_from_prob_map, labels_from_prob_map, range(1, np.max(labels_from_prob_map) + 1))
+    return np.asarray(coordinates_tiny)
 
 
-def filter_outliers(matched_pairs: List[Tuple[int, int]], coordinates_nx3_t1: ndarray, coordinates_mx3_t2: ndarray,
-                    neighbors: int = 10) -> ndarray:
+def compute_mahalanobis(moves: ndarray) -> ndarray:
+    """
+    Compute the Mahalanobis distances for the given moves.
+
+    Parameters:
+        moves (numpy.ndarray): An array of shape (n_samples, n_features) representing the moves data.
+
+    Returns:
+        numpy.ndarray: An array of shape (n_samples,) containing the Mahalanobis distances.
+    """
+    try:
+        outlier_detector.fit(moves)
+        return outlier_detector.mahalanobis(moves)
+    except ValueError:
+        # Temporally set the support fraction to 1.0 to avoid singular matrix and retry fitting, then reset it back
+        support_fraction = outlier_detector.support_fraction
+        try:
+            outlier_detector.support_fraction = 1.0
+            outlier_detector.fit(moves)
+            return outlier_detector.mahalanobis(moves)
+        except ValueError:
+            # If the matrix is still singular, return mahalanobis distance as 0
+            return np.zeros_like(moves[:, 0])
+        finally:
+            outlier_detector.support_fraction = support_fraction
+
+
+def filter_matching_outliers(matched_pairs: List[Tuple[int, int]], coordinates_nx3_t1: ndarray, coordinates_mx3_t2: ndarray,
+                             neighbors: int = 10) -> ndarray:
     """
     This function filters the pairs with significantly different movements between two sets of coordinates (t1 and t2)
     by using a Mahalanobis distance threshold to determine outliers.
@@ -51,15 +93,84 @@ def filter_outliers(matched_pairs: List[Tuple[int, int]], coordinates_nx3_t1: nd
     # Compute the Mahalanobis distance for each matched pair in a parallelized manner
     with Pool() as p:
         mahalanobis_distances = p.map(compute_mahalanobis, movements)  # Quick
+
     # mahalanobis_distances = [outlier_detector.fit(moves).mahalanobis(moves) for moves in movements] # Slow, deprecated
 
     # Filter out matched pairs where the Mahalanobis distance is greater than the threshold
     updated_pairs = []
-    threshold_mdist = 20 ** 2
+    threshold_mdist = 5 ** 2
     for (ind_t1, ind_t2), mahalanobis_distance in zip(matched_pairs, mahalanobis_distances):
         if ind_t1 in neighbors_of_pairs_nxkp1x2[ind_t1, mahalanobis_distance <= threshold_mdist, 0]:
             updated_pairs.append((ind_t1, ind_t2))
     return np.asarray(updated_pairs)
+
+
+def add_or_remove_points(predicted_coords_t1_to_t2: ndarray, predicted_coords_t2_to_t1: ndarray,
+                         segmented_coords_norm_t1: ndarray, segmented_coords_norm_t2: ndarray,
+                         matched_pairs: List[Tuple[int, int]], k_neighbors: int = 5) -> \
+        Tuple[ndarray, ndarray, Tuple[ndarray, ndarray]]:
+    n, m = segmented_coords_norm_t1.shape[0], segmented_coords_norm_t2.shape[0]
+    pairs = np.asarray(matched_pairs)
+    unmatched_indice_t1 = np.setdiff1d(np.arange(n), pairs[:, 0])
+    unmatched_indice_t2 = np.setdiff1d(np.arange(m), pairs[:, 1])
+
+    # inliers_t1 = add_inliers_within_k_neighbors(k_neighbors, predicted_coords_t1_to_t2, segmented_coords_norm_t2, unmatched_indice_t2,
+    #                          unmatched_indice_t1)
+    # inliers_t2 = add_inliers_within_k_neighbors(k_neighbors, predicted_coords_t2_to_t1, segmented_coords_norm_t1, unmatched_indice_t1,
+    #                          unmatched_indice_t2)
+    inliers_t1 = add_inliers_within_a_radius(k_neighbors, predicted_coords_t1_to_t2, segmented_coords_norm_t2, segmented_coords_norm_t1,
+                                             unmatched_indice_t2, unmatched_indice_t1)
+    inliers_t2 = add_inliers_within_a_radius(k_neighbors, predicted_coords_t2_to_t1, segmented_coords_norm_t1, segmented_coords_norm_t2,
+                                             unmatched_indice_t1, unmatched_indice_t2)
+
+    all_inliers_t1 = np.concatenate((pairs[:, 0], inliers_t1)).astype(np.int_)
+    all_inliers_t2 = np.concatenate((pairs[:, 1], inliers_t2)).astype(np.int_)
+    inliers = (all_inliers_t1, all_inliers_t2)
+    return predicted_coords_t1_to_t2[all_inliers_t1], segmented_coords_norm_t2[all_inliers_t2], inliers
+
+
+def add_inliers_within_k_neighbors(k_neighbors, predicted_coords_t2_to_t1, segmented_coords_norm_t1, unmatched_indice_t1,
+                                   unmatched_indice_t2):
+    """
+    Add some points previously in the unmatched set to the inlier set using k nearest neighbors criterion.
+
+    Notes
+    -----
+    Suppose there is an unmatched point A at t2 and its prediction B at t1.
+    If B has a neighbor point C (within k-th) in the unmatched set at t1, then A is added to the inlier set.
+    """
+    if unmatched_indice_t2.size == 0 or unmatched_indice_t1.size == 0:
+        return []
+    knn_t1 = NearestNeighbors(n_neighbors=k_neighbors).fit(segmented_coords_norm_t1)
+    _, candidates_in_t1 = knn_t1.kneighbors(predicted_coords_t2_to_t1[unmatched_indice_t2, :])
+    inliers_t2 = [unmatched_indice_t2[i] for i, candi in enumerate(candidates_in_t1) if
+                  np.intersect1d(candi, unmatched_indice_t1).size > 0]
+    return np.asarray(inliers_t2)
+
+
+def add_inliers_within_a_radius(k_neighbors, predicted_coords_t2_to_t1, segmented_coords_norm_t1, segmented_coords_norm_t2,
+                                unmatched_indice_t1, unmatched_indice_t2):
+    """
+    Add some points previously in the unmatched set to the inlier set using a dynamic radius criterion.
+
+    Notes
+    -----
+    Suppose there is an unmatched point A at t2 and its prediction B at t1.
+    Calculate the median distance dist_A between A and its k nearest neighbors at t2
+    If B has its nearest neighbor point C within 1.5 * dist_A at t1, then A is added to the inlier set.
+    Else, A is not added to the inlier set.
+    """
+    if unmatched_indice_t2.size == 0:
+        return []
+    knn_t2 = NearestNeighbors(n_neighbors=k_neighbors).fit(segmented_coords_norm_t2)
+    dists, _ = knn_t2.kneighbors(segmented_coords_norm_t2[unmatched_indice_t2, :])
+    median_dists = np.median(dists, axis=1)
+    knn_t1 = NearestNeighbors(n_neighbors=1).fit(segmented_coords_norm_t1)
+    nearest_dist, _ = knn_t1.kneighbors(predicted_coords_t2_to_t1[unmatched_indice_t2, :])
+    inliers_t2 = [unmatched_indice_t2[i] for i, (dist, median_dist) in enumerate(zip(nearest_dist, median_dists)) if
+                    dist <= 1.5 * median_dist]
+    return np.asarray(inliers_t2)
+
 
 
 def calc_min_path(pairs: List[Tuple[int, int]], coordinates_nx3_t1, coordinates_mx3_t2):

@@ -426,11 +426,7 @@ class CoordsToImageTransformer:
         corrected_labels_image : ndarray
             The corrected labels image.
         """
-        prob_map = np.load(str(self.results_folder / SEG / ("prob%04d.npy" % t)))
-        prob_map = np.repeat(np.repeat(np.repeat(prob_map, grid[1], axis=0), grid[2], axis=1), grid[0], axis=2)
-        if prob_map.shape != self.proofed_segmentation.shape:
-            x_lim, y_lim, z_lim = self.proofed_segmentation.shape
-            prob_map = prob_map[:x_lim, :y_lim, :z_lim]
+        prob_map = self.load_prob_map(grid, t)
 
         boundary_ids = set(self.get_cells_on_boundary(coords.real, ensemble=ensemble).tolist())
 
@@ -443,6 +439,14 @@ class CoordsToImageTransformer:
                 break
         corrected_labels_image = self.move_cells_in_3d_image((coords - self.coord_vol1).interp, boundary_ids)
         return coords, corrected_labels_image
+
+    def load_prob_map(self, grid, t):
+        prob_map = np.load(str(self.results_folder / SEG / ("prob%04d.npy" % t)))
+        prob_map = np.repeat(np.repeat(np.repeat(prob_map, grid[1], axis=0), grid[2], axis=1), grid[0], axis=2)
+        if prob_map.shape != self.proofed_segmentation.shape:
+            x_lim, y_lim, z_lim = self.proofed_segmentation.shape
+            prob_map = prob_map[:x_lim, :y_lim, :z_lim]
+        return prob_map
 
     def _correction_once(self, prob_img: ndarray, coords: Coordinates, boundary_ids: Set[int]):
         """
@@ -513,7 +517,7 @@ class CoordsToImageTransformer:
 
         confirmed_coord_t1 = np.load(
             str(self.results_folder / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(4)}.npy"))
-        segmented_pos_t2 = tracker._get_segmented_pos(t2)
+        segmented_pos_t2, _ = tracker._get_segmented_pos(t2)
         fig = plot_predicted_movements(confirmed_coord_t1, segmented_pos_t2.real, coords.real, t1, t2)
         fig.savefig(self.results_folder / TRACK_RESULTS / "figure" / f"matching_{str(t2).zfill(4)}.png",
                     facecolor='white')
@@ -643,59 +647,65 @@ def fix_labeling_errors(segmentation: np.ndarray) -> Tuple[np.ndarray, bool]:
     return new_segmentation, was_corrected
 
 
-def plot_predicted_movements(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray, t1: int, t2: int,
-                             fig_width_px=1200, dpi=96):
-    """
-    Draws the initial matching between two sets of 3D points and their matching relationships.
-
-    Parameters
-    ----------
-    ref_ptrs : ndarray
-        A 2D array of shape (n, 3) containing the positions of reference points.
-    tgt_ptrs : ndarray
-        A 2D array of shape (n, 3) containing the positions of target points.
-    predicted_ref_ptrs : ndarray
-        A 2D array of shape (n, 3) containing the predicted positions of reference points.
-    t1 : int
-        The time step of the reference points.
-    t2 : int
-        The time step of the target points.
-    fig_width_px : int, optional
-        The width of the output figure in pixels. Default is 1200.
-    dpi : int, optional
-        The resolution of the output figure in dots per inch. Default is 96.
-
-    Raises
-    ------
-    AssertionError
-        If the inputs have invalid shapes or data types.
-    """
-    # Validate the inputs
-    assert isinstance(ref_ptrs, ndarray) and ref_ptrs.ndim == 2 and ref_ptrs.shape[
-        1] == 3, "ref_ptrs should be a 2D array with shape (n, 3)"
-    assert isinstance(tgt_ptrs, ndarray) and tgt_ptrs.ndim == 2 and tgt_ptrs.shape[
-        1] == 3, "tgt_ptrs should be a 2D array with shape (n, 3)"
+def validate_inputs(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray):
+    assert isinstance(ref_ptrs, ndarray) and ref_ptrs.ndim == 2 and ref_ptrs.shape[1] == 3, \
+        "ref_ptrs should be a 2D array with shape (n, 3)"
+    assert isinstance(tgt_ptrs, ndarray) and tgt_ptrs.ndim == 2 and tgt_ptrs.shape[1] == 3, \
+        "tgt_ptrs should be a 2D array with shape (n, 3)"
     assert isinstance(predicted_ref_ptrs, ndarray) and predicted_ref_ptrs.ndim == 2 and predicted_ref_ptrs.shape[
-        1] == 3, "predicted_ref_ptrs should be a 2D array with shape (n, 3)"
+        1] == 3, \
+        "predicted_ref_ptrs should be a 2D array with shape (n, 3)"
+
+
+def plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, ax1=None, ax2=None, single_panel=False):
+    for ref_ptr, tgt_ptr in zip(ref_ptrs, predicted_ref_ptrs):
+        pt1 = np.asarray([ref_ptr[1], -ref_ptr[0]])
+        pt2 = np.asarray([tgt_ptr[1], -tgt_ptr[0]])
+
+        if single_panel:
+            plt.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], lw=1)
+        else:
+            con = ConnectionPatch(xyA=pt2, xyB=pt1, coordsA="data", coordsB="data",
+                                  axesA=ax2, axesB=ax1, color="C1")
+            ax2.add_artist(con)
+
+
+def plot_predicted_movements(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray, t1: int, t2: int,
+                             fig_width_px=1800, dpi=96):
+    # Validate the inputs
+    validate_inputs(ref_ptrs, tgt_ptrs, predicted_ref_ptrs)
 
     # Plot the scatters of the ref_points and tgt_points
     ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1, t2)
 
     # Plot the matching relationships between the two sets of points
-    for ref_ptr, tgt_ptr in zip(ref_ptrs, predicted_ref_ptrs):
-        # Get the coordinates of the matched points in the two point sets
-        pt1 = np.asarray([ref_ptr[1], -ref_ptr[0]])
-        pt2 = np.asarray([tgt_ptr[1], -tgt_ptr[0]])
-
-        # Draw a connection between the matched points in the two subplots using the `ConnectionPatch` class
-        con = ConnectionPatch(xyA=pt2, xyB=pt1, coordsA="data", coordsB="data",
-                              axesA=ax2, axesB=ax1, color="C1")
-        ax2.add_artist(con)
+    plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, ax1, ax2, single_panel=False)
 
     return fig
 
 
-def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarray, tgt_ptrs: ndarray, t1: int, t2: int):
+def plot_predicted_movements_one_panel(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray, t1: int,
+                                       t2: int,
+                                       fig_width_px=1800, dpi=96):
+    # Validate the inputs
+    validate_inputs(ref_ptrs, tgt_ptrs, predicted_ref_ptrs)
+
+    # Plot the scatters of the ref_points and tgt_points
+    fig_width_in = fig_width_px / dpi  # convert to inches assuming the given dpi
+    fig_height_in = fig_width_in / 1.618  # set height to golden ratio
+    fig = plt.figure(figsize=(fig_width_in, fig_height_in), dpi=dpi)
+    plt.scatter(ref_ptrs[:, 1], -ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')
+    plt.scatter(tgt_ptrs[:, 1], -tgt_ptrs[:, 0], marker="x", facecolors='r', edgecolors='r', label='Set 2')
+
+    # Plot the matching relationships between the two sets of points
+    plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, single_panel=True)
+
+    return fig
+
+
+
+def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarray, tgt_ptrs: ndarray, t1: int, t2: int,
+                               ids_ref: list = None, ids_tgt: list = None):
     """
     Creates a figure with two subplots showing two sets of 3D points.
 
@@ -713,6 +723,10 @@ def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarra
         The time step of the reference points.
     t2 : int
         The time step of the target points.
+    ids_ref : list, optional
+        A list of strings containing the IDs of the reference points. Default is None.
+    ids_tgt : list, optional
+        A list of strings containing the IDs of the target points. Default is None.
 
     Returns
     -------
@@ -730,6 +744,10 @@ def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarra
     ref_range_y, ref_range_x, _ = np.max(ref_ptrs, axis=0) - np.min(ref_ptrs, axis=0)
     tgt_range_y, tgt_range_x, _ = np.max(tgt_ptrs, axis=0) - np.min(tgt_ptrs, axis=0)
     top_down = ref_range_x + tgt_range_x >= ref_range_y + tgt_range_y
+
+    ids_ref = range(1, ref_ptrs.shape[0]+1) if ids_ref is None else ids_ref
+    ids_tgt = range(1, tgt_ptrs.shape[0]+1) if ids_tgt is None else ids_tgt
+
     # Create the figure and subplots
     if top_down:
         # print("Using top-down layout")
@@ -739,10 +757,12 @@ def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarra
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(fig_width_in, fig_height_in))
     # Plot the point sets on the respective subplots
     ax1.scatter(ref_ptrs[:, 1], -ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')
-    for i, txt in enumerate(range(ref_ptrs.shape[0])):
+
+    for i, txt in enumerate(ids_ref):
         ax1.annotate(txt, (ref_ptrs[i, 1], -ref_ptrs[i, 0]))
     ax2.scatter(tgt_ptrs[:, 1], -tgt_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 2')
-    for i, txt in enumerate(range(tgt_ptrs.shape[0])):
+
+    for i, txt in enumerate(ids_tgt):
         ax2.annotate(txt, (tgt_ptrs[i, 1], -tgt_ptrs[i, 0]))
 
     unify_xy_lims(ax1, ax2)

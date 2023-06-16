@@ -111,6 +111,17 @@ The original programs used in eLife 2021 was contained in the "[**Deprecated_pro
 | ------------- | ------------- | ------------- | 
 | <img src="https://user-images.githubusercontent.com/27986173/115169952-63b4e600-a0fa-11eb-9b85-91292bc9d419.gif" width="340">| <img src="https://user-images.githubusercontent.com/27986173/115170418-90b5c880-a0fb-11eb-9382-13690c3375dc.gif" width="400">| <img src="https://user-images.githubusercontent.com/27986173/115170434-9ad7c700-a0fb-11eb-9004-2e4cff86f7ab.gif" width="200">|
 
+## Reporting Issues
+If you encounter any issues or have suggestions for improvements, please let me know by creating an issue in this repository. To report an issue, follow these steps:
+
+1. Go to the [Issues tab](https://github.com/WenChentao/3DeeCellTracker/issues) on this repository.
+2. Click on the **New Issue** button.
+3. Provide a descriptive title and a clear description of the issue or suggestion.
+4. Include any relevant information, such as error messages, steps to reproduce the issue, or screenshots.
+5. Apply appropriate labels or tags to categorize the issue.
+6. Click on the **Submit New Issue** button.
+
+Thank you for helping us improve this project!
 
 ## Citation
 
