@@ -13,8 +13,8 @@ from numpy import ndarray
 from skimage.segmentation import relabel_sequential
 from tifffile import imread
 
-from CellTracker.stardistwrapper import lbl_cmap, load_2d_slices_at_time
-from CellTracker.watershed import recalculate_cell_boundaries
+from CellTracker.stardistwrapper import lbl_cmap
+from CellTracker.utils import load_2d_slices_at_time, recalculate_cell_boundaries
 
 MERGED_LABELS_XZ = "merged_labels_xz"
 MERGED_LABELS = "merged_labels"

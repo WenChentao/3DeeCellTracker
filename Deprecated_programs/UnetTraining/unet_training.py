@@ -18,8 +18,8 @@ from keras.callbacks import ModelCheckpoint
 import random
 import scipy.misc
 
-from CellTracker.preprocess import lcn_gpu
-from CellTracker.unet3d import unet3_a, unet3_prediction
+from CellTracker.v1_modules.preprocess import lcn_gpu
+from CellTracker.v1_modules.unet3d import unet3_a, unet3_prediction
 
 %matplotlib qt
 

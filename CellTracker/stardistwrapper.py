@@ -17,13 +17,13 @@ import numpy as np
 from PIL import Image
 from csbdeep.utils import Path, normalize
 from numpy import ndarray
-from stardist import Rays_GoldenSpiral
-from stardist import fill_label_holes, random_label_cmap, calculate_extents, gputools_available
+from stardist import Rays_GoldenSpiral, fill_label_holes, random_label_cmap, calculate_extents, gputools_available
 from stardist.models import Config3D
 from stardist.utils import _normalize_grid
 from tifffile import imread
 from tqdm import tqdm
 
+from CellTracker.utils import load_2d_slices_at_time
 from CellTracker.stardist3dcustom import StarDist3DCustom
 
 STARDIST_MODELS = "stardist_models"
@@ -39,18 +39,6 @@ def load_stardist_model(model_name: str = "stardist", basedir: str = STARDIST_MO
     model = StarDist3DCustom(None, name=model_name, basedir=basedir)
     print(f"Load pretrained stardist model '{model_name}' from folder '{basedir}'")
     return model
-
-
-def load_2d_slices_at_time(slice_paths: str, t: int, do_normalize: bool = True):
-    """Load all 2D slices at time t and normalize the resulted 3D image"""
-    slice_paths_at_t = sorted(glob(slice_paths % t))
-    if len(slice_paths_at_t) == 0:
-        raise FileNotFoundError(f"No image at time {t} was found")
-    x = imread(slice_paths_at_t)
-    if do_normalize:
-        axis_norm = (0, 1, 2)  # normalize channels independently
-        return normalize(x, 1, 99.8, axis=axis_norm)
-    return x
 
 
 def predict_and_save(images_path: str, model: StarDist3DCustom, results_folder: str):

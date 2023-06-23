@@ -16,7 +16,7 @@ from tensorflow.keras.layers import Conv3D, LeakyReLU, Input, MaxPooling3D, UpSa
 from tensorflow.keras.models import Model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
-from CellTracker.preprocess import load_image, _make_folder, _normalize_image, _normalize_label
+from CellTracker.v1_modules.preprocess import load_image, _make_folder, _normalize_image, _normalize_label
 
 warnings.filterwarnings('ignore')
 

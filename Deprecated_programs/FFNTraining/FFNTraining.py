@@ -17,7 +17,7 @@ import keras
 from keras.models import Model
 from keras.layers import Input, Dense, BatchNormalization
 from keras.callbacks import ModelCheckpoint
-from CellTracker.track import initial_matching, FFN_matching_plot
+from CellTracker.v1_modules.track import initial_matching, FFN_matching_plot
 
 %matplotlib qt
 

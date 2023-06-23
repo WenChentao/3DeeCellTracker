@@ -12,22 +12,21 @@ Created on Mon Apr 22 2019
 #####################################
 import os
 import time
-import matplotlib.pyplot as plt
 import numpy as np
 import cv2
 import scipy.ndimage.measurements as snm
-from keras.models import Model, load_model
+from keras.models import load_model
 from PIL import Image
 from skimage.segmentation import relabel_sequential
 import tensorflow as tf
 from keras.backend import tensorflow_backend
 
-from CellTracker.preprocess import lcn_gpu
-from CellTracker.unet3d import unet3_a, unet3_prediction
-from CellTracker.watershed import watershed_2d, watershed_3d, \
-    recalculate_cell_boundaries
+from CellTracker.v1_modules.preprocess import lcn_gpu
+from CellTracker.v1_modules.unet3d import unet3_a, unet3_prediction
+from CellTracker.v1_modules.watershed import watershed_2d, watershed_3d
+from CellTracker.utils import recalculate_cell_boundaries
 from CellTracker.interpolate_labels import gaussian_filter
-from CellTracker.track import initial_matching, pr_gls, transform_cells, \
+from CellTracker.v1_modules.track import initial_matching, pr_gls, transform_cells, \
     tracking_plot, tracking_plot_zx
 
 %matplotlib qt

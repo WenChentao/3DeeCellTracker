@@ -32,11 +32,12 @@ from scipy.stats import trim_mean
 from skimage.measure import label
 from skimage.segmentation import relabel_sequential, find_boundaries
 
-from .preprocess import _make_folder, _normalize_image, _normalize_label, load_image
-from .track import pr_gls_quick, initial_matching_quick, get_reference_vols, get_subregions, tracking_plot_xy, \
+from CellTracker.v1_modules.preprocess import _make_folder, _normalize_image, _normalize_label, load_image
+from CellTracker.v1_modules.track import pr_gls_quick, initial_matching_quick, get_reference_vols, get_subregions, tracking_plot_xy, \
     tracking_plot_zx, gaussian_filter
 from .unet3d import unet3_prediction, _divide_img, _augmentation_generator
-from .watershed import watershed_2d, watershed_3d, recalculate_cell_boundaries
+from CellTracker.v1_modules.watershed import watershed_2d, watershed_3d
+from CellTracker.utils import recalculate_cell_boundaries
 
 mpl.rcParams['image.interpolation'] = 'none'
 

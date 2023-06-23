@@ -1,18 +1,18 @@
 from glob import glob
 from pathlib import Path
-from typing import Tuple, Generator, Union
+from typing import Generator
 
 import numpy as np
 import tensorflow as tf
 from numpy import ndarray
-from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, BatchNormalization, LeakyReLU, Concatenate
 from tifffile import imread
 from tqdm import tqdm
 
-from CellTracker.synthesize import add_seg_errors, points_to_features
+from CellTracker.utils import normalize_points
+from CellTracker.v1_modules.synthesize import add_seg_errors, points_to_features
 
 # parameters for feedforward network
 RATIO_SEG_ERROR = 0.15
@@ -327,48 +327,3 @@ def initial_matching_ffn(ffn_model, ref: ndarray, tgt: ndarray, k_ptrs: int) -> 
     return corr
 
 
-def normalize_points(points: ndarray, return_para: bool = False) -> Union[ndarray, Tuple[ndarray, Tuple[any, any]]]:
-    """
-    Normalize a set of 3D points by centering them at their mean and scaling them by three times
-    their standard deviation along the principal component.
-
-    Parameters
-    ----------
-    points : ndarray
-        A 2D array of shape (n, 3) containing the 3D coordinates of the points.
-    return_para : bool, optional
-        If True, the function returns the mean and scaling factor used for normalization.
-        Default is False.
-
-    Returns
-    -------
-    Union[ndarray, Tuple[ndarray, Tuple[any, any]]]
-        If return_para is False, returns the normalized points as a 2D array of shape (n, 3).
-        If return_para is True, returns a tuple containing the normalized points and a tuple with
-        the mean and scaling factor.
-
-    Raises
-    ------
-    ValueError
-        If the input points array is not a 2D array or if it does not contain 3D coordinates.
-    """
-    if points.ndim != 2:
-        raise ValueError(f"Points should be a 2D table, but get {points.ndim}D")
-    if points.shape[1] != 3:
-        raise ValueError(f"Points should have 3D coordinates, but get {points.shape[1]}D")
-
-    # Compute the mean and PCA of the input points
-    mean = np.mean(points, axis=0)
-    pca = PCA(n_components=1)
-    pca.fit(points)
-
-    # Compute the standard deviation of the projection
-    std = np.std(pca.transform(points)[:, 0])
-
-    # Normalize the points
-    norm_points = (points - mean) / (3 * std)
-
-    if return_para:
-        return norm_points, (mean, 3 * std)
-    else:
-        return norm_points

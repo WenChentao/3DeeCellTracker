@@ -13,11 +13,12 @@ from scipy.stats import trim_mean
 
 from CellTracker.coord_image_transformer import Coordinates, plot_predicted_movements, plot_two_pointset_scatters, \
     plot_predicted_movements_one_panel, CoordsToImageTransformer
-from CellTracker.ffn import initial_matching_ffn, normalize_points, FFN
+from CellTracker.v1_modules.ffn import initial_matching_ffn, FFN
+from CellTracker.flexi_point_net import FlexiblePointMatcher, initial_matching_fpm
 from CellTracker.robust_match import filter_matching_outliers, calc_min_path, add_or_remove_points, \
     get_full_cell_candidates
 from CellTracker.stardist3dcustom import StarDist3DCustom
-from CellTracker.stardistwrapper import load_2d_slices_at_time
+from CellTracker.utils import load_2d_slices_at_time, normalize_points
 
 FIGURE = "figure"
 COORDS_REAL = "coords_real"
@@ -33,22 +34,23 @@ class TrackerLite:
     A class that tracks cells in 3D time-lapse images using a trained FFN model.
     """
 
-    def __init__(self, results_dir: str, ffn_model_name: str, proofed_coords_vol1: Coordinates,
+    def __init__(self, results_dir: str, match_model_name: str, proofed_coords_vol1: Coordinates,
                  coords2image: CoordsToImageTransformer, stardist_model: StarDist3DCustom,
-                 similarity_threshold=0.3, match_method: str = "coherence", miss_frame: List[int] = None, basedir: str = "ffn_models"):
+                 similarity_threshold=0.3, match_method: str = "coherence", miss_frame: List[int] = None,
+                 basedir: str = "ffn_models", model_type: str = "ffn"):
         """
         Initialize a new instance of the TrackerLite class.
 
         Args:
             results_dir: The path to the directory containing the results.
-            ffn_model_name: The filename without extension to the FFN model file.
+            match_model_name: The filename without extension to the model file.
             proofed_coords_vol1: The confirmed cell positions at time step t1.
             coords2image: The CoordsToImageTransformer instance.
             stardist_model: The StarDist3DCustom instance.
             similarity_threshold: The threshold for removing outlier matching between two cells from two frames.
             match_method: The method for matching cells. "coherence", "greedy" or "hungarian".
             miss_frame: A list of missing frames.
-            basedir: The base directory of the FFN model.
+            basedir: The base directory of the match model.
         """
         if miss_frame is not None and not isinstance(miss_frame, List):
             raise TypeError(f"miss_frame should be a list or None, but got {type(miss_frame)}")
@@ -64,15 +66,23 @@ class TrackerLite:
         self.match_method = match_method
         self.similarity_threshold = similarity_threshold
 
-        self.ffn_model_path = Path(basedir) / (ffn_model_name + ".h5")
-        self.ffn_model = FFN()
+        self.match_model_path = Path(basedir) / (match_model_name + ".h5")
+        if model_type == "ffn":
+            self.match_model = FFN()
+            dummy_input = np.random.random((1, 122))
+            self.initial_matching = initial_matching_ffn
+        elif model_type == "fpm":
+            self.match_model = FlexiblePointMatcher()
+            dummy_input = np.random.random((1, 22, 4, 2))
+            self.initial_matching = initial_matching_fpm
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
 
         try:
-            dummy_input = np.random.random((1, 122))
-            _ = self.ffn_model(dummy_input)
-            self.ffn_model.load_weights(str(self.ffn_model_path))
+            _ = self.match_model(dummy_input)
+            self.match_model.load_weights(str(self.match_model_path))
         except (OSError, ValueError) as e:
-            raise ValueError(f"Failed to load the FFN model from {self.ffn_model_path}: {e}") from e
+            raise ValueError(f"Failed to load the match model from {self.match_model_path}: {e}") from e
 
         self.proofed_coords_vol1 = proofed_coords_vol1
         self.miss_frame = [] if miss_frame is None else miss_frame
@@ -119,9 +129,9 @@ class TrackerLite:
         for i in range(iter):
             inliers_pre = (inliers_ori[0], inliers_ori[1])
             # Generate similarity scores between the filtered segmented coords
-            similarity_scores = initial_matching_ffn(self.ffn_model, filtered_segmented_coords_norm_t1,
-                                                    filtered_segmented_coords_norm_t2,
-                                                    K_POINTS)
+            similarity_scores = self.initial_matching(self.match_model, filtered_segmented_coords_norm_t1,
+                                                     filtered_segmented_coords_norm_t2,
+                                                     K_POINTS)
             updated_similarity_scores = similarity_scores.copy()
             # Generate updated_matched_pairs, which is the indices of the matched pairs in the filtered segmented coords
             updated_matched_pairs = get_match_pairs(updated_similarity_scores, filtered_segmented_coords_norm_t1,
@@ -138,6 +148,11 @@ class TrackerLite:
                                       filtered_segmented_coords_norm_t2 * scale_t1 + mean_t1,
                                       updated_matched_pairs, t1, t2)
                 fig.suptitle(f"Updated matching (iteration={i}))", fontsize=20, y=0.9)
+            if verbosity >= 4:
+                fig = plot_matching(filtered_segmented_coords_norm_t1[:, [2,1,0]] * scale_t1 + mean_t1,
+                                      filtered_segmented_coords_norm_t2[:, [2,1,0]] * scale_t1 + mean_t1,
+                                      updated_matched_pairs, t1, t2)
+                fig.suptitle(f"Updated matching (iteration={i}), z-x)", fontsize=20, y=0.9)
 
             # Predict the corresponding positions in t2 of all the segmented cells in t1
             original_matched_pairs = np.column_stack(
@@ -160,6 +175,10 @@ class TrackerLite:
             if verbosity >= 3:
                 fig = plot_move(segmented_coords_norm_t1, segmented_coords_norm_t2, predicted_coords_t1_to_t2, t1, t2)
                 fig.suptitle(f"FFN + {post_processing} prediction", fontsize=20, y=0.9)
+            if verbosity >= 4:
+                fig = plot_move(segmented_coords_norm_t1[:, [2,1,0]], segmented_coords_norm_t2[:, [2,1,0]],
+                                predicted_coords_t1_to_t2[:, [2,1,0]], t1, t2)
+                fig.suptitle(f"FFN + {post_processing} prediction, z-x", fontsize=20, y=0.9)
 
             if filter_points:
                 # Predict the corresponding positions in t1 of all the segmented cells in t2
@@ -183,6 +202,10 @@ class TrackerLite:
         if verbosity >= 1:
             fig = plot_move(confirmed_coord_t1.real, segmented_pos_t2.real[inliers_ori[1]], tracked_coords_t2, t1, t2)
             fig.suptitle(f"FFN + {post_processing} prediction", fontsize=20, y=0.9)
+        if verbosity >= 4:
+            fig = plot_move(confirmed_coord_t1.real[:, [2,1,0]], segmented_pos_t2.real[inliers_ori[1]][:, [2,1,0]],
+                            tracked_coords_t2[:, [2,1,0]], t1, t2)
+            fig.suptitle(f"FFN + {post_processing} prediction, z-x", fontsize=20, y=0.9)
 
         return Coordinates(tracked_coords_t2,
                            interpolation_factor=self.proofed_coords_vol1.interpolation_factor,
@@ -222,7 +245,7 @@ class TrackerLite:
     def match_two_point_sets(self, confirmed_coord_t1, segmented_pos_t2):
         confirmed_coords_norm_t1, (mean_t1, scale_t1) = normalize_points(confirmed_coord_t1.real, return_para=True)
         segmented_coords_norm_t2 = (segmented_pos_t2.real - mean_t1) / scale_t1
-        initial_matching = initial_matching_ffn(self.ffn_model, confirmed_coords_norm_t1, segmented_coords_norm_t2,
+        initial_matching = self.initial_matching(self.match_model, confirmed_coords_norm_t1, segmented_coords_norm_t2,
                                                 K_POINTS)
         updated_matching = initial_matching.copy()
         pairs_px2 = get_match_pairs(updated_matching, confirmed_coords_norm_t1, segmented_coords_norm_t2,
