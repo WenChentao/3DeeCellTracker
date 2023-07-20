@@ -14,18 +14,18 @@ from scipy.stats import trim_mean
 from CellTracker.coord_image_transformer import Coordinates, plot_predicted_movements, plot_two_pointset_scatters, \
     plot_predicted_movements_one_panel, CoordsToImageTransformer
 from CellTracker.v1_modules.ffn import initial_matching_ffn, FFN
-from CellTracker.flexi_point_net import FlexiblePointMatcher, initial_matching_fpm
+from CellTracker.fpm import FlexiblePointMatcherOriginal, initial_matching_fpm
 from CellTracker.robust_match import filter_matching_outliers, calc_min_path, add_or_remove_points, \
     get_full_cell_candidates
 from CellTracker.stardist3dcustom import StarDist3DCustom
-from CellTracker.utils import load_2d_slices_at_time, normalize_points
+from CellTracker.utils import load_2d_slices_at_time, normalize_points, set_unique_xlim
 
 FIGURE = "figure"
 COORDS_REAL = "coords_real"
 LABELS = "labels"
 TRACK_RESULTS = "track_results"
 SEG = "seg"
-BETA, LAMBDA, MAX_ITERATION = (1.0, 5.0, 2000)
+BETA, LAMBDA, MAX_ITERATION = (5.0, 5.0, 2000)
 K_POINTS = 20
 
 
@@ -41,16 +41,28 @@ class TrackerLite:
         """
         Initialize a new instance of the TrackerLite class.
 
-        Args:
-            results_dir: The path to the directory containing the results.
-            match_model_name: The filename without extension to the model file.
-            proofed_coords_vol1: The confirmed cell positions at time step t1.
-            coords2image: The CoordsToImageTransformer instance.
-            stardist_model: The StarDist3DCustom instance.
-            similarity_threshold: The threshold for removing outlier matching between two cells from two frames.
-            match_method: The method for matching cells. "coherence", "greedy" or "hungarian".
-            miss_frame: A list of missing frames.
-            basedir: The base directory of the match model.
+        Parameters
+        ----------
+        results_dir:
+            The path to the directory containing the results.
+        match_model_name:
+            The filename without extension to the model file.
+        proofed_coords_vol1:
+            The confirmed cell positions at time step t1.
+        coords2image:
+            The CoordsToImageTransformer instance.
+        stardist_model:
+            The StarDist3DCustom instance.
+        similarity_threshold:
+            The threshold for removing outlier matching between two cells from two frames.
+        match_method:
+            The method for matching cells. "coherence", "greedy" or "hungarian".
+        miss_frame:
+            A list of missing frames.
+        basedir:
+            The base directory of the match model.
+        model_type:
+            The type of the match model. "ffn" or "fpm".
         """
         if miss_frame is not None and not isinstance(miss_frame, List):
             raise TypeError(f"miss_frame should be a list or None, but got {type(miss_frame)}")
@@ -72,7 +84,7 @@ class TrackerLite:
             dummy_input = np.random.random((1, 122))
             self.initial_matching = initial_matching_ffn
         elif model_type == "fpm":
-            self.match_model = FlexiblePointMatcher()
+            self.match_model = FlexiblePointMatcherOriginal()
             dummy_input = np.random.random((1, 22, 4, 2))
             self.initial_matching = initial_matching_fpm
         else:
@@ -88,26 +100,79 @@ class TrackerLite:
         self.miss_frame = [] if miss_frame is None else miss_frame
 
     def predict_cell_positions(self, t1: int, t2: int, confirmed_coord_t1: Coordinates = None,
+                               match_confirmed_t1_and_seg_t1=None,
                                beta: float = BETA, lambda_: float = LAMBDA, smoothing=0,
                                post_processing: str = "prgls", filter_points: bool = True, verbosity: int = 0,
-                               with_shift: bool = True, learning_rate: float = 0.5) -> Coordinates:
+                               with_shift: bool = True, learning_rate: float = 0.5) -> Tuple[Coordinates, ndarray]:
         """
         Predicts the positions of cells in a 3D image at time step t2, based on their positions at time step t1.
 
-        Args:
-            t1: The time step for the first set of cell positions.
-            t2: The time step for the second set of cell positions.
-            confirmed_coord_t1: The confirmed cell positions at time step t1.
+        Parameters
+        ----------
+        t1:
+            The time step t1.
+        t2:
+            The time step t2.
+        confirmed_coord_t1:
+            The confirmed cell positions at time step t1.
+        match_confirmed_t1_and_seg_t1: ndarray, shape (n, 2)
+            The matching between the confirmed cell positions at time step t1 and the segmentation at time step t1.
+        beta:
+            The beta parameter for the prgls model.
+        lambda_:
+            The lambda parameter for the prgls model.
+        smoothing:
+            The smoothing parameter for the tps model.
+        post_processing:
+            The post-processing method. "prgls" or "tps".
+        filter_points:
+            Whether to filter out the outliers points that do not have corresponding points.
+        verbosity:
+            The verbosity level. 0-4. 0: no figure, 1: only final matching figure, 2: initial and final matching figures,
+            3: all figures during iterations only in y-x view, 4: all figures during iterations with additional z-x view.
+        with_shift:
+            Whether to show the t1 and t2 points in a shift way.
+        learning_rate:
+            The learning rate for updating the predicted points, between 0 and 1.
 
         Returns:
-            The predicted cell positions at time step t2.
+        --------
+        tracked_coords_t2_pred: Coordinates
+            The predicted cell positions of confirmed cells at time step t2.
+        match_confirmed_t1_and_seg_t2: ndarray, shape (n, 2)
+            The matching between the confirmed cell positions at time step t1 and the segmentation at time step t2.
         """
+        def _plot_matching(title: str, zy_view: bool = False):
+            s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
+            title = title + ", zy-view" if zy_view else title
+            fig = plot_matching((filtered_segmented_coords_norm_t1 * scale_t1 + mean_t1)[s_],
+                                (filtered_segmented_coords_norm_t2 * scale_t1 + mean_t1)[s_],
+                                updated_matched_pairs, t1, t2)
+            fig.suptitle(title, fontsize=20, y=0.9)
+
+        def _plot_move_seg(title: str, zy_view: bool = False):
+            s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
+            title = title + ", zy-view" if zy_view else title
+            fig = plot_move(predicted_coords_set1[s_], segmented_coords_norm_t2[s_], predicted_coords_t1_to_t2[s_], t1, t2)
+            fig.suptitle(title, fontsize=20, y=0.9)
+
+        def _plot_move_final(title: str, zy_view: bool = False):
+            s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
+            title = title + ", zy-view" if zy_view else title
+            fig = plot_move(confirmed_coord_t1.real[s_], segmented_pos_t2.real[inliers_ori[1]][s_], tracked_coords_t2[s_], t1, t2)
+            fig.suptitle(title, fontsize=20, y=0.9)
+
         assert t2 not in self.miss_frame
-        segmented_pos_t1, inliers_t1 = self._get_segmented_pos(t1)
-        segmented_pos_t2, inliers_t2 = self._get_segmented_pos(t2)
 
         if confirmed_coord_t1 is None:
+            segmented_pos_t1, inliers_t1 = self._get_segmented_pos(t1)
             confirmed_coord_t1 = segmented_pos_t1
+            match_confirmed_t1_and_seg_t1 = np.arange(confirmed_coord_t1.real.shape[0]).repeat(2).reshape(-1, 2)
+
+        segmented_pos_t2, inliers_t2 = self._get_segmented_pos(t2)
+
+        plot_matching = plot_initial_matching if with_shift else plot_initial_matching_one_panel
+        plot_move = plot_predicted_movements if with_shift else plot_predicted_movements_one_panel
 
         # Normalize point sets
         confirmed_coords_norm_t1, (mean_t1, scale_t1) = normalize_points(confirmed_coord_t1.real, return_para=True)
@@ -116,16 +181,12 @@ class TrackerLite:
 
         filtered_segmented_coords_norm_t1 = segmented_coords_norm_t1[inliers_t1]
         filtered_segmented_coords_norm_t2 = segmented_coords_norm_t2[inliers_t2]
+        predicted_coords_set1 = segmented_coords_norm_t1.copy()
         n = segmented_coords_norm_t1.shape[0]
         m = segmented_coords_norm_t2.shape[0]
         inliers_ori = (inliers_t1, inliers_t2)
-        similarity_scores_shape = (m, n)
 
-        plot_matching = plot_initial_matching if with_shift else plot_initial_matching_one_panel
-        plot_move = plot_predicted_movements if with_shift else plot_predicted_movements_one_panel
-        predicted_coords_t1_to_t2 = segmented_coords_norm_t1.copy()
-
-        iter = 3
+        iter = 4
         for i in range(iter):
             inliers_pre = (inliers_ori[0], inliers_ori[1])
             # Generate similarity scores between the filtered segmented coords
@@ -137,80 +198,67 @@ class TrackerLite:
             updated_matched_pairs = get_match_pairs(updated_similarity_scores, filtered_segmented_coords_norm_t1,
                                             filtered_segmented_coords_norm_t2, threshold=self.similarity_threshold,
                                             method=self.match_method)
+
             # Generate figures showing the matching
-            if verbosity >= 2 and i == 0:
-                fig = plot_matching(filtered_segmented_coords_norm_t1 * scale_t1 + mean_t1,
-                                      filtered_segmented_coords_norm_t2 * scale_t1 + mean_t1,
-                                      updated_matched_pairs, t1, t2)
-                fig.suptitle("Initial matching by FFN", fontsize=20, y=0.9)
-            if verbosity >= 3 and i > 0:
-                fig = plot_matching(filtered_segmented_coords_norm_t1 * scale_t1 + mean_t1,
-                                      filtered_segmented_coords_norm_t2 * scale_t1 + mean_t1,
-                                      updated_matched_pairs, t1, t2)
-                fig.suptitle(f"Updated matching (iteration={i}))", fontsize=20, y=0.9)
+            if (verbosity >= 2 and i == 0) or (verbosity >= 3 and i >= 1):
+                _plot_matching(f"Matching iter={i}")
             if verbosity >= 4:
-                fig = plot_matching(filtered_segmented_coords_norm_t1[:, [2,1,0]] * scale_t1 + mean_t1,
-                                      filtered_segmented_coords_norm_t2[:, [2,1,0]] * scale_t1 + mean_t1,
-                                      updated_matched_pairs, t1, t2)
-                fig.suptitle(f"Updated matching (iteration={i}), z-x)", fontsize=20, y=0.9)
+                _plot_matching(f"Matching iter={i}", zy_view=True)
 
             # Predict the corresponding positions in t2 of all the segmented cells in t1
-            original_matched_pairs = np.column_stack(
+            match_seg_t1_seg_t2 = np.column_stack(
                 (inliers_pre[0][updated_matched_pairs[:, 0]], inliers_pre[1][updated_matched_pairs[:, 1]]))
 
-            # Generate normalized probability, which is only used when prediction method is "prgls"
-            normalized_prob = cal_norm_prob(original_matched_pairs, similarity_scores_shape)
+            predicted_coords_t1_to_t2 = predict_new_positions(
+                match_seg_t1_seg_t2, predicted_coords_set1, predicted_coords_set1, segmented_coords_norm_t2,
+                post_processing, smoothing, (m, n), beta, lambda_)
 
             if i == iter - 1:
-                tracked_coords_norm_t2 = predict_new_positions(original_matched_pairs, confirmed_coords_norm_t1,
-                                                               segmented_coords_norm_t1, segmented_coords_norm_t2,
-                                                               post_processing, smoothing, normalized_prob, beta,
-                                                               lambda_)
+                tracked_coords_norm_t2 = predicted_coords_t1_to_t2.copy()
+                common_elements_seg_t1 = np.intersect1d(match_confirmed_t1_and_seg_t1[:, 1], match_seg_t1_seg_t2[:, 0])
+                index_pairs = np.asarray([(np.where(match_confirmed_t1_and_seg_t1[:, 1] == element)[0][0],
+                                np.where(match_seg_t1_seg_t2[:, 0] == element)[0][0]) for element in
+                               common_elements_seg_t1])
+                match_confirmed_t1_and_seg_t2 = np.concatenate((match_confirmed_t1_and_seg_t1[index_pairs[:,0], 0:1],
+                                                                match_seg_t1_seg_t2[index_pairs[:,1], 1:2]), axis=1)
+                tracked_coords_norm_t2[match_confirmed_t1_and_seg_t2[:, 0], :] = segmented_coords_norm_t2[match_confirmed_t1_and_seg_t2[:, 1], :]
                 break
 
-            predicted_coords_t1_to_t2 = predict_new_positions(
-                original_matched_pairs, predicted_coords_t1_to_t2, predicted_coords_t1_to_t2, segmented_coords_norm_t2,
-                post_processing, smoothing, normalized_prob, beta, lambda_)
-
             if verbosity >= 3:
-                fig = plot_move(segmented_coords_norm_t1, segmented_coords_norm_t2, predicted_coords_t1_to_t2, t1, t2)
-                fig.suptitle(f"FFN + {post_processing} prediction", fontsize=20, y=0.9)
+                _plot_move_seg(f"Predict movements after {i} iteration")
             if verbosity >= 4:
-                fig = plot_move(segmented_coords_norm_t1[:, [2,1,0]], segmented_coords_norm_t2[:, [2,1,0]],
-                                predicted_coords_t1_to_t2[:, [2,1,0]], t1, t2)
-                fig.suptitle(f"FFN + {post_processing} prediction, z-x", fontsize=20, y=0.9)
+                _plot_move_seg(f"Predict movements after {i} iteration", zy_view=True)
 
             if filter_points:
                 # Predict the corresponding positions in t1 of all the segmented cells in t2
                 predicted_coords_t2_to_t1 = predict_new_positions(
-                    original_matched_pairs[:, [1, 0]], segmented_coords_norm_t2, segmented_coords_norm_t2, segmented_coords_norm_t1,
-                    post_processing, smoothing, normalized_prob.T, beta, lambda_)
+                    match_seg_t1_seg_t2[:, [1, 0]], segmented_coords_norm_t2, segmented_coords_norm_t2, predicted_coords_set1,
+                    post_processing, smoothing, (n, m), beta, lambda_)
 
                 filtered_segmented_coords_norm_t1, filtered_segmented_coords_norm_t2, inliers_ori = \
                     add_or_remove_points(
-                    predicted_coords_t1_to_t2, predicted_coords_t2_to_t1, segmented_coords_norm_t1, segmented_coords_norm_t2,
-                    original_matched_pairs, k_neighbors=3)
+                    predicted_coords_t1_to_t2, predicted_coords_t2_to_t1, predicted_coords_set1, segmented_coords_norm_t2,
+                    match_seg_t1_seg_t2)
 
-            filtered_segmented_coords_norm_t1 = (segmented_coords_norm_t1 + (
-                        predicted_coords_t1_to_t2 - segmented_coords_norm_t1) * learning_rate)[inliers_ori[0]]
+            predicted_coords_set1 = (predicted_coords_set1 + (predicted_coords_t1_to_t2 - predicted_coords_set1) * learning_rate)
+            filtered_segmented_coords_norm_t1 = predicted_coords_set1[inliers_ori[0]]
 
-        if verbosity >= 0:
-            print(f"Matching method: {self.match_method}")
-            print(f"Threshold for similarity: {self.similarity_threshold}")
-            print(f"Post processing method: {post_processing}")
+        self.print_info(post_processing)
+
         tracked_coords_t2 = tracked_coords_norm_t2 * scale_t1 + mean_t1
         if verbosity >= 1:
-            fig = plot_move(confirmed_coord_t1.real, segmented_pos_t2.real[inliers_ori[1]], tracked_coords_t2, t1, t2)
-            fig.suptitle(f"FFN + {post_processing} prediction", fontsize=20, y=0.9)
+            _plot_move_final(f"Final prediction")
         if verbosity >= 4:
-            fig = plot_move(confirmed_coord_t1.real[:, [2,1,0]], segmented_pos_t2.real[inliers_ori[1]][:, [2,1,0]],
-                            tracked_coords_t2[:, [2,1,0]], t1, t2)
-            fig.suptitle(f"FFN + {post_processing} prediction, z-x", fontsize=20, y=0.9)
+            _plot_move_final(f"Final prediction", zy_view=True)
 
-        return Coordinates(tracked_coords_t2,
-                           interpolation_factor=self.proofed_coords_vol1.interpolation_factor,
-                           voxel_size=self.proofed_coords_vol1.voxel_size,
-                           dtype="real")
+        tracked_coords_t2_pred = Coordinates(tracked_coords_t2, interpolation_factor=self.proofed_coords_vol1.interpolation_factor,
+                                  voxel_size=self.proofed_coords_vol1.voxel_size, dtype="real")
+        return tracked_coords_t2_pred, match_confirmed_t1_and_seg_t2
+
+    def print_info(self, post_processing):
+        print(f"Matching method: {self.match_method}")
+        print(f"Threshold for similarity: {self.similarity_threshold}")
+        print(f"Post processing method: {post_processing}")
 
     def predict_cell_positions_ensemble(self, skipped_volumes: List[int], t2: int, coord_t1: Coordinates,
                                         beta: float = BETA, lambda_: float = LAMBDA, sampling_number: int = 20,
@@ -253,6 +301,7 @@ class TrackerLite:
         return pairs_px2
 
     def _get_segmented_pos(self, t: int) -> Tuple[Coordinates, ndarray]:
+        """Get segmented positions and extra positions from stardist model"""
         interp_factor = self.proofed_coords_vol1.interpolation_factor
         voxel_size = self.proofed_coords_vol1.voxel_size
 
@@ -313,11 +362,12 @@ class TrackerLite:
 
 
 def predict_new_positions(matched_pairs, confirmed_coords_norm_t1, segmented_coords_norm_t1, segmented_coords_norm_t2,
-                          post_processing, smoothing: float, normalized_prob, beta=BETA, lambda_=LAMBDA):
+                          post_processing, smoothing: float, similarity_scores_shape: Tuple[int, int], beta=BETA, lambda_=LAMBDA):
     if post_processing == "tps":
         tracked_coords_norm_t2 = tps_with_two_ref(matched_pairs, segmented_coords_norm_t2,
                                                   segmented_coords_norm_t1, confirmed_coords_norm_t1, smoothing)
     elif post_processing == "prgls":
+        normalized_prob = cal_norm_prob(matched_pairs, similarity_scores_shape)
         tracked_coords_norm_t2, _ = prgls_with_two_ref(normalized_prob, segmented_coords_norm_t2,
                                                        segmented_coords_norm_t1, confirmed_coords_norm_t1,
                                                        beta=beta, lambda_=lambda_)
@@ -327,7 +377,7 @@ def predict_new_positions(matched_pairs, confirmed_coords_norm_t1, segmented_coo
 
 
 def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, fig_width_px=1800,
-                          dpi=96, ids_ref=None, ids_tgt=None):
+                          dpi=96, ids_ref=None, ids_tgt=None, show_3d: bool = False):
     """Draws the initial matching between two sets of 3D points and their matching relationships.
 
     Args:
@@ -340,6 +390,9 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
     Raises:
         AssertionError: If the inputs have invalid shapes or data types.
     """
+    if show_3d:
+        fig = plot_matching_3d_plotly(ref_ptrs, tgt_ptrs, pairs_px2, ids_ref, ids_tgt)
+        return fig
     # Plot the scatters of the ref_points and tgt_points
     ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1, t2, ids_ref, ids_tgt)
 
@@ -353,7 +406,120 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
         con = ConnectionPatch(xyA=pt2, xyB=pt1, coordsA="data", coordsB="data",
                               axesA=ax2, axesB=ax1, color="C1")
         ax2.add_artist(con)
+    # ax1.axis('equal')
+    # ax2.axis('equal')
+    set_unique_xlim(ax1, ax2)
+    plt.pause(0.1)
     return fig
+
+
+def plot_matching_3d(points_t1, points_t2, pairs, ids_t1, ids_t2):
+    fig = plt.figure(figsize=(20, 10))
+    ax = plt.axes(projection='3d')
+
+    min_val = np.min([points_t1.min(), points_t2.min()])
+    max_val = np.max([points_t1.max(), points_t2.max()])
+
+    ax.set_xlim([min_val, max_val])
+    ax.set_ylim([min_val, max_val])
+    ax.set_zlim([min_val, max_val])
+
+    for i, point in enumerate(points_t1):
+        ax.scatter3D(*point, color='blue', s=50)
+        ax.text(*point, str(ids_t1[i]), color='blue')
+
+    for i, point in enumerate(points_t2):
+        ax.scatter3D(*point, color='red', s=50)
+        ax.text(*point, str(ids_t2[i]), color='red')
+
+    ax.scatter3D(points_t1[:, 0], points_t1[:, 1], points_t1[:, 2], color='blue', s=50)
+
+    ax.scatter3D(points_t2[:, 0], points_t2[:, 1], points_t2[:, 2], color='red', s=50)
+
+    for start, end in pairs:
+        ax.plot3D(*zip(points_t1[start], points_t1[end]), color='green')
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    plt.show()
+
+
+def plot_matching_3d_plotly(points_t1, points_t2, pairs, ids_t1, ids_t2):
+    import plotly.graph_objects as go
+    trace1 = go.Scatter3d(
+        x=-points_t1[:, 0],
+        y=-points_t1[:, 1],
+        z=points_t1[:, 2],
+        mode='markers+text',
+        text=ids_t1,
+        marker=dict(
+            size=3,
+            line=dict(
+                color='blue',
+                width=0.5
+            ),
+            opacity=0.8
+        ),
+        textposition='bottom center'
+    )
+
+    trace2 = go.Scatter3d(
+        x=-points_t2[:, 0],
+        y=-points_t2[:, 1],
+        z=points_t2[:, 2],
+        mode='markers+text',
+        text=ids_t2,
+        marker=dict(
+            size=3,
+            line=dict(
+                color='red',
+                width=0.5
+            ),
+            opacity=0.8
+        ),
+        textposition='bottom center'
+    )
+
+    traces = [trace1, trace2]
+
+    # 绘制移动路径
+    for start, end in pairs:
+        traces.append(
+            go.Scatter3d(
+                x=[-points_t1[start, 0], -points_t2[end, 0]],
+                y=[-points_t1[start, 1], -points_t2[end, 1]],
+                z=[points_t1[start, 2], points_t2[end, 2]],
+                mode='lines',
+                line=dict(
+                    color='green',
+                    width=2
+                ),
+                showlegend=False
+            )
+        )
+
+    layout = go.Layout(
+        autosize=False,
+        width=1600,
+        height=800,
+        scene=dict(
+            aspectmode='data',
+            camera=dict(
+                up=dict(x=0, y=0, z=1),
+                eye=dict(x=0, y=0, z=1)
+            )
+        ),
+        margin=dict(
+            l=0,
+            r=0,
+            b=0,
+            t=0
+        )
+    )
+
+    fig = go.Figure(data=traces, layout=layout)
+    fig.show()
 
 
 def plot_initial_matching_one_panel(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, fig_width_px=1800,
@@ -384,8 +550,8 @@ def plot_initial_matching_one_panel(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_
         pt2 = np.asarray([tgt_ptrs[tgt_index, 1], -tgt_ptrs[tgt_index, 0]])
 
         # Draw a connection between the matched points in the two subplots using the `ConnectionPatch` class
-        plt.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], lw=1)
-
+        plt.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], lw=1, color="C1")
+    plt.axis('equal')
     return fig
 
 

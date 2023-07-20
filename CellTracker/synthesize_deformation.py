@@ -23,15 +23,12 @@ NUM_POINT_SET = 100
 K_NEIGHBORS = 20  # number of neighbors for calculating relative coordinates
 NUMBER_FEATURES = K_NEIGHBORS * 4 + 8
 
-RANGE_ROT_REF = (-170, 180)
-RANGE_ROT_TGT = (-170, 180)
-
 
 class DataGeneratorFPN:
     degrees_rotate_raw: Tuple[int] = (-135, -90, -45, 0, 45, 90, 135, 180)
 
     def __init__(self, points_normalized_nx3: ndarray, num_rotations: int, num_deformations: int,
-                 range_rotation_ref: tuple = RANGE_ROT_REF, range_rotation_tgt: tuple = RANGE_ROT_TGT, movement_factor: float = 0.2):
+                 range_rotation_tgt: float, movement_factor: float = 0.2):
         """
         This class is used to generate training data for FPN model.
 
@@ -43,8 +40,6 @@ class DataGeneratorFPN:
             The number of rotations
         num_deformations: int
             The number of deformations
-        range_rotation_ref: tuple
-            The range of rotation degrees for reference points set
         range_rotation_tgt: tuple
             The range of rotation degrees for target points set
         movement_factor: float
@@ -54,7 +49,6 @@ class DataGeneratorFPN:
         self.num_deform = num_deformations
         self.points_normalized_nx3 = points_normalized_nx3
         self.train_data_gen = self.generator_train_data(points_normalized_nx3,
-                                                        range_rotation_ref=range_rotation_ref,
                                                         range_rotation_tgt=range_rotation_tgt,
                                                         movement_factor=movement_factor)
 
@@ -89,9 +83,8 @@ class DataGeneratorFPN:
     #     return TensorDataset(tensor(x_mxf), tensor(y_mx1))
 
     @staticmethod
-    def generator_train_data(points_nx3: ndarray, batch_size: int = 128,
-                             range_rotation_ref: tuple = RANGE_ROT_REF, range_rotation_tgt: tuple = RANGE_ROT_TGT,
-                             movement_factor: float = 0.2) -> Generator[Tuple[ndarray, ndarray], None, None]:
+    def generator_train_data(points_nx3: ndarray, range_rotation_tgt: float,
+                             batch_size: int = 128, movement_factor: float = 0.2) -> Generator[Tuple[ndarray, ndarray], None, None]:
         """Generate training data for FPN model
 
         Parameters
@@ -100,8 +93,6 @@ class DataGeneratorFPN:
             The normalized points set
         batch_size: int
             The batch size
-        range_rotation_ref: tuple, shape (2,)
-            The range of rotation degrees for reference points set
         range_rotation_tgt: tuple, shape (2,)
             The range of rotation degrees for target points set
         movement_factor: float
@@ -124,20 +115,22 @@ class DataGeneratorFPN:
         y_bx1 = np.empty((num_batch, 1), dtype=np.bool_)
 
         random_indexes = np.arange(num_batch)
-        longest_distance = get_longest_distance(points_nx3)
 
         # Generate training data
         while True:
             # Generate a relative large number of data than the batch size
+            updated_points_nx3 = points_nx3.copy()
             for i in range(num_sets):
-                rotation_ref = np.random.randint(*range_rotation_ref, (1, 3))
-                rotation_tgt = np.random.randint(*range_rotation_tgt, (1, 3))
-                points_ref_nx3, points_tgt_nx3 = generate_points_pair(points_nx3, rotation_ref, rotation_tgt,
+                rotation_ref = np.random.randint(-180, 180, (1, 3))
+                rotation_tgt = np.random.randint(-range_rotation_tgt, range_rotation_tgt, (1, 3))
+                longest_distance = get_longest_distance(updated_points_nx3)
+                points_ref_nx3, points_tgt_nx3 = generate_points_pair(updated_points_nx3, rotation_ref, rotation_tgt,
                                                                       longest_distance, mv_factor=movement_factor)
                 points_tgt_with_errors, replaced_indexes = add_seg_errors(points_tgt_nx3)
                 point_set_s_ = slice(i * num_batch_per_set, (i + 1) * num_batch_per_set)
                 x_bxkp2xfx2[point_set_s_, ...], y_bx1[point_set_s_, :] = \
                     points_to_features(points_ref_nx3, points_tgt_with_errors, replaced_indexes)
+                updated_points_nx3 = points_tgt_with_errors.copy()
 
             # Yield small batches from the generated data set in a shuffled order
             np.random.shuffle(random_indexes)
@@ -312,6 +305,7 @@ def generate_points_pair(points_nx3: ndarray, degree_ref_1x3: ndarray, degree_tg
         longest_distance = get_longest_distance(points_nx3)
     points_ref_nx3 = rotate(points_nx3, degree_ref_1x3, 1)[0, :, :]
     points_tgt_nx3 = rotate(points_ref_nx3, degree_tgt_1x3, 1)[0, :, :]
+    points_ref_nx3 = deform(points_ref_nx3, longest_distance, num_ptr_set=1, mv_factor=mv_factor, width=width)[0, :, :]
     points_tgt_nx3 = deform(points_tgt_nx3, longest_distance, num_ptr_set=1, mv_factor=mv_factor, width=width)[0, :, :]
     points_tgt_nx3 += (np.random.rand(*points_tgt_nx3.shape) - 0.5) * 4 * RANDOM_MOVEMENTS_FACTOR
     return points_ref_nx3, points_tgt_nx3

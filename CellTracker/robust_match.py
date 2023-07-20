@@ -2,15 +2,17 @@ from multiprocessing import Pool
 from typing import Tuple, List
 
 import numpy as np
+import pandas as pd
 import scipy.ndimage
 from numpy import ndarray
+from scipy.optimize import linear_sum_assignment
 from scipy.special import erf
 from skimage import measure
 from skimage.segmentation import relabel_sequential
 from sklearn.covariance import MinCovDet
 from sklearn.neighbors import NearestNeighbors
 
-outlier_detector = MinCovDet()
+outlier_detector = MinCovDet(support_fraction=0.9)
 
 
 def get_full_cell_candidates(coordinates_nx3: ndarray, prob_map_3d: ndarray, threshold: float = 0.3) -> ndarray:
@@ -70,18 +72,22 @@ def filter_matching_outliers(matched_pairs: List[Tuple[int, int]], coordinates_n
 
     # Calculate the nearest neighbors for each of the coordinates in the matched set
     knn = NearestNeighbors(n_neighbors=neighbors + 1).fit(coordinates_matched_n1x3_t1)
-    _, nearest_indices_t1_nx1 = knn.kneighbors(coordinates_nx3_t1)
+    _, nearest_indices_t1_nxkp1 = knn.kneighbors(coordinates_nx3_t1)
 
     # Map the indices of nearest neighbors back to original indices of matched pairs
-    nearest_indices_original_nxkp1 = matched_pairs_array[nearest_indices_t1_nx1, 0]
+    nearest_indices_original_nxkp1 = matched_pairs_array[nearest_indices_t1_nxkp1, 0]
 
     # Find the corresponding matched pairs for the k nearest neighbors of each point in the first set
     n = coordinates_nx3_t1.shape[0]
     neighbors_of_pairs_nxkp1x2 = np.zeros((n, neighbors + 1, 2), dtype=np.int_)
+
+    df_matched_pairs = pd.DataFrame(matched_pairs_array, columns=['key', 'value'])
+    dict_matched_pairs = df_matched_pairs.set_index('key')['value'].to_dict()
+
+    vfunc = np.vectorize(dict_matched_pairs.get)
     for i in range(n):
-        neighbors_of_pairs_nxkp1x2[i, :, :] = matched_pairs_array[
-                                              np.isin(matched_pairs_array[:, 0], nearest_indices_original_nxkp1[i, :]),
-                                              :]
+        neighbors_of_pairs_nxkp1x2[i, :, 0] = nearest_indices_original_nxkp1[i, :]
+        neighbors_of_pairs_nxkp1x2[i, :, 1] = vfunc(nearest_indices_original_nxkp1[i, :])
 
     # Extract the movement vectors of each matched pairs and their neighbors
     movements_mxnx3 = coordinates_mx3_t2[:, None, :] - coordinates_nx3_t1[None, :, :]
@@ -94,20 +100,22 @@ def filter_matching_outliers(matched_pairs: List[Tuple[int, int]], coordinates_n
     with Pool() as p:
         mahalanobis_distances = p.map(compute_mahalanobis, movements)  # Quick
 
+    #print(mahalanobis_distances)
+
     # mahalanobis_distances = [outlier_detector.fit(moves).mahalanobis(moves) for moves in movements] # Slow, deprecated
 
     # Filter out matched pairs where the Mahalanobis distance is greater than the threshold
     updated_pairs = []
     threshold_mdist = 5 ** 2
     for (ind_t1, ind_t2), mahalanobis_distance in zip(matched_pairs, mahalanobis_distances):
-        if ind_t1 in neighbors_of_pairs_nxkp1x2[ind_t1, mahalanobis_distance <= threshold_mdist, 0]:
+        if mahalanobis_distance[0] <= threshold_mdist:
             updated_pairs.append((ind_t1, ind_t2))
     return np.asarray(updated_pairs)
 
 
 def add_or_remove_points(predicted_coords_t1_to_t2: ndarray, predicted_coords_t2_to_t1: ndarray,
                          segmented_coords_norm_t1: ndarray, segmented_coords_norm_t2: ndarray,
-                         matched_pairs: List[Tuple[int, int]], k_neighbors: int = 5) -> \
+                         matched_pairs: List[Tuple[int, int]]) -> \
         Tuple[ndarray, ndarray, Tuple[ndarray, ndarray]]:
     n, m = segmented_coords_norm_t1.shape[0], segmented_coords_norm_t2.shape[0]
     pairs = np.asarray(matched_pairs)
@@ -118,10 +126,10 @@ def add_or_remove_points(predicted_coords_t1_to_t2: ndarray, predicted_coords_t2
     #                          unmatched_indice_t1)
     # inliers_t2 = add_inliers_within_k_neighbors(k_neighbors, predicted_coords_t2_to_t1, segmented_coords_norm_t1, unmatched_indice_t1,
     #                          unmatched_indice_t2)
-    inliers_t1 = add_inliers_within_a_radius(k_neighbors, predicted_coords_t1_to_t2, segmented_coords_norm_t2, segmented_coords_norm_t1,
-                                             unmatched_indice_t2, unmatched_indice_t1)
-    inliers_t2 = add_inliers_within_a_radius(k_neighbors, predicted_coords_t2_to_t1, segmented_coords_norm_t1, segmented_coords_norm_t2,
-                                             unmatched_indice_t1, unmatched_indice_t2)
+    inliers_t1 = add_inliers_within_a_radius(predicted_coords_t1_to_t2, segmented_coords_norm_t2,
+                                             unmatched_indice_t1)
+    inliers_t2 = add_inliers_within_a_radius(predicted_coords_t2_to_t1, segmented_coords_norm_t1,
+                                             unmatched_indice_t2)
 
     all_inliers_t1 = np.concatenate((pairs[:, 0], inliers_t1)).astype(np.int_)
     all_inliers_t2 = np.concatenate((pairs[:, 1], inliers_t2)).astype(np.int_)
@@ -148,27 +156,27 @@ def add_inliers_within_k_neighbors(k_neighbors, predicted_coords_t2_to_t1, segme
     return np.asarray(inliers_t2)
 
 
-def add_inliers_within_a_radius(k_neighbors, predicted_coords_t2_to_t1, segmented_coords_norm_t1, segmented_coords_norm_t2,
-                                unmatched_indice_t1, unmatched_indice_t2):
+def add_inliers_within_a_radius(predicted_coords_t1_to_t2, segmented_coords_norm_t2,
+                                unmatched_indice_t1):
     """
     Add some points previously in the unmatched set to the inlier set using a dynamic radius criterion.
 
     Notes
     -----
     Suppose there is an unmatched point A at t2 and its prediction B at t1.
-    Calculate the median distance dist_A between A and its k nearest neighbors at t2
-    If B has its nearest neighbor point C within 1.5 * dist_A at t1, then A is added to the inlier set.
+    Calculate the distance dist_A between A and its nearest neighbor at t2
+    If B has its nearest neighbor point C within 1.2 * dist_A at t1, then A is added to the inlier set.
     Else, A is not added to the inlier set.
     """
-    if unmatched_indice_t2.size == 0:
+    if unmatched_indice_t1.size == 0:
         return []
-    knn_t2 = NearestNeighbors(n_neighbors=k_neighbors).fit(segmented_coords_norm_t2)
-    dists, _ = knn_t2.kneighbors(segmented_coords_norm_t2[unmatched_indice_t2, :])
-    median_dists = np.median(dists, axis=1)
-    knn_t1 = NearestNeighbors(n_neighbors=1).fit(segmented_coords_norm_t1)
-    nearest_dist, _ = knn_t1.kneighbors(predicted_coords_t2_to_t1[unmatched_indice_t2, :])
-    inliers_t2 = [unmatched_indice_t2[i] for i, (dist, median_dist) in enumerate(zip(nearest_dist, median_dists)) if
-                    dist <= 1.5 * median_dist]
+    knn_t1 = NearestNeighbors(n_neighbors=2).fit(predicted_coords_t1_to_t2)
+    _, ids = knn_t1.kneighbors(segmented_coords_norm_t2)
+    inliers_t2 = np.intersect1d(ids, unmatched_indice_t1)
+    #print(inliers_t2+1)
+    # for i in range(len(segmented_coords_norm_t2)):
+    #     print(i+1, ids[i]+1)
+
     return np.asarray(inliers_t2)
 
 

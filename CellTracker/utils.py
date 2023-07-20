@@ -112,3 +112,10 @@ def recalculate_cell_boundaries(segmentation_xyz: ndarray, cell_overlaps_mask: n
 
     # Return the recalculated label image
     return recalculated_labels
+
+
+def set_unique_xlim(ax1, ax2):
+    x1_min, x1_max = ax1.get_xlim()
+    x2_min, x2_max = ax2.get_xlim()
+    ax1.set_xlim(min((x1_min, x2_min)), max((x1_max, x2_max)))
+    ax2.set_xlim(min((x1_min, x2_min)), max((x1_max, x2_max)))

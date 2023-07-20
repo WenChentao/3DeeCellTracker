@@ -14,7 +14,7 @@ from skimage.segmentation import relabel_sequential
 from tifffile import imread
 
 from CellTracker.stardistwrapper import lbl_cmap
-from CellTracker.utils import load_2d_slices_at_time, recalculate_cell_boundaries
+from CellTracker.utils import load_2d_slices_at_time, recalculate_cell_boundaries, set_unique_xlim
 
 MERGED_LABELS_XZ = "merged_labels_xz"
 MERGED_LABELS = "merged_labels"
@@ -663,7 +663,7 @@ def plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, ax1=None, ax2=None
         pt2 = np.asarray([tgt_ptr[1], -tgt_ptr[0]])
 
         if single_panel:
-            plt.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], lw=1)
+            plt.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], lw=1, color="C1")
         else:
             con = ConnectionPatch(xyA=pt2, xyB=pt1, coordsA="data", coordsB="data",
                                   axesA=ax2, axesB=ax1, color="C1")
@@ -680,7 +680,7 @@ def plot_predicted_movements(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref
 
     # Plot the matching relationships between the two sets of points
     plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, ax1, ax2, single_panel=False)
-
+    set_unique_xlim(ax1, ax2)
     return fig
 
 
@@ -699,7 +699,7 @@ def plot_predicted_movements_one_panel(ref_ptrs: ndarray, tgt_ptrs: ndarray, pre
 
     # Plot the matching relationships between the two sets of points
     plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, single_panel=True)
-
+    plt.axis('equal')
     return fig
 
 
