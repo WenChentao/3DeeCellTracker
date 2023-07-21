@@ -4,21 +4,20 @@ from pathlib import Path
 from typing import List, Tuple
 
 import numpy as np
-from matplotlib import pyplot as plt
-from matplotlib.patches import ConnectionPatch
 from numpy import ndarray
 from scipy.interpolate import RBFInterpolator
 from scipy.optimize import linear_sum_assignment
 from scipy.stats import trim_mean
 
-from CellTracker.coord_image_transformer import Coordinates, plot_predicted_movements, plot_two_pointset_scatters, \
-    plot_predicted_movements_one_panel, CoordsToImageTransformer
+from CellTracker.coord_image_transformer import Coordinates, CoordsToImageTransformer
+from CellTracker.plot import plot_initial_matching, plot_initial_matching_one_panel, plot_predicted_movements, \
+    plot_predicted_movements_one_panel
 from CellTracker.v1_modules.ffn import initial_matching_ffn, FFN
 from CellTracker.fpm import FlexiblePointMatcherOriginal, initial_matching_fpm
-from CellTracker.robust_match import filter_matching_outliers, calc_min_path, add_or_remove_points, \
-    get_full_cell_candidates
+from CellTracker.robust_match import calc_min_path, add_or_remove_points, \
+    get_full_cell_candidates, filter_matching_outliers_global
 from CellTracker.stardist3dcustom import StarDist3DCustom
-from CellTracker.utils import load_2d_slices_at_time, normalize_points, set_unique_xlim
+from CellTracker.utils import load_2d_slices_at_time, normalize_points
 
 FIGURE = "figure"
 COORDS_REAL = "coords_real"
@@ -376,192 +375,14 @@ def predict_new_positions(matched_pairs, confirmed_coords_norm_t1, segmented_coo
     return tracked_coords_norm_t2
 
 
-def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, fig_width_px=1800,
-                          dpi=96, ids_ref=None, ids_tgt=None, show_3d: bool = False):
-    """Draws the initial matching between two sets of 3D points and their matching relationships.
-
-    Args:
-        ref_ptrs (ndarray): A 2D array of shape (n, 3) containing the reference points.
-        tgt_ptrs (ndarray): A 2D array of shape (n, 3) containing the target points.
-        pairs_px2 (ndarray): A 2D array of shape (m, 2) containing the pairs of matched points.
-        fig_width_px (int): The width of the output figure in pixels. Default is 1200.
-        dpi (int): The resolution of the output figure in dots per inch. Default is 96.
-
-    Raises:
-        AssertionError: If the inputs have invalid shapes or data types.
-    """
-    if show_3d:
-        fig = plot_matching_3d_plotly(ref_ptrs, tgt_ptrs, pairs_px2, ids_ref, ids_tgt)
-        return fig
-    # Plot the scatters of the ref_points and tgt_points
-    ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1, t2, ids_ref, ids_tgt)
-
-    # Plot the matching relationships between the two sets of points
-    for ref_index, tgt_index in pairs_px2:
-        # Get the coordinates of the matched points in the two point sets
-        pt1 = np.asarray([ref_ptrs[ref_index, 1], -ref_ptrs[ref_index, 0]])
-        pt2 = np.asarray([tgt_ptrs[tgt_index, 1], -tgt_ptrs[tgt_index, 0]])
-
-        # Draw a connection between the matched points in the two subplots using the `ConnectionPatch` class
-        con = ConnectionPatch(xyA=pt2, xyB=pt1, coordsA="data", coordsB="data",
-                              axesA=ax2, axesB=ax1, color="C1")
-        ax2.add_artist(con)
-    # ax1.axis('equal')
-    # ax2.axis('equal')
-    set_unique_xlim(ax1, ax2)
-    plt.pause(0.1)
-    return fig
-
-
-def plot_matching_3d(points_t1, points_t2, pairs, ids_t1, ids_t2):
-    fig = plt.figure(figsize=(20, 10))
-    ax = plt.axes(projection='3d')
-
-    min_val = np.min([points_t1.min(), points_t2.min()])
-    max_val = np.max([points_t1.max(), points_t2.max()])
-
-    ax.set_xlim([min_val, max_val])
-    ax.set_ylim([min_val, max_val])
-    ax.set_zlim([min_val, max_val])
-
-    for i, point in enumerate(points_t1):
-        ax.scatter3D(*point, color='blue', s=50)
-        ax.text(*point, str(ids_t1[i]), color='blue')
-
-    for i, point in enumerate(points_t2):
-        ax.scatter3D(*point, color='red', s=50)
-        ax.text(*point, str(ids_t2[i]), color='red')
-
-    ax.scatter3D(points_t1[:, 0], points_t1[:, 1], points_t1[:, 2], color='blue', s=50)
-
-    ax.scatter3D(points_t2[:, 0], points_t2[:, 1], points_t2[:, 2], color='red', s=50)
-
-    for start, end in pairs:
-        ax.plot3D(*zip(points_t1[start], points_t1[end]), color='green')
-
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    plt.show()
-
-
-def plot_matching_3d_plotly(points_t1, points_t2, pairs, ids_t1, ids_t2):
-    import plotly.graph_objects as go
-    trace1 = go.Scatter3d(
-        x=-points_t1[:, 0],
-        y=-points_t1[:, 1],
-        z=points_t1[:, 2],
-        mode='markers+text',
-        text=ids_t1,
-        marker=dict(
-            size=3,
-            line=dict(
-                color='blue',
-                width=0.5
-            ),
-            opacity=0.8
-        ),
-        textposition='bottom center'
-    )
-
-    trace2 = go.Scatter3d(
-        x=-points_t2[:, 0],
-        y=-points_t2[:, 1],
-        z=points_t2[:, 2],
-        mode='markers+text',
-        text=ids_t2,
-        marker=dict(
-            size=3,
-            line=dict(
-                color='red',
-                width=0.5
-            ),
-            opacity=0.8
-        ),
-        textposition='bottom center'
-    )
-
-    traces = [trace1, trace2]
-
-    # 绘制移动路径
-    for start, end in pairs:
-        traces.append(
-            go.Scatter3d(
-                x=[-points_t1[start, 0], -points_t2[end, 0]],
-                y=[-points_t1[start, 1], -points_t2[end, 1]],
-                z=[points_t1[start, 2], points_t2[end, 2]],
-                mode='lines',
-                line=dict(
-                    color='green',
-                    width=2
-                ),
-                showlegend=False
-            )
-        )
-
-    layout = go.Layout(
-        autosize=False,
-        width=1600,
-        height=800,
-        scene=dict(
-            aspectmode='data',
-            camera=dict(
-                up=dict(x=0, y=0, z=1),
-                eye=dict(x=0, y=0, z=1)
-            )
-        ),
-        margin=dict(
-            l=0,
-            r=0,
-            b=0,
-            t=0
-        )
-    )
-
-    fig = go.Figure(data=traces, layout=layout)
-    fig.show()
-
-
-def plot_initial_matching_one_panel(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, fig_width_px=1800,
-                          dpi=96, ids_ref=None, ids_tgt=None):
-    """Draws the initial matching between two sets of 3D points and their matching relationships.
-
-    Args:
-        ref_ptrs (ndarray): A 2D array of shape (n, 3) containing the reference points.
-        tgt_ptrs (ndarray): A 2D array of shape (n, 3) containing the target points.
-        pairs_px2 (ndarray): A 2D array of shape (m, 2) containing the pairs of matched points.
-        fig_width_px (int): The width of the output figure in pixels. Default is 1200.
-        dpi (int): The resolution of the output figure in dots per inch. Default is 96.
-
-    Raises:
-        AssertionError: If the inputs have invalid shapes or data types.
-    """
-    # Plot the scatters of the ref_points and tgt_points
-    fig_width_in = fig_width_px / dpi  # convert to inches assuming the given dpi
-    fig_height_in = fig_width_in / 1.618  # set height to golden ratio
-    fig = plt.figure(figsize=(fig_width_in, fig_height_in), dpi=dpi)
-    plt.scatter(ref_ptrs[:, 1], -ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')
-    plt.scatter(tgt_ptrs[:, 1], -tgt_ptrs[:, 0], marker="x", facecolors='r', edgecolors='r', label='Set 2')
-
-    # Plot the matching relationships between the two sets of points
-    for ref_index, tgt_index in pairs_px2:
-        # Get the coordinates of the matched points in the two point sets
-        pt1 = np.asarray([ref_ptrs[ref_index, 1], -ref_ptrs[ref_index, 0]])
-        pt2 = np.asarray([tgt_ptrs[tgt_index, 1], -tgt_ptrs[tgt_index, 0]])
-
-        # Draw a connection between the matched points in the two subplots using the `ConnectionPatch` class
-        plt.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], lw=1, color="C1")
-    plt.axis('equal')
-    return fig
-
-
 def coherence_match(updated_match_matrix: ndarray, segmented_coords_norm_t1, segmented_coords_norm_t2, threshold):
-    matched_pairs = greedy_match(updated_match_matrix, threshold)
+    matched_pairs, _ = greedy_match(updated_match_matrix, threshold)
     for i in range(5):
         coherence = calc_min_path(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2)
         updated_match_matrix = np.sqrt(updated_match_matrix * coherence)
-        matched_pairs = greedy_match(updated_match_matrix, threshold)
-    matched_pairs = filter_matching_outliers(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2, neighbors=10)
+        matched_pairs, _ = greedy_match(updated_match_matrix, threshold)
+    #matched_pairs = filter_matching_outliers(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2, neighbors=10)
+    matched_pairs = filter_matching_outliers_global(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2,)
     return matched_pairs
 
 
@@ -587,14 +408,14 @@ def greedy_match(updated_match_matrix: ndarray, threshold: float = 1e-6):
 
         working_match_score_matrix[target_index, :] = -1
         working_match_score_matrix[:, reference_index] = -1
-    return np.asarray(match_pairs)
+    return np.asarray(match_pairs), working_match_score_matrix
 
 
 def get_match_pairs(updated_match_matrix: ndarray, segmented_coords_norm_t1, segmented_coords_norm_t2, threshold=0.5,
                     method="coherence") -> ndarray:
     """Match points from two point sets by simply choosing the pairs with the highest probability subsequently"""
     if method == "greedy":
-        return greedy_match(updated_match_matrix, threshold)
+        return greedy_match(updated_match_matrix, threshold)[0]
     if method == "hungarian":
         return hungarian_match(updated_match_matrix, updated_match_matrix, threshold)
     if method == "coherence":

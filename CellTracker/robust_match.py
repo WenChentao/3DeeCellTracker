@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 import scipy.ndimage
 from numpy import ndarray
-from scipy.optimize import linear_sum_assignment
 from scipy.special import erf
 from skimage import measure
 from skimage.segmentation import relabel_sequential
@@ -106,10 +105,31 @@ def filter_matching_outliers(matched_pairs: List[Tuple[int, int]], coordinates_n
 
     # Filter out matched pairs where the Mahalanobis distance is greater than the threshold
     updated_pairs = []
-    threshold_mdist = 5 ** 2
+    threshold_mdist = 3 ** 2
     for (ind_t1, ind_t2), mahalanobis_distance in zip(matched_pairs, mahalanobis_distances):
         if mahalanobis_distance[0] <= threshold_mdist:
             updated_pairs.append((ind_t1, ind_t2))
+    return np.asarray(updated_pairs)
+
+
+def filter_matching_outliers_global(matched_pairs: List[Tuple[int, int]], coordinates_nx3_t1: ndarray, coordinates_mx3_t2: ndarray) -> ndarray:
+    """
+    This function filters the pairs with significantly different movements between two sets of coordinates (t1 and t2)
+    by using a Mahalanobis distance threshold to determine outliers.
+    """
+    matched_pairs_array = np.asarray(matched_pairs)
+
+    # Extract the movement vectors of each matched pairs and their neighbors
+    movements_px3 = coordinates_mx3_t2[matched_pairs_array[:, 1], :] - coordinates_nx3_t1[matched_pairs_array[:, 0], :]
+    mahalanobis_distances = outlier_detector.fit(movements_px3).mahalanobis(movements_px3)
+    # Filter out matched pairs where the Mahalanobis distance is greater than the threshold
+    updated_pairs = []
+    threshold_mdist = 5 ** 2
+    for (ind_t1, ind_t2), mahalanobis_distance in zip(matched_pairs, mahalanobis_distances):
+        if mahalanobis_distance <= threshold_mdist:
+            updated_pairs.append((ind_t1, ind_t2))
+        # else:
+        #     print(ind_t1, ind_t2, mahalanobis_distance)
     return np.asarray(updated_pairs)
 
 
@@ -137,23 +157,16 @@ def add_or_remove_points(predicted_coords_t1_to_t2: ndarray, predicted_coords_t2
     return predicted_coords_t1_to_t2[all_inliers_t1], segmented_coords_norm_t2[all_inliers_t2], inliers
 
 
-def add_inliers_within_k_neighbors(k_neighbors, predicted_coords_t2_to_t1, segmented_coords_norm_t1, unmatched_indice_t1,
-                                   unmatched_indice_t2):
+def add_or_remove_points_with_prob_matrix(prob_mxn: ndarray, predicted_coords_t1_to_t2: ndarray,
+                                          segmented_coords_norm_t2: ndarray):
     """
-    Add some points previously in the unmatched set to the inlier set using k nearest neighbors criterion.
-
-    Notes
-    -----
-    Suppose there is an unmatched point A at t2 and its prediction B at t1.
-    If B has a neighbor point C (within k-th) in the unmatched set at t1, then A is added to the inlier set.
+    Use a prob_mxn after applying prgls+greedy method to decide inliers
     """
-    if unmatched_indice_t2.size == 0 or unmatched_indice_t1.size == 0:
-        return []
-    knn_t1 = NearestNeighbors(n_neighbors=k_neighbors).fit(segmented_coords_norm_t1)
-    _, candidates_in_t1 = knn_t1.kneighbors(predicted_coords_t2_to_t1[unmatched_indice_t2, :])
-    inliers_t2 = [unmatched_indice_t2[i] for i, candi in enumerate(candidates_in_t1) if
-                  np.intersect1d(candi, unmatched_indice_t1).size > 0]
-    return np.asarray(inliers_t2)
+    prob_t1, prob_t2 = prob_mxn.max(axis=0), prob_mxn.max(axis=1)
+    all_inliers_t1 = np.nonzero(prob_t1 < -.5)[0]
+    all_inliers_t2 = np.nonzero(prob_t2 < -.5)[0]
+    inliers = (all_inliers_t1, all_inliers_t2)
+    return predicted_coords_t1_to_t2[all_inliers_t1], segmented_coords_norm_t2[all_inliers_t2], inliers
 
 
 def add_inliers_within_a_radius(predicted_coords_t1_to_t2, segmented_coords_norm_t2,

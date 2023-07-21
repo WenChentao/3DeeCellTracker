@@ -8,13 +8,13 @@ import skimage.filters as skf
 import skimage.measure as skm
 from PIL import Image
 from matplotlib import pyplot as plt
-from matplotlib.patches import ConnectionPatch
 from numpy import ndarray
 from skimage.segmentation import relabel_sequential
 from tifffile import imread
 
+from CellTracker.plot import plot_predicted_movements
 from CellTracker.stardistwrapper import lbl_cmap
-from CellTracker.utils import load_2d_slices_at_time, recalculate_cell_boundaries, set_unique_xlim
+from CellTracker.utils import load_2d_slices_at_time, recalculate_cell_boundaries
 
 MERGED_LABELS_XZ = "merged_labels_xz"
 MERGED_LABELS = "merged_labels"
@@ -647,152 +647,4 @@ def fix_labeling_errors(segmentation: np.ndarray) -> Tuple[np.ndarray, bool]:
     return new_segmentation, was_corrected
 
 
-def validate_inputs(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray):
-    assert isinstance(ref_ptrs, ndarray) and ref_ptrs.ndim == 2 and ref_ptrs.shape[1] == 3, \
-        "ref_ptrs should be a 2D array with shape (n, 3)"
-    assert isinstance(tgt_ptrs, ndarray) and tgt_ptrs.ndim == 2 and tgt_ptrs.shape[1] == 3, \
-        "tgt_ptrs should be a 2D array with shape (n, 3)"
-    assert isinstance(predicted_ref_ptrs, ndarray) and predicted_ref_ptrs.ndim == 2 and predicted_ref_ptrs.shape[
-        1] == 3, \
-        "predicted_ref_ptrs should be a 2D array with shape (n, 3)"
 
-
-def plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, ax1=None, ax2=None, single_panel=False):
-    for ref_ptr, tgt_ptr in zip(ref_ptrs, predicted_ref_ptrs):
-        pt1 = np.asarray([ref_ptr[1], -ref_ptr[0]])
-        pt2 = np.asarray([tgt_ptr[1], -tgt_ptr[0]])
-
-        if single_panel:
-            plt.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], lw=1, color="C1")
-        else:
-            con = ConnectionPatch(xyA=pt2, xyB=pt1, coordsA="data", coordsB="data",
-                                  axesA=ax2, axesB=ax1, color="C1")
-            ax2.add_artist(con)
-
-
-def plot_predicted_movements(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray, t1: int, t2: int,
-                             fig_width_px=1800, dpi=96):
-    # Validate the inputs
-    validate_inputs(ref_ptrs, tgt_ptrs, predicted_ref_ptrs)
-
-    # Plot the scatters of the ref_points and tgt_points
-    ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1, t2)
-
-    # Plot the matching relationships between the two sets of points
-    plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, ax1, ax2, single_panel=False)
-    set_unique_xlim(ax1, ax2)
-    return fig
-
-
-def plot_predicted_movements_one_panel(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray, t1: int,
-                                       t2: int,
-                                       fig_width_px=1800, dpi=96):
-    # Validate the inputs
-    validate_inputs(ref_ptrs, tgt_ptrs, predicted_ref_ptrs)
-
-    # Plot the scatters of the ref_points and tgt_points
-    fig_width_in = fig_width_px / dpi  # convert to inches assuming the given dpi
-    fig_height_in = fig_width_in / 1.618  # set height to golden ratio
-    fig = plt.figure(figsize=(fig_width_in, fig_height_in), dpi=dpi)
-    plt.scatter(ref_ptrs[:, 1], -ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')
-    plt.scatter(tgt_ptrs[:, 1], -tgt_ptrs[:, 0], marker="x", facecolors='r', edgecolors='r', label='Set 2')
-
-    # Plot the matching relationships between the two sets of points
-    plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, single_panel=True)
-    plt.axis('equal')
-    return fig
-
-
-
-def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarray, tgt_ptrs: ndarray, t1: int, t2: int,
-                               ids_ref: list = None, ids_tgt: list = None):
-    """
-    Creates a figure with two subplots showing two sets of 3D points.
-
-    Parameters
-    ----------
-    dpi : float
-        The resolution of the output figure in dots per inch.
-    fig_width_px : float
-        The width of the output figure in pixels.
-    ref_ptrs : ndarray
-        A 2D array of shape (n, 3) containing the positions of reference points.
-    tgt_ptrs : ndarray
-        A 2D array of shape (n, 3) containing the positions of target points.
-    t1 : int
-        The time step of the reference points.
-    t2 : int
-        The time step of the target points.
-    ids_ref : list, optional
-        A list of strings containing the IDs of the reference points. Default is None.
-    ids_tgt : list, optional
-        A list of strings containing the IDs of the target points. Default is None.
-
-    Returns
-    -------
-    ax1 : matplotlib.axes.Axes
-        The first Axes object of the subplots.
-    ax2 : matplotlib.axes.Axes
-        The second Axes object of the subplots.
-    fig : matplotlib.figure.Figure
-        The Figure object containing the two subplots.
-    """
-    # Calculate the figure size based on the input width and dpi
-    fig_width_in = fig_width_px / dpi  # convert to inches assuming the given dpi
-    fig_height_in = fig_width_in / 1.618  # set height to golden ratio
-    # Determine whether to use a top-down or left-right layout based on the aspect ratio of the point sets
-    ref_range_y, ref_range_x, _ = np.max(ref_ptrs, axis=0) - np.min(ref_ptrs, axis=0)
-    tgt_range_y, tgt_range_x, _ = np.max(tgt_ptrs, axis=0) - np.min(tgt_ptrs, axis=0)
-    top_down = ref_range_x + tgt_range_x >= ref_range_y + tgt_range_y
-
-    ids_ref = range(1, ref_ptrs.shape[0]+1) if ids_ref is None else ids_ref
-    ids_tgt = range(1, tgt_ptrs.shape[0]+1) if ids_tgt is None else ids_tgt
-
-    # Create the figure and subplots
-    if top_down:
-        # print("Using top-down layout")
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(fig_width_in, fig_height_in))
-    else:
-        # print("Using left-right layout")
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(fig_width_in, fig_height_in))
-    # Plot the point sets on the respective subplots
-    ax1.scatter(ref_ptrs[:, 1], -ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')
-
-    for i, txt in enumerate(ids_ref):
-        ax1.annotate(txt, (ref_ptrs[i, 1], -ref_ptrs[i, 0]))
-    ax2.scatter(tgt_ptrs[:, 1], -tgt_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 2')
-
-    for i, txt in enumerate(ids_tgt):
-        ax2.annotate(txt, (tgt_ptrs[i, 1], -tgt_ptrs[i, 0]))
-
-    unify_xy_lims(ax1, ax2)
-
-    # Set plot titles or y-axis labels based on the layout
-    if top_down:
-        ax1.set_ylabel(f"Point Set t={t1}")
-        ax2.set_ylabel(f"Point Set t={t2}")
-    else:
-        ax1.set_title(f"Point Set t={t1}")
-        ax2.set_title(f"Point Set t={t2}")
-    return ax1, ax2, fig
-
-
-def unify_xy_lims(ax1, ax2):
-    """
-    Set the x and y limits of two matplotlib axes to be the same.
-
-    Parameters
-    ----------
-    ax1 : matplotlib.axes.Axes
-        The first Axes object.
-    ax2 : matplotlib.axes.Axes
-        The second Axes object.
-    """
-    # Determine the shared x_lim and y_lim
-    x_lim = [min(ax1.get_xlim()[0], ax2.get_xlim()[0]), max(ax1.get_xlim()[1], ax2.get_xlim()[1])]
-    y_lim = [min(ax1.get_ylim()[0], ax2.get_ylim()[0]), max(ax1.get_ylim()[1], ax2.get_ylim()[1])]
-    # Set the same x_lim and y_lim on both axes
-    ax1.set_xlim(x_lim)
-    ax1.set_ylim(y_lim)
-    ax2.set_xlim(x_lim)
-    ax2.set_ylim(y_lim)
