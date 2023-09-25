@@ -1,10 +1,10 @@
 import numpy as np
 from tensorflow.keras import Model
 
-from CellTracker.fpm import initial_matching_fpm, FlexiblePointMatcherOriginal
-from CellTracker.simple_alignment import affine_align_and_normalize, rotation_align_by_control_points
+from CellTracker.fpm import initial_matching_fpm
+from CellTracker.simple_alignment import rotation_align_by_control_points
 from CellTracker.trackerlite import K_POINTS, get_match_pairs
-from CellTracker.plot import plot_initial_matching, plot_initial_matching_one_panel
+from CellTracker.plot import plot_initial_matching
 from CellTracker.utils import normalize_points
 
 
