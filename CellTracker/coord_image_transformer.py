@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from glob import glob
 from pathlib import Path
 from typing import Tuple, List, Set
@@ -487,7 +489,7 @@ class CoordsToImageTransformer:
         return corrected_coords, delta_coords
 
     def save_tracking_results(self, coords: Coordinates, corrected_labels_image: ndarray, tracker, t1: int, t2: int,
-                              images_path: str):
+                              images_path: str | dict):
         """
         Save the tracking results, including coordinates, corrected labels image, and a visualization of the matching
         process.
@@ -519,7 +521,7 @@ class CoordsToImageTransformer:
                     facecolor='white')
         plt.close()
 
-    def save_merged_labels(self, corrected_labels_image: ndarray, images_path: str, t: int):
+    def save_merged_labels(self, corrected_labels_image: ndarray, images_path: str | dict, t: int):
         """
         Save the merged labels, which is an overlay of the labels and raw images.
 
