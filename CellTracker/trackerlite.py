@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 from glob import glob
 from pathlib import Path
@@ -9,6 +11,7 @@ from matplotlib.patches import ConnectionPatch
 from numpy import ndarray
 from scipy.special import softmax
 from scipy.stats import trim_mean
+from scipy import ndimage
 
 from CellTracker.coord_image_transformer import Coordinates, plot_prgls_prediction, plot_two_pointset_scatters
 from CellTracker.ffn import initial_matching_ffn, normalize_points, FFN
@@ -147,7 +150,7 @@ class TrackerLite:
                           interpolation_factor=interp_factor, voxel_size=voxel_size, dtype="raw")
         return pos
 
-    def activities(self, raw_path: str, discard_ratio: float = 0.1):
+    def activities(self, raw_path: str | dict, discard_ratio: float = 0.1):
         tracked_labels_path = self.results_dir / TRACK_RESULTS / LABELS
         filenames = glob(str(tracked_labels_path / "*t*.tif"))
         assert len(filenames) > 0, f"No labels files were found in {tracked_labels_path / '*t*.tif'}"
@@ -184,14 +187,18 @@ class TrackerLite:
                 activities = np.zeros((largest_number - smallest_number + 1, cell_num))
 
             per = (1 - discard_ratio) * 100
+
+            found_bbox = ndimage.find_objects(labels_img, max_label=cell_num)
             for label in range(1, cell_num + 1):
-                intensity_label_i = raw[labels_img == label]
-                if intensity_label_i.size == 0:
-                    activities[t - smallest_number, label - 1] = np.nan
-                else:
+                bbox = found_bbox[label - 1]
+                if found_bbox[label - 1] is not None:
+                    intensity_label_i = raw[bbox][labels_img[bbox] == label]
                     threshold = np.percentile(intensity_label_i, per)
                     activities[t - smallest_number, label - 1] = np.mean(
                         intensity_label_i[intensity_label_i > threshold])
+                else:
+                    activities[t - smallest_number, label - 1] = np.nan
+
         return activities
 
 

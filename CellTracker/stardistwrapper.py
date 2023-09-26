@@ -4,8 +4,9 @@ Author: Chentao Wen
 Modification Description: This module is a wrapper of 3D StarDist modified according to 2_training.ipynb in GitHub StarDist repository
 """
 
-from __future__ import print_function, unicode_literals, absolute_import, division
+from __future__ import print_function, unicode_literals, absolute_import, division, annotations
 
+import os
 import re
 import sys
 from glob import glob
@@ -41,12 +42,25 @@ def load_stardist_model(model_name: str = "stardist", basedir: str = STARDIST_MO
     return model
 
 
-def load_2d_slices_at_time(slice_paths: str, t: int, do_normalize: bool = True):
+def load_2d_slices_at_time(images_path: str | dict, t: int, do_normalize: bool = True):
     """Load all 2D slices at time t and normalize the resulted 3D image"""
-    slice_paths_at_t = sorted(glob(slice_paths % t))
-    if len(slice_paths_at_t) == 0:
-        raise FileNotFoundError(f"No image at time {t} was found")
-    x = imread(slice_paths_at_t)
+    if isinstance(images_path, str):
+        file_extension = os.path.splitext(images_path)[1]
+        assert file_extension in [".tif", ".tiff"], "Currently only TIFF sequences or HDF5 dataset are supported"
+        slice_paths_at_t = sorted(glob(images_path % t))
+        if len(slice_paths_at_t) == 0:
+            raise FileNotFoundError(f"No image at time {t} was found")
+        x = imread(slice_paths_at_t)
+    elif isinstance(images_path, dict):
+        file_extension = os.path.splitext(images_path["h5_file"])[1]
+        assert file_extension in [".h5", ".hdf5"], "Currently only TIFF sequences or HDF5 dataset are supported"
+
+        import h5py
+        with h5py.File(images_path["h5_file"], 'r') as f:
+            x = f[images_path["dset"]][t - 1, images_path["channel"], :, :, :]
+    else:
+        raise ValueError("image_paths should be a str for TIFF sequences or dict for HDF5 dataset")
+
     if do_normalize:
         axis_norm = (0, 1, 2)  # normalize channels independently
         return normalize(x, 1, 99.8, axis=axis_norm)
@@ -68,13 +82,7 @@ def predict_and_save(images_path: str, model: StarDist3DCustom, results_folder: 
     _seg_path.mkdir(parents=True, exist_ok=True)
 
     # Get the list of image file names
-    images_path_search = Path(images_path)
-    new_filename = "*t*" + images_path_search.suffix
-    filenames = glob(str(images_path_search.parent / new_filename))
-    assert len(filenames) > 0, f"No image files were found in {images_path_search.parent / new_filename}"
-    numbers = [int(re.findall(r"t(\d+)", f)[0]) for f in filenames]
-    smallest_number = min(numbers)
-    largest_number = max(numbers)
+    largest_number, smallest_number = get_t_range(images_path)
 
     # Process images and predict instance coordinates
     with tqdm(total=largest_number - smallest_number + 1, desc="Segmenting images", ncols=50) as pbar:
@@ -96,6 +104,32 @@ def predict_and_save(images_path: str, model: StarDist3DCustom, results_folder: 
                 save_auto_seg_vol1(labels.transpose((1, 2, 0)), results_folder)
             pbar.update(1)
     print(f"All images from t={smallest_number} to t={largest_number} have been Segmented")
+
+
+def get_t_range(images_path: str | dict):
+    if isinstance(images_path, str):
+        file_extension = os.path.splitext(images_path)[1]
+        assert file_extension in [".tif", ".tiff"], "Currently only TIFF sequences or HDF5 dataset are supported"
+
+        images_path_search = Path(images_path)
+        new_filename = "*t*" + images_path_search.suffix
+        filenames = glob(str(images_path_search.parent / new_filename))
+        assert len(filenames) > 0, f"No image files were found in {images_path_search.parent / new_filename}"
+        numbers = [int(re.findall(r"t(\d+)", f)[0]) for f in filenames]
+        smallest_number = min(numbers)
+        largest_number = max(numbers)
+        return largest_number, smallest_number
+
+    elif isinstance(images_path, dict):
+        file_extension = os.path.splitext(images_path["h5_file"])[1]
+        assert file_extension in [".h5", ".hdf5"], "Currently only TIFF sequences or HDF5 dataset are supported"
+
+        import h5py
+        with h5py.File(images_path["h5_file"], 'r') as f:
+            t_max = f[images_path["dset"]].shape[0]
+        return t_max, 1
+    else:
+        raise ValueError("image_paths should be a str for TIFF sequences or dict for HDF5 dataset")
 
 
 def save_auto_seg_vol1(labels_xyz, results_folder):
