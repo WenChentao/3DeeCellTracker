@@ -192,7 +192,7 @@ def load_training_images(path_train_images: str, path_train_labels: str, max_pro
     print('number of images: %3d' % len(X))
     print('- training:       %3d' % len(X_trn))
     print('- validation:     %3d' % len(X_val))
-    print(f"{X[0].shape=}")
+    print(f"X[0].shape={X[0].shape}")
     i = 0
     img, lbl = X[i], Y[i]
     assert img.ndim in (3, 4)
@@ -237,7 +237,7 @@ def configure(Y: List[ndarray], n_channel: int, up_limit: int = UP_LIMIT, model_
     grid_norm = _normalize_grid(grid, 3)
     unet_pool = 2, 2, 2
     div_by = tuple(p ** unet_n_depth * g for p, g in zip(unet_pool, grid_norm))
-    print(f"{div_by=}")
+    print(f"div_by={div_by}")
     train_patch_size = [int(d * (i // d)) for i, d in zip(train_patch_size, div_by)]
     # 4. size of x and y should be the same (since augmentation will flip x-y axes)
     train_patch_size[1] = train_patch_size[2] = min(train_patch_size[1:])
