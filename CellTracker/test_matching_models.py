@@ -19,9 +19,9 @@ def rotation_align_by_fpm(fpm_model_rot, points1, points2, similarity_threshold=
     pairs_px2 = get_match_pairs(updated_matching, coords_norm_t1, coords_norm_t2,
                                 threshold=similarity_threshold, method=match_method)
 
-    fig = plot_initial_matching(coords_norm_t1, coords_norm_t2, pairs_px2, 1, 2, ids_ref=ids_ref, ids_tgt=ids_tgt)
+    #fig = plot_initial_matching(coords_norm_t1, coords_norm_t2, pairs_px2, 1, 2, ids_ref=ids_ref, ids_tgt=ids_tgt)
     aligned_coords_t1 = rotation_align_by_control_points(coords_norm_t1, coords_norm_t2, pairs_px2)
-    fig = plot_initial_matching(aligned_coords_t1, coords_norm_t2, pairs_px2, 1, 2, ids_ref=ids_ref, ids_tgt=ids_tgt)
+    #fig = plot_initial_matching(aligned_coords_t1, coords_norm_t2, pairs_px2, 1, 2, ids_ref=ids_ref, ids_tgt=ids_tgt)
     return aligned_coords_t1, coords_norm_t2, pairs_px2
 
 
@@ -36,7 +36,7 @@ def match_by_fpm(fpm_model, points1, points2, similarity_threshold=0.4, match_me
     pairs_px2 = get_match_pairs(updated_matching, coords_norm_t1, coords_norm_t2,
                                 threshold=similarity_threshold, method=match_method)
 
-    fig = plot_initial_matching(coords_norm_t1, coords_norm_t2, pairs_px2, 1, 2, ids_ref=ids_ref, ids_tgt=ids_tgt)
+    #fig = plot_initial_matching(coords_norm_t1, coords_norm_t2, pairs_px2, 1, 2, ids_ref=ids_ref, ids_tgt=ids_tgt)
     return pairs_px2
 
 

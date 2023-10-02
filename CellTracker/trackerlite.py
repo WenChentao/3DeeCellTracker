@@ -321,7 +321,7 @@ class TrackerLite:
         largest_number = max(numbers)
 
         for t in range(smallest_number, largest_number + 1):
-            print(f"{t=}...", end="\r")
+            print(f"t={t}...", end="\r")
             try:
                 # Load 2D slices at time t
                 raw = load_2d_slices_at_time(raw_path, t=t)
