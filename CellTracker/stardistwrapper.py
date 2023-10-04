@@ -50,7 +50,7 @@ def load_2d_slices_at_time(images_path: str | dict, t: int, do_normalize: bool =
         slice_paths_at_t = sorted(glob(images_path % t))
         if len(slice_paths_at_t) == 0:
             raise FileNotFoundError(f"No image at time {t} was found")
-        x = imread(slice_paths_at_t)
+        x = np.array([np.array(Image.open(img)) for img in slice_paths_at_t])
     elif isinstance(images_path, dict):
         file_extension = os.path.splitext(images_path["h5_file"])[1]
         assert file_extension in [".h5", ".hdf5"], "Currently only TIFF sequences or HDF5 dataset are supported"
