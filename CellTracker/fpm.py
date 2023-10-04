@@ -1,12 +1,9 @@
 from glob import glob
 from pathlib import Path
-from typing import Tuple, Generator, Union
 
 import numpy as np
 import tensorflow as tf
-from keras.layers import MaxPooling2D
 from numpy import ndarray
-from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 from tensorflow.keras import Model, Input
 from tensorflow.keras.layers import Dense, BatchNormalization, LeakyReLU, Concatenate, Conv2D, Flatten, DepthwiseConv2D, Add
