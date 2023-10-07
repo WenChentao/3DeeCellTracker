@@ -10,7 +10,7 @@ from CellTracker.simple_alignment import affine_align_and_normalize
 from CellTracker.robust_match import add_or_remove_points_with_prob_matrix
 from CellTracker.trackerlite import BETA, LAMBDA, K_POINTS, get_match_pairs, cal_norm_prob, \
     prgls_with_two_ref, greedy_match
-from CellTracker.plot import plot_initial_matching, plot_matching_2d_with_plotly, plot_predicted_movements
+from CellTracker.plot import plot_initial_matching, plot_predicted_movements
 
 
 def match_coords_to_ids(fpm_model, coordinates_nx3: ndarray, path_to_neuropal_csv: str, skiprows: int = 0,
@@ -130,19 +130,26 @@ def predict_cell_positions(fpm_model, coords_neuropal: ndarray, coords_wba: ndar
         filtered_coords_norm_t1 = predicted_coords_set1[inliers_ori[0]]
 
     if verbosity >= 1:
-        print("Final matching 2D:")
+        print("Final matching 2D x-y:")
         fig = plot_initial_matching(affine_aligned_coords_t1,
                                     neuropal_coords_norm_t2,
                                     match_seg_t1_seg_t2,
                                     t1=1, t2=-1,
                                     fig_width_px=2400,
                                     ids_tgt=ids_neuropal, ids_ref=ids_wba)
-        shift = (0.5, 0, 0)
-        fig = plot_matching_2d_with_plotly(neuropal_coords_norm_t2, affine_aligned_coords_t1,
-                                      match_seg_t1_seg_t2[:, [1, 0]],
-                                           ids_ref=ids_neuropal, ids_tgt=ids_wba, shift=shift)
-        fig.update_layout(width=1500, height=1000)
-        fig.show()
+        print("Final matching 2D x-z:")
+        fig = plot_initial_matching(affine_aligned_coords_t1[:, [2, 1, 0]],
+                                    neuropal_coords_norm_t2[:, [2, 1, 0]],
+                                    match_seg_t1_seg_t2,
+                                    t1=1, t2=-1,
+                                    fig_width_px=2400,
+                                    ids_tgt=ids_neuropal, ids_ref=ids_wba)
+        # shift = (0.5, 0, 0)
+        # fig = plot_matching_2d_with_plotly(neuropal_coords_norm_t2, affine_aligned_coords_t1,
+        #                               match_seg_t1_seg_t2[:, [1, 0]],
+        #                                    ids_ref=ids_neuropal, ids_tgt=ids_wba, shift=shift)
+        # fig.update_layout(width=1500, height=1000)
+        # fig.show()
         print("Final matching 3D:")
         fig = plot_initial_matching(affine_aligned_coords_t1,
                                     neuropal_coords_norm_t2,
