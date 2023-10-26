@@ -1,11 +1,10 @@
 import numpy as np
-from tensorflow.keras import Model
 
 from CellTracker.fpm import initial_matching_fpm
 from CellTracker.simple_alignment import rotation_align_by_control_points
 from CellTracker.trackerlite import K_POINTS, get_match_pairs
-from CellTracker.plot import plot_initial_matching
 from CellTracker.utils import normalize_points
+from CellTracker.v1_modules.ffn import initial_matching_ffn
 
 
 def rotation_align_by_fpm(fpm_model_rot, points1, points2, similarity_threshold=0.4, match_method='greedy', ids_ref=None,
@@ -32,8 +31,7 @@ def _sort_pairs(pairs_px2):
     return np.column_stack((pairs_px2[sorted_indices, 0], pairs_px2[sorted_indices, 1]))
 
 
-def match_by_fpm(fpm_model, points1, points2, similarity_threshold=0.4, match_method='coherence', ids_ref=None,
-                 ids_tgt=None):
+def match_by_fpm(fpm_model, points1, points2, similarity_threshold=0.4, match_method='coherence'):
     # Initialize the model
     coords_norm_t1 = normalize_points(points1)
     coords_norm_t2 = normalize_points(points2)
@@ -42,8 +40,18 @@ def match_by_fpm(fpm_model, points1, points2, similarity_threshold=0.4, match_me
     updated_matching = initial_matching.copy()
     pairs_px2 = get_match_pairs(updated_matching, coords_norm_t1, coords_norm_t2,
                                 threshold=similarity_threshold, method=match_method)
+    return pairs_px2
 
-    #fig = plot_initial_matching(coords_norm_t1, coords_norm_t2, pairs_px2, 1, 2, ids_ref=ids_ref, ids_tgt=ids_tgt)
+
+def match_by_ffn(ffn_model, points1, points2, similarity_threshold=0.4, match_method='coherence'):
+    # Initialize the model
+    coords_norm_t1 = normalize_points(points1)
+    coords_norm_t2 = normalize_points(points2)
+    initial_matching = initial_matching_ffn(ffn_model, coords_norm_t1, coords_norm_t2,
+                                            K_POINTS)
+    updated_matching = initial_matching.copy()
+    pairs_px2 = get_match_pairs(updated_matching, coords_norm_t1, coords_norm_t2,
+                                threshold=similarity_threshold, method=match_method)
     return pairs_px2
 
 

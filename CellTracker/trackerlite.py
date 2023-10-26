@@ -280,8 +280,8 @@ class TrackerLite:
         print(f"Matching method: {self.match_method}")
         print(f"Threshold for similarity: {self.similarity_threshold}")
         assert t2 not in self.miss_frame
-        segmented_pos_t1, extra_pos_t1 = self._get_segmented_pos(t1)
-        segmented_pos_t2, extra_pos_t2 = self._get_segmented_pos(t2)
+        segmented_pos_t1, inliers_t1 = self._get_segmented_pos(t1)
+        segmented_pos_t2, inliers_t2 = self._get_segmented_pos(t2)
 
         if confirmed_coord_t1 is None:
             confirmed_coord_t1 = segmented_pos_t1
