@@ -428,7 +428,7 @@ class CoordsToImageTransformer:
         corrected_labels_image : ndarray
             The corrected labels image.
         """
-        prob_map = np.load(str(self.results_folder / SEG / ("prob%04d.npy" % t)))
+        prob_map = np.load(str(self.results_folder / SEG / ("prob%05d.npy" % t)))
         prob_map = np.repeat(np.repeat(np.repeat(prob_map, grid[1], axis=0), grid[2], axis=1), grid[0], axis=2)
         if prob_map.shape != self.proofed_segmentation.shape:
             x_lim, y_lim, z_lim = self.proofed_segmentation.shape
@@ -509,7 +509,7 @@ class CoordsToImageTransformer:
         images_path : str
             The path to the directory containing the raw images.
         """
-        np.save(str(self.results_folder / TRACK_RESULTS / COORDS_REAL / ("coords%04d.npy" % t2)), coords.real)
+        np.save(str(self.results_folder / TRACK_RESULTS / COORDS_REAL / ("coords%05d.npy" % t2)), coords.real)
         save_tracked_labels(self.results_folder, corrected_labels_image, t2, self.use_8_bit)
         self.save_merged_labels(corrected_labels_image, images_path, t2)
 
@@ -553,9 +553,9 @@ class CoordsToImageTransformer:
 
         (self.results_folder / TRACK_RESULTS / MERGED_LABELS).mkdir(parents=True, exist_ok=True)
         (self.results_folder / TRACK_RESULTS / MERGED_LABELS_XZ).mkdir(parents=True, exist_ok=True)
-        merged_labels.save(str(self.results_folder / TRACK_RESULTS / MERGED_LABELS / ("merged_labels_t%04d.png" % t)))
+        merged_labels.save(str(self.results_folder / TRACK_RESULTS / MERGED_LABELS / ("merged_labels_t%06d.png" % t)))
         merged_labels_xz.save(
-            str(self.results_folder / TRACK_RESULTS / MERGED_LABELS_XZ / ("merged_labels_xz_t%04d.png" % t)))
+            str(self.results_folder / TRACK_RESULTS / MERGED_LABELS_XZ / ("merged_labels_xz_t%06d.png" % t)))
 
 
 def save_tracked_labels(results_folder: Path, labels_xyz: ndarray, t: int, use_8_bit: bool):
@@ -578,7 +578,7 @@ def save_tracked_labels(results_folder: Path, labels_xyz: ndarray, t: int, use_8
     dtype = np.uint8 if use_8_bit else np.uint16
     for z in range(1, labels_xyz.shape[2] + 1):
         img2d = labels_xyz[:, :, z - 1].astype(dtype)
-        Image.fromarray(img2d).save(str(tracked_labels_path / ("track_results_t%04i_z%04i.tif" % (t, z))),
+        Image.fromarray(img2d).save(str(tracked_labels_path / ("track_results_t%06i_z%04i.tif" % (t, z))),
                                     compression="tiff_lzw")
 
 
