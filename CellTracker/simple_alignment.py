@@ -7,8 +7,9 @@ from CellTracker.trackerlite import K_POINTS, get_match_pairs
 from CellTracker.utils import normalize_points
 
 
-def affine_align_and_normalize(coords_t1: ndarray, coords_t2: ndarray, fpm_model: Model, match_method: str,
-                               similarity_threshold: float):
+def pre_alignment(coords_t1: ndarray, coords_t2: ndarray, fpm_model: Model, match_method: str,
+                  similarity_threshold: float):
+    print("Pre-alignment by FPM + Affine Transformation")
     coords_norm_t2, _ = normalize_points(coords_t2, return_para=True)
     coords_norm_t1, _ = normalize_points(coords_t1, return_para=True)
     # affine transformation

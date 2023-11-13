@@ -193,7 +193,6 @@ def add_inliers_within_a_radius(predicted_coords_t1_to_t2, segmented_coords_norm
     return np.asarray(inliers_t2)
 
 
-
 def calc_min_path(pairs: List[Tuple[int, int]], coordinates_nx3_t1, coordinates_mx3_t2):
     n = coordinates_nx3_t1.shape[0]
     m = coordinates_mx3_t2.shape[0]

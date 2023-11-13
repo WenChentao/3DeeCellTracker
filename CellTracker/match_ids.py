@@ -6,7 +6,7 @@ from numpy import ndarray
 import pandas as pd
 
 from CellTracker.fpm import initial_matching_fpm
-from CellTracker.simple_alignment import affine_align_and_normalize
+from CellTracker.simple_alignment import pre_alignment
 from CellTracker.robust_match import add_or_remove_points_with_prob_matrix
 from CellTracker.trackerlite import BETA, LAMBDA, K_POINTS, get_match_pairs, cal_norm_prob, \
     prgls_with_two_ref, greedy_match
@@ -65,16 +65,11 @@ def predict_cell_positions(fpm_model, coords_neuropal: ndarray, coords_wba: ndar
     """
     Predict
     """
-    post_processing: str = "prgls"
-    if verbosity >= 0:
-        print(f"Matching method: {match_method}")
-        print(f"Threshold for similarity: {similarity_threshold}")
-        print(f"Post processing method: {post_processing}")
+    print_initial_info(match_method, similarity_threshold, verbosity)
 
-    print("Pre-alignment by FPM + Affine Transformation")
-    affine_aligned_coords_t1, neuropal_coords_norm_t2 = affine_align_and_normalize(coords_wba, coords_neuropal,
-                                                                                   fpm_model, match_method,
-                                                                                   similarity_threshold)
+    affine_aligned_coords_t1, neuropal_coords_norm_t2 = pre_alignment(coords_wba, coords_neuropal,
+                                                                      fpm_model, match_method,
+                                                                      similarity_threshold)
 
     filtered_coords_norm_t1 = affine_aligned_coords_t1.copy()
     filtered_coords_norm_t2 = neuropal_coords_norm_t2.copy()
@@ -130,43 +125,62 @@ def predict_cell_positions(fpm_model, coords_neuropal: ndarray, coords_wba: ndar
         filtered_coords_norm_t1 = predicted_coords_set1[inliers_ori[0]]
 
     if verbosity >= 1:
-        print("Final matching 2D x-y:")
-        fig = plot_initial_matching(affine_aligned_coords_t1,
-                                    neuropal_coords_norm_t2,
-                                    match_seg_t1_seg_t2,
-                                    t1=1, t2=-1,
-                                    fig_width_px=2400,
-                                    ids_tgt=ids_neuropal, ids_ref=ids_wba)
-        print("Final matching 2D x-z:")
-        fig = plot_initial_matching(affine_aligned_coords_t1[:, [2, 1, 0]],
-                                    neuropal_coords_norm_t2[:, [2, 1, 0]],
-                                    match_seg_t1_seg_t2,
-                                    t1=1, t2=-1,
-                                    fig_width_px=2400,
-                                    ids_tgt=ids_neuropal, ids_ref=ids_wba)
-        # shift = (0.5, 0, 0)
-        # fig = plot_matching_2d_with_plotly(neuropal_coords_norm_t2, affine_aligned_coords_t1,
-        #                               match_seg_t1_seg_t2[:, [1, 0]],
-        #                                    ids_ref=ids_neuropal, ids_tgt=ids_wba, shift=shift)
-        # fig.update_layout(width=1500, height=1000)
-        # fig.show()
-        print("Final matching 3D:")
-        fig = plot_initial_matching(affine_aligned_coords_t1,
-                                    neuropal_coords_norm_t2,
-                                    match_seg_t1_seg_t2,
-                                    t1=1, t2=-1,
-                                    fig_width_px=2400,
-                                    ids_tgt=ids_neuropal, ids_ref=ids_wba, show_3d=True)
+        plot_final_matching_results(affine_aligned_coords_t1, ids_neuropal, ids_wba, match_seg_t1_seg_t2,
+                                    neuropal_coords_norm_t2)
 
-        if hdf5_path is not None:
-            with h5py.File(hdf5_path, 'w') as new_file:
-                dataset_t1 = new_file.create_dataset("affine_aligned_coords_t1", data=affine_aligned_coords_t1)
-                dataset_t2 = new_file.create_dataset("neuropal_coords_norm_t2", data=neuropal_coords_norm_t2)
-                dataset_match = new_file.create_dataset("match_seg_t1_seg_t2", data= match_seg_t1_seg_t2)
-                dataset_t2.attrs["ids_neuropal"] = ids_neuropal.tolist()
-                dataset_t1.attrs["ids_wba"] = ids_wba.tolist()
+    if hdf5_path is not None:
+        save_to_hdf5(affine_aligned_coords_t1, hdf5_path, ids_neuropal, ids_wba, match_seg_t1_seg_t2,
+                     neuropal_coords_norm_t2)
 
     return np.asarray([(ids_wba[i], ids_neuropal[j]) for i, j in match_seg_t1_seg_t2])
+
+
+def save_to_hdf5(affine_aligned_coords_t1, hdf5_path, ids_neuropal, ids_wba, match_seg_t1_seg_t2,
+                 neuropal_coords_norm_t2):
+    with h5py.File(hdf5_path, 'w') as new_file:
+        dataset_t1 = new_file.create_dataset("affine_aligned_coords_t1", data=affine_aligned_coords_t1)
+        dataset_t2 = new_file.create_dataset("neuropal_coords_norm_t2", data=neuropal_coords_norm_t2)
+        dataset_match = new_file.create_dataset("match_seg_t1_seg_t2", data=match_seg_t1_seg_t2)
+        dataset_t2.attrs["ids_neuropal"] = ids_neuropal.tolist()
+        dataset_t1.attrs["ids_wba"] = ids_wba.tolist()
+
+
+def plot_final_matching_results(affine_aligned_coords_t1, ids_neuropal, ids_wba, match_seg_t1_seg_t2,
+                                neuropal_coords_norm_t2):
+    print("Final matching 2D x-y:")
+    fig = plot_initial_matching(affine_aligned_coords_t1,
+                                neuropal_coords_norm_t2,
+                                match_seg_t1_seg_t2,
+                                t1=1, t2=-1,
+                                fig_width_px=2400,
+                                ids_tgt=ids_neuropal, ids_ref=ids_wba)
+    print("Final matching 2D x-z:")
+    fig = plot_initial_matching(affine_aligned_coords_t1[:, [2, 1, 0]],
+                                neuropal_coords_norm_t2[:, [2, 1, 0]],
+                                match_seg_t1_seg_t2,
+                                t1=1, t2=-1,
+                                fig_width_px=2400,
+                                ids_tgt=ids_neuropal, ids_ref=ids_wba)
+    # shift = (0.5, 0, 0)
+    # fig = plot_matching_2d_with_plotly(neuropal_coords_norm_t2, affine_aligned_coords_t1,
+    #                               match_seg_t1_seg_t2[:, [1, 0]],
+    #                                    ids_ref=ids_neuropal, ids_tgt=ids_wba, shift=shift)
+    # fig.update_layout(width=1500, height=1000)
+    # fig.show()
+    print("Final matching 3D:")
+    fig = plot_initial_matching(affine_aligned_coords_t1,
+                                neuropal_coords_norm_t2,
+                                match_seg_t1_seg_t2,
+                                t1=1, t2=-1,
+                                fig_width_px=2400,
+                                ids_tgt=ids_neuropal, ids_ref=ids_wba, show_3d=True)
+
+
+def print_initial_info(match_method, similarity_threshold, verbosity):
+    if verbosity >= 0:
+        print(f"Matching method: {match_method}")
+        print(f"Threshold for similarity: {similarity_threshold}")
+        print(f"Post processing method: prgls")
 
 
 def predict_matching_prgls(matched_pairs, confirmed_coords_norm_t1, segmented_coords_norm_t1, segmented_coords_norm_t2,
@@ -177,5 +191,4 @@ def predict_matching_prgls(matched_pairs, confirmed_coords_norm_t1, segmented_co
                                                    beta=beta, lambda_=lambda_)
 
     return tracked_coords_norm_t2, prob_mxn
-
 
