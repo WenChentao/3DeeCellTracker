@@ -138,7 +138,7 @@ def save_auto_seg_vol1(labels_xyz, results_folder):
     dtype = np.uint8 if labels_xyz.max() <= 255 else np.uint16
     for z in range(1, labels_xyz.shape[2] + 1):
         img2d = labels_xyz[:, :, z - 1].astype(dtype)
-        Image.fromarray(img2d).save(str(_seg_path / ("auto_vol1_z%05i.tif" % z)))
+        Image.fromarray(img2d).save(str(_seg_path / ("auto_vol1_z%04i.tif" % z)))
 
 
 def save_arrays_to_folder(arrays, folder_path):
