@@ -332,7 +332,7 @@ class TrackerLite:
 
             try:
                 # Load 2D slices at time t
-                labels_img = load_2d_slices_at_time(str(tracked_labels_path / "*t%04i*.tif"), t=t, do_normalize=False)
+                labels_img = load_2d_slices_at_time(str(tracked_labels_path / "*t%06i*.tif"), t=t, do_normalize=False)
             except FileNotFoundError:
                 # Handle missing image files
                 print(f"Warning: Label images at t={t - 1} cannot be loaded!")

@@ -177,7 +177,7 @@ def save_img3ts(z_range, img, path, t, use_8_bit: bool=True):
         The 3D image to be saved
     path : str
         The path of the image files to be saved.
-        It should use formatted string to indicate volume number and then layer number, e.g. "xxx_t%04d_z%04i.tif"
+        It should use formatted string to indicate volume number and then layer number, e.g. "xxx_t%06d_z%04i.tif"
     t : int
         The volume number for the image to be saved
     use_8_bit: bool
@@ -655,7 +655,7 @@ class Segmentation:
         Predict cell regions by 3D U-Net and save it if the prediction has not been cached
         """
         try:
-            image_cell_bg = np.load(self.paths.unet_cache + "t%04i.npy" % vol, allow_pickle=True)
+            image_cell_bg = np.load(self.paths.unet_cache + "t%06i.npy" % vol, allow_pickle=True)
         except OSError:
             image_cell_bg = self._save_unet_regions(image_raw, vol)
         return image_cell_bg
@@ -666,7 +666,7 @@ class Segmentation:
         image_norm = np.expand_dims(_normalize_image(image_raw, self.noise_level), axis=(0, 4))
         # predict cell-like regions using 3D U-net
         image_cell_bg = unet3_prediction(image_norm, self.unet_model, shrink=self.shrink)
-        np.save(self.paths.unet_cache + "t%04i.npy" % vol, np.array(image_cell_bg, dtype="float16"))
+        np.save(self.paths.unet_cache + "t%06i.npy" % vol, np.array(image_cell_bg, dtype="float16"))
         return image_cell_bg
 
     def _watershed(self, image_cell_bg, method):
@@ -714,7 +714,7 @@ class Paths:
         The path of the folder to store the animation of tracking in each volume
     image_name : str
         The file names of the raw image files.
-        It should use formatted string to indicate volume number and then layer number, e.g. "xxx_t%04d_z%04i.tif"
+        It should use formatted string to indicate volume number and then layer number, e.g. "xxx_t%06d_z%04i.tif"
     unet_model_file : str
         The filename of the pretrained 3D U-Net (keras model such as "xxx.h5")
     ffn_model_file : str
@@ -1065,7 +1065,7 @@ class Tracker(Segmentation, Draw):
 
         # save labels in the first volume (interpolated)
         save_img3ts(range(0, self.z_siz), self.segmentation_manual_relabels,
-                    self.paths.track_results + "track_results_t%04i_z%04i.tif", t=1, use_8_bit=self.use_8_bit)
+                    self.paths.track_results + "track_results_t%06i_z%04i.tif", t=1, use_8_bit=self.use_8_bit)
 
         # calculate coordinates of cell centers at t=1
         center_points_t0 = ndm.center_of_mass(self.segmentation_manual_relabels > 0,
@@ -1451,7 +1451,7 @@ class Tracker(Segmentation, Draw):
         track_process_images = []
         for volume in range(from_volume, self.volume_num + 1):
             try:
-                im = mgimg.imread(self.paths.anim + "track_anim_t%04i.png" % volume)
+                im = mgimg.imread(self.paths.anim + "track_anim_t%06i.png" % volume)
             except FileNotFoundError:
                 continue
             implot = ax.imshow(im)
@@ -1489,7 +1489,7 @@ class Tracker(Segmentation, Draw):
         # skip frames that cannot be tracked
         if target_volume in self.miss_frame:
             save_img3ts(range(0, self.z_siz), self.tracked_labels,
-                        self.paths.track_results + "track_results_t%04i_z%04i.tif", target_volume, self.use_8_bit)
+                        self.paths.track_results + "track_results_t%06i_z%04i.tif", target_volume, self.use_8_bit)
             self.history.r_displacements.append(self.history.r_displacements[-1])
             self.history.r_segmented_coordinates.append(self.segresult.r_coordinates_segment)
             self.history.r_tracked_coordinates.append(
@@ -1520,11 +1520,11 @@ class Tracker(Segmentation, Draw):
 
         # save tracked labels
         save_img3ts(range(0, self.z_siz), self.tracked_labels,
-                    self.paths.track_results + "track_results_t%04i_z%04i.tif", target_volume, self.use_8_bit)
+                    self.paths.track_results + "track_results_t%06i_z%04i.tif", target_volume, self.use_8_bit)
 
         self._draw_matching_6panel(target_volume, axc6, r_coor_predicted_mean, i_disp_from_vol1_updated)
         fig.canvas.draw()
-        plt.savefig(self.paths.anim + "track_anim_t%04i.png" % target_volume, bbox_inches='tight')
+        plt.savefig(self.paths.anim + "track_anim_t%06i.png" % target_volume, bbox_inches='tight')
 
         # update and save points locations
         if self.ensemble:

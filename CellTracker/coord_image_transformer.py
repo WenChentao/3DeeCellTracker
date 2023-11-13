@@ -555,9 +555,9 @@ class CoordsToImageTransformer:
 
         (self.results_folder / TRACK_RESULTS / MERGED_LABELS).mkdir(parents=True, exist_ok=True)
         (self.results_folder / TRACK_RESULTS / MERGED_LABELS_XZ).mkdir(parents=True, exist_ok=True)
-        merged_labels.save(str(self.results_folder / TRACK_RESULTS / MERGED_LABELS / ("merged_labels_t%04d.png" % t)))
+        merged_labels.save(str(self.results_folder / TRACK_RESULTS / MERGED_LABELS / ("merged_labels_t%06d.png" % t)))
         merged_labels_xz.save(
-            str(self.results_folder / TRACK_RESULTS / MERGED_LABELS_XZ / ("merged_labels_xz_t%04d.png" % t)))
+            str(self.results_folder / TRACK_RESULTS / MERGED_LABELS_XZ / ("merged_labels_xz_t%06d.png" % t)))
 
 
 def save_tracked_labels(results_folder: Path, labels_xyz: ndarray, t: int, use_8_bit: bool):
@@ -580,7 +580,7 @@ def save_tracked_labels(results_folder: Path, labels_xyz: ndarray, t: int, use_8
     dtype = np.uint8 if use_8_bit else np.uint16
     for z in range(1, labels_xyz.shape[2] + 1):
         img2d = labels_xyz[:, :, z - 1].astype(dtype)
-        Image.fromarray(img2d).save(str(tracked_labels_path / ("track_results_t%04i_z%04i.tif" % (t, z))))
+        Image.fromarray(img2d).save(str(tracked_labels_path / ("track_results_t%06i_z%04i.tif" % (t, z))))
 
 
 def gaussian_interpolation_3d(label_image, interpolation_factor=10, smooth_sigma=5) -> \
