@@ -157,14 +157,13 @@ def add_or_remove_points(predicted_coords_t1_to_t2: ndarray, predicted_coords_t2
     return predicted_coords_t1_to_t2[all_inliers_t1], segmented_coords_norm_t2[all_inliers_t2], inliers
 
 
-def add_or_remove_points_with_prob_matrix(prob_mxn: ndarray, predicted_coords_t1_to_t2: ndarray,
-                                          segmented_coords_norm_t2: ndarray):
+def update_inliers_points(match_seg_t1_seg_t2: ndarray, predicted_coords_t1_to_t2: ndarray,
+                          segmented_coords_norm_t2: ndarray):
     """
-    Use a prob_mxn after applying prgls+greedy method to decide inliers
+    Update inliers by prgls+greedy match results
     """
-    prob_t1, prob_t2 = prob_mxn.max(axis=0), prob_mxn.max(axis=1)
-    all_inliers_t1 = np.nonzero(prob_t1 < -.5)[0]
-    all_inliers_t2 = np.nonzero(prob_t2 < -.5)[0]
+    all_inliers_t1 = match_seg_t1_seg_t2[:, 0]
+    all_inliers_t2 = match_seg_t1_seg_t2[:, 1]
     inliers = (all_inliers_t1, all_inliers_t2)
     return predicted_coords_t1_to_t2[all_inliers_t1], segmented_coords_norm_t2[all_inliers_t2], inliers
 

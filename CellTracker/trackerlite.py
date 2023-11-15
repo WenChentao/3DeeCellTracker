@@ -376,11 +376,11 @@ def predict_new_positions(matched_pairs, confirmed_coords_norm_t1, segmented_coo
 
 
 def coherence_match(updated_match_matrix: ndarray, segmented_coords_norm_t1, segmented_coords_norm_t2, threshold):
-    matched_pairs, _ = greedy_match(updated_match_matrix, threshold)
+    matched_pairs = greedy_match(updated_match_matrix, threshold)
     for i in range(5):
         coherence = calc_min_path(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2)
         updated_match_matrix = np.sqrt(updated_match_matrix * coherence)
-        matched_pairs, _ = greedy_match(updated_match_matrix, threshold)
+        matched_pairs = greedy_match(updated_match_matrix, threshold)
     #matched_pairs = filter_matching_outliers(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2, neighbors=10)
     matched_pairs = filter_matching_outliers_global(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2,)
     return matched_pairs
@@ -396,6 +396,7 @@ def hungarian_match(match_score_matrix_: ndarray, match_score_matrix_updated: nd
 
 
 def greedy_match(updated_match_matrix: ndarray, threshold: float = 1e-6):
+    """Return greedy match, and the updated matching matrix with matched rows, cols filled with -1"""
     working_match_score_matrix = updated_match_matrix.copy()
     match_pairs = []
     for pair_number in range(working_match_score_matrix.shape[1]):
@@ -408,14 +409,14 @@ def greedy_match(updated_match_matrix: ndarray, threshold: float = 1e-6):
 
         working_match_score_matrix[target_index, :] = -1
         working_match_score_matrix[:, reference_index] = -1
-    return np.asarray(match_pairs), working_match_score_matrix
+    return np.asarray(match_pairs)
 
 
 def get_match_pairs(updated_match_matrix: ndarray, segmented_coords_norm_t1, segmented_coords_norm_t2, threshold=0.5,
                     method="coherence") -> ndarray:
     """Match points from two point sets by simply choosing the pairs with the highest probability subsequently"""
     if method == "greedy":
-        return greedy_match(updated_match_matrix, threshold)[0]
+        return greedy_match(updated_match_matrix, threshold)
     if method == "hungarian":
         return hungarian_match(updated_match_matrix, updated_match_matrix, threshold)
     if method == "coherence":
