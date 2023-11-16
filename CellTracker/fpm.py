@@ -222,7 +222,7 @@ class FlexiblePointMatcherConvSimpler(FlexiblePointMatcherConv):
     def __init__(self, num_skip: int):
         super().__init__(num_skip)
         self.encoder = self.up_cnn(num_skip)
-        self.comparator = self.down_cnn(num_skip=1)
+        self.comparator = self.down_cnn(num_skip=0)
 
 
 class FPMPart2Model(Model):
