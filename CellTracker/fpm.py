@@ -222,7 +222,17 @@ class FlexiblePointMatcherConvSimpler(FlexiblePointMatcherConv):
     def __init__(self, num_skip: int):
         super().__init__(num_skip)
         self.encoder = self.up_cnn(num_skip)
-        self.comparator = self.down_cnn(num_skip=0)
+        self.comparator = self.down_cnn()
+
+    def down_cnn(self):
+        input_layer = Input(shape=(NUM_FEATURES, NUM_KERNELS, 2))
+        x = self.conv_bn_lr(input_layer, kernel_size=(NUM_FEATURES, 1), padding='valid')
+
+        x = self.conv_bn_lr(x, n_kernels=1, kernel_size=(1, 1), padding='same')
+        x = Flatten()(x)
+        x = Dense(1, activation='sigmoid')(x)
+
+        return Model(inputs=input_layer, outputs=x)
 
 
 class FPMPart2Model(Model):
@@ -234,7 +244,7 @@ class FPMPart2Model(Model):
         return self.comparator(expanded_feature)
 
 
-def initial_matching_fpm_old(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
+def initial_matching_fpm(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
     """
     This function compute initial matching between all pairs of points in reference and target points set.
 
@@ -267,11 +277,13 @@ def initial_matching_fpm_old(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: nda
     tgt_x_flat_batch_meshgrid = np.tile(features_tgt_mxkp2x4, (n, 1, 1, 1)).transpose((1, 0, 2, 3)).reshape((n * m,  k_neighbors + 2, NUM_FEATURES))
 
     features_ref_tgt = np.concatenate((ref_x_flat_batch_meshgrid[:,:,:,None], tgt_x_flat_batch_meshgrid[:,:,:,None]), axis=3)
+
     similarity_scores = fpm_model.predict(features_ref_tgt, batch_size=1024).reshape((m, n))
+
     return similarity_scores
 
 
-def initial_matching_fpm(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
+def initial_matching_fpm_(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
     """
     This function compute initial matching between all pairs of points in reference and target points set.
 
