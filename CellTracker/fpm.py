@@ -160,37 +160,18 @@ class FlexiblePointMatcherConv(Model):
 
     def __init__(self, num_skip: int):
         super().__init__()
-        self.encoder = self.up_cnn(num_skip)
+        self.encoder = up_cnn(num_skip)
         self.comparator = self.down_cnn(num_skip)
-
-    def up_cnn(self, num_skip: int):
-        input_layer = Input(shape=(K_NEIGHBORS + 2, NUM_FEATURES, 1))
-
-        x = self.conv_bn_lr(input_layer, kernel_size=(K_NEIGHBORS + 2, 1))
-
-        for i in range(num_skip):
-            x_conv = self.conv_bn_lr(x)
-            x = Add()([x, x_conv])
-
-        x = x[:, 0, :, :]
-        return Model(inputs=input_layer, outputs=x)
-
-    @staticmethod
-    def conv_bn_lr(x1, n_kernels=NUM_KERNELS, kernel_size=(1, 1), padding='valid'):
-        x = Conv2D(n_kernels, kernel_size=kernel_size, padding=padding)(x1)
-        x = BatchNormalization()(x)
-        x2 = LeakyReLU()(x)
-        return x2
 
     def down_cnn(self, num_skip: int):
         input_layer = Input(shape=(NUM_FEATURES, NUM_KERNELS, 2))
-        x = self.conv_bn_lr(input_layer, kernel_size=(NUM_FEATURES, 1), padding='valid')
+        x = conv_bn_lr(input_layer, kernel_size=(NUM_FEATURES, 1), padding='valid')
 
         for i in range(num_skip):
-            x_conv = self.conv_bn_lr(x, kernel_size=(1, 3), padding='same')
+            x_conv = conv_bn_lr(x, kernel_size=(1, 3), padding='same')
             x = Add()([x, x_conv])
 
-        x = self.conv_bn_lr(x, n_kernels=8, kernel_size=(1, 1), padding='same')
+        x = conv_bn_lr(x, n_kernels=8, kernel_size=(1, 1), padding='same')
         x = Flatten()(x)
         x = Dense(1, activation='sigmoid')(x)
 
@@ -214,25 +195,62 @@ class FlexiblePointMatcherConv(Model):
         return tf.concat(predictions, axis=0)
 
 
-class FlexiblePointMatcherConvSimpler(FlexiblePointMatcherConv):
+def up_cnn(num_skip: int):
+    input_layer = Input(shape=(K_NEIGHBORS + 2, NUM_FEATURES, 1))
+
+    x = conv_bn_lr(input_layer, kernel_size=(K_NEIGHBORS + 2, 1))
+
+    for i in range(num_skip):
+        x_conv = conv_bn_lr(x)
+        x = Add()([x, x_conv])
+
+    x = x[:, 0, :, :]
+    return Model(inputs=input_layer, outputs=x)
+    
+    
+def conv_bn_lr(x1, n_kernels=NUM_KERNELS, kernel_size=(1, 1), padding='valid'):
+    x = Conv2D(n_kernels, kernel_size=kernel_size, padding=padding)(x1)
+    x = BatchNormalization()(x)
+    x2 = LeakyReLU()(x)
+    return x2
+    
+    
+class FlexiblePointMatcherConvSimpler(Model):
     """
     A class that defines a custom architecture for matching point sets of cells from two 3D images.
     """
 
     def __init__(self, num_skip: int):
-        super().__init__(num_skip)
-        self.encoder = self.up_cnn(num_skip)
+        super().__init__()
+        self.encoder = up_cnn(num_skip)
         self.comparator = self.down_cnn()
 
     def down_cnn(self):
         input_layer = Input(shape=(NUM_FEATURES, NUM_KERNELS, 2))
-        x = self.conv_bn_lr(input_layer, kernel_size=(NUM_FEATURES, 1), padding='valid')
+        x = conv_bn_lr(input_layer, kernel_size=(NUM_FEATURES, 1), padding='valid')
 
-        x = self.conv_bn_lr(x, n_kernels=1, kernel_size=(1, 1), padding='same')
+        x = conv_bn_lr(x, n_kernels=1, kernel_size=(1, 1), padding='same')
         x = Flatten()(x)
         x = Dense(1, activation='sigmoid')(x)
 
         return Model(inputs=input_layer, outputs=x)
+
+    def call(self, points_xy):
+        expanded_feature_x = self.encoder(points_xy[..., 0])
+        expanded_feature_y = self.encoder(points_xy[..., 1])
+        expanded_feature = tf.stack([expanded_feature_x, expanded_feature_y], axis=-1)
+        return self.comparator(expanded_feature)
+
+    def predict_feature(self, points_x, batch_size: int):
+        num_samples = points_x.shape[0]
+        predictions = []
+
+        for start_idx in range(0, num_samples, batch_size):
+            end_idx = start_idx + batch_size
+            batch_points_xy = points_x[start_idx:end_idx]
+            predictions.append(self.encoder(batch_points_xy))
+
+        return tf.concat(predictions, axis=0)
 
 
 class FPMPart2Model(Model):
