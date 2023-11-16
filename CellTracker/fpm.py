@@ -213,73 +213,16 @@ class FlexiblePointMatcherConv(Model):
 
         return tf.concat(predictions, axis=0)
 
-    def predict_from_expanded_features(self, expanded_feature, batch_size: int):
-        num_samples = expanded_feature.shape[0]
-        predictions = []
 
-        for start_idx in range(0, num_samples, batch_size):
-            end_idx = start_idx + batch_size
-            batch_points_xy = expanded_feature[start_idx:end_idx]
-            predictions.append(self.comparator(batch_points_xy))
-
-        return tf.concat(predictions, axis=0).numpy()
-
-
-class FlexiblePointMatcherEuclideanDist(Model):
+class FlexiblePointMatcherConvSimpler(FlexiblePointMatcherConv):
     """
     A class that defines a custom architecture for matching point sets of cells from two 3D images.
     """
 
     def __init__(self, num_skip: int):
-        super().__init__()
+        super().__init__(num_skip)
         self.encoder = self.up_cnn(num_skip)
-        self.comparator = self.euclidean_dist()
-
-    def up_cnn(self, num_skip: int):
-        input_layer = Input(shape=(K_NEIGHBORS + 2, NUM_FEATURES, 1))
-
-        x = self.conv_bn_lr(input_layer, kernel_size=(K_NEIGHBORS + 2, 1))
-
-        for i in range(num_skip):
-            x_conv = self.conv_bn_lr(x)
-            x = Add()([x, x_conv])
-
-        x = x[:, 0, :, :]
-        return Model(inputs=input_layer, outputs=x)
-
-    @staticmethod
-    def conv_bn_lr(x1, n_kernels=NUM_KERNELS, kernel_size=(1, 1), padding='valid'):
-        x = Conv2D(n_kernels, kernel_size=kernel_size, padding=padding)(x1)
-        x = BatchNormalization()(x)
-        x2 = LeakyReLU()(x)
-        return x2
-
-    def euclidean_dist(self):
-        input_layer = Input(shape=(NUM_FEATURES, NUM_KERNELS, 2))
-        feature1 = input_layer[:, :, 0]
-        feature2 = input_layer[:, :, 1]
-        feature1 = Flatten()(feature1)
-        feature2 = Flatten()(feature2)
-        dist = tf.square(feature1 - feature2)
-        x = Dense(1, activation='sigmoid')(dist)
-        return Model(inputs=input_layer, outputs=x)
-
-    def call(self, points_xy):
-        expanded_feature_x = self.encoder(points_xy[..., 0])
-        expanded_feature_y = self.encoder(points_xy[..., 1])
-        expanded_feature = tf.stack([expanded_feature_x, expanded_feature_y], axis=-1)
-        return self.comparator(expanded_feature)
-
-    def predict_feature(self, points_x, batch_size: int):
-        num_samples = points_x.shape[0]
-        predictions = []
-
-        for start_idx in range(0, num_samples, batch_size):
-            end_idx = start_idx + batch_size
-            batch_points_xy = points_x[start_idx:end_idx]
-            predictions.append(self.encoder(batch_points_xy))
-
-        return tf.concat(predictions, axis=0)
+        self.comparator = self.down_cnn(num_skip=1)
 
 
 class FPMPart2Model(Model):
@@ -291,7 +234,7 @@ class FPMPart2Model(Model):
         return self.comparator(expanded_feature)
 
 
-def initial_matching_fpm(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
+def initial_matching_fpm_old(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
     """
     This function compute initial matching between all pairs of points in reference and target points set.
 
@@ -328,7 +271,7 @@ def initial_matching_fpm(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray
     return similarity_scores
 
 
-def initial_matching_fpm_new(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
+def initial_matching_fpm(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
     """
     This function compute initial matching between all pairs of points in reference and target points set.
 
@@ -362,10 +305,11 @@ def initial_matching_fpm_new(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: nda
 
     feature_shape = expanded_feature_tgt.shape
     axes = [1, 0] + list(range(2, 1 + len(feature_shape)))
-    expanded_feature_ref_meshgrid = np.tile(expanded_feature_ref, (m, 1, 1, 1)).reshape((n * m, *feature_shape[1:]))
-    expanded_feature_tgt_meshgrid = np.tile(expanded_feature_tgt, (n, 1, 1, 1)).transpose(axes).\
-        reshape((n * m, *feature_shape[1:]))
-    features_ref_tgt = np.stack((expanded_feature_ref_meshgrid, expanded_feature_tgt_meshgrid), axis=-1)
+    expanded_feature_ref_meshgrid = tf.reshape(tf.tile(tf.expand_dims(
+        expanded_feature_ref, axis=0), [m, 1, 1, 1]), [n * m, *feature_shape[1:]])
+    expanded_feature_tgt_meshgrid = tf.reshape(tf.transpose(
+            tf.tile(tf.expand_dims(expanded_feature_tgt, axis=0), (n, 1, 1, 1)), perm=axes), (n * m, *feature_shape[1:]))
+    features_ref_tgt = tf.stack((expanded_feature_ref_meshgrid, expanded_feature_tgt_meshgrid), axis=-1)
 
     fpm_part2 = FPMPart2Model(fpm_model.comparator)
     similarity_scores = fpm_part2.predict(features_ref_tgt, batch_size=1024).reshape((m, n))
