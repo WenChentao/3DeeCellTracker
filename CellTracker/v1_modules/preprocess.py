@@ -8,6 +8,7 @@ import os
 import numpy as np
 import tensorflow.keras as keras
 from scipy import ndimage
+from skimage.measure import label
 from tensorflow.keras.layers import Conv3D, Input
 from tensorflow.keras.models import Model
 from tifffile import imread
@@ -203,3 +204,15 @@ def _normalize_label(label_img):
         The binarized image
     """
     return (label_img > 0).astype(int)
+
+
+def relabel_separated_cells(seg_cells: np.ndarray):
+    """Relabel the separate cells that were incorrectly labeled as the same one"""
+    num_cells = np.size(np.unique(seg_cells)) - 1
+    seg_cells_corrected = label(seg_cells, connectivity=3)
+    relabel_bool = False
+    if num_cells != np.max(seg_cells_corrected):
+        print(f"WARNING: {num_cells} cells were manually labeled while the program found "
+              f"{np.max(seg_cells_corrected)} separated cells and corrected it")
+        relabel_bool = True
+    return seg_cells_corrected, relabel_bool

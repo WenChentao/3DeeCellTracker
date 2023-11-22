@@ -61,7 +61,7 @@ def predict_cell_links(fpm_model, coords_neuropal: ndarray, coords_wba: ndarray,
                        beta: float = BETA, lambda_: float = LAMBDA, verbosity: int = 4,
                        hdf5_path: str = None, match_method="coherence", similarity_threshold: float = 0.4,
                        ids_wba = None, ids_neuropal = None,
-                       learning_rate=0.5):
+                       learning_rate=1.0):
     """
     Predict
     """
@@ -92,11 +92,11 @@ def predict_cell_positions(coords_t1, coords_t2, fpm_model, ids_t1, ids_t2, matc
     n = affine_aligned_coords_t1.shape[0]
     m = neuropal_coords_norm_t2.shape[0]
     inliers_updated = (np.arange(n), np.arange(m))
-    iter = 5
+    iter = 3
+    similarity_scores = initial_matching_fpm(fpm_model, filtered_coords_norm_t1, filtered_coords_norm_t2, K_POINTS)
     for i in range(iter):
         inliers_pre = (inliers_updated[0], inliers_updated[1])
-        similarity_scores = initial_matching_fpm(fpm_model, filtered_coords_norm_t1, filtered_coords_norm_t2, K_POINTS)
-        updated_similarity_scores = similarity_scores.copy()
+        updated_similarity_scores = similarity_scores[np.ix_(inliers_updated[1], inliers_updated[0])].copy()
         updated_matched_pairs = get_match_pairs(updated_similarity_scores, filtered_coords_norm_t1,
                                                 filtered_coords_norm_t2, threshold=similarity_threshold,
                                                 method=match_method)
@@ -125,9 +125,7 @@ def predict_cell_positions(coords_t1, coords_t2, fpm_model, ids_t1, ids_t2, matc
         filtered_coords_norm_t1, filtered_coords_norm_t2, inliers_updated = \
             update_inliers_points(match_seg_t1_seg_t2, predicted_coords_t1_to_t2, neuropal_coords_norm_t2)
 
-
-
-        beta *= 0.7
+        beta *= 0.6
         predicted_coords_set1 = (
                     predicted_coords_set1 + (predicted_coords_t1_to_t2 - predicted_coords_set1) * learning_rate)
         filtered_coords_norm_t1 = predicted_coords_set1[inliers_updated[0]]

@@ -32,7 +32,8 @@ from scipy.stats import trim_mean
 from skimage.measure import label
 from skimage.segmentation import relabel_sequential, find_boundaries
 
-from CellTracker.v1_modules.preprocess import _make_folder, _normalize_image, _normalize_label, load_image
+from CellTracker.v1_modules.preprocess import _make_folder, _normalize_image, _normalize_label, load_image, \
+    relabel_separated_cells
 from CellTracker.v1_modules.track import pr_gls_quick, initial_matching_quick, get_reference_vols, get_subregions, tracking_plot_xy, \
     tracking_plot_zx, gaussian_filter
 from .unet3d import unet3_prediction, _divide_img, _augmentation_generator
@@ -1060,7 +1061,7 @@ class Tracker(Segmentation, Draw):
                                     self.z_scaling)
 
         # re-segmentation
-        self.seg_cells_interpolated_corrected = self._relabel_separated_cells(self.seg_cells_interpolated_corrected)
+        self.seg_cells_interpolated_corrected, _ = relabel_separated_cells(self.seg_cells_interpolated_corrected)
         self.segmentation_manual_relabels = self.seg_cells_interpolated_corrected[:, :, self.Z_RANGE_INTERP]
 
         # save labels in the first volume (interpolated)
@@ -1074,16 +1075,6 @@ class Tracker(Segmentation, Draw):
         r_coordinates_manual_vol1 = self._transform_layer_to_real(center_points_t0)
         self.r_coordinates_tracked_t0 = r_coordinates_manual_vol1.copy()
         self.cell_num_t0 = r_coordinates_manual_vol1.shape[0]
-
-    @staticmethod
-    def _relabel_separated_cells(seg_cells_interpolated):
-        """Relabel the separate cells that were incorrectly labeled as the same one"""
-        num_cells = np.size(np.unique(seg_cells_interpolated)) - 1
-        seg_cells_interpolated_corrected = label(seg_cells_interpolated, connectivity=3)
-        if num_cells != np.max(seg_cells_interpolated_corrected):
-            print(f"WARNING: {num_cells} cells were manually labeled while the program found "
-                  f"{np.max(seg_cells_interpolated_corrected)} separated cells and corrected it")
-        return seg_cells_interpolated_corrected
 
     def _interpolate(self):
         """Interpolate/smoothen a 3D image"""

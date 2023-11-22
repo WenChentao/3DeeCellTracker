@@ -24,7 +24,7 @@ COORDS_REAL = "coords_real"
 LABELS = "labels"
 TRACK_RESULTS = "track_results"
 SEG = "seg"
-BETA, LAMBDA, MAX_ITERATION = (5.0, 5.0, 2000)
+BETA, LAMBDA, MAX_ITERATION = (1.0, 1.0, 2000)
 K_POINTS = 20
 
 

@@ -262,7 +262,7 @@ class FPMPart2Model(Model):
         return self.comparator(expanded_feature)
 
 
-def initial_matching_fpm(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
+def initial_matching_fpm_(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
     """
     This function compute initial matching between all pairs of points in reference and target points set.
 
@@ -301,7 +301,7 @@ def initial_matching_fpm(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray
     return similarity_scores
 
 
-def initial_matching_fpm_(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
+def initial_matching_fpm(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
     """
     This function compute initial matching between all pairs of points in reference and target points set.
 
