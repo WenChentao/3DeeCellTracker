@@ -144,6 +144,7 @@ class StarDist3DCustom(StarDist3D):
                                                         **nms_kwargs)
 
         # last "yield" is the actual output that would have been "return"ed if this was a regular function
+        # Note: the size of prob_map is compressed according to the grid parameter. It will be recovered during tracking
         if return_predict:
             yield res_instances, tuple(res[:-1]), prob_map
         else:
@@ -183,15 +184,13 @@ class StarDist3DCustom(StarDist3D):
             dist = np.maximum(1e-3, dist)
             return prob, dist
 
-        proba, dista, pointsa, prob_class = [],[],[], []
-
         if np.prod(n_tiles) > 1:
-            raise NotImplementedError("The prediction function has not been realized when np.prod(n_tiles)>1")
             tile_generator, output_shape, create_empty_output = tiling_setup()
 
             sh = list(output_shape)
-            sh[channel] = 1;
+            sh[channel] = 1
 
+            prob = np.zeros(output_shape[:3])
             proba, dista, pointsa, prob_classa = [], [], [], []
 
             for tile, s_src, s_dst in tile_generator:
@@ -199,30 +198,33 @@ class StarDist3DCustom(StarDist3D):
                 results_tile = predict_direct(tile)
 
                 # account for grid
-                s_src = [slice(s.start//grid_dict.get(a,1),s.stop//grid_dict.get(a,1)) for s,a in zip(s_src,axes_net)]
-                s_dst = [slice(s.start//grid_dict.get(a,1),s.stop//grid_dict.get(a,1)) for s,a in zip(s_dst,axes_net)]
+                s_src = [slice(s.start // grid_dict.get(a, 1), s.stop // grid_dict.get(a, 1)) for s, a in
+                         zip(s_src, axes_net)]
+                s_dst = [slice(s.start // grid_dict.get(a, 1), s.stop // grid_dict.get(a, 1)) for s, a in
+                         zip(s_dst, axes_net)]
                 s_src[channel] = slice(None)
                 s_dst[channel] = slice(None)
                 s_src, s_dst = tuple(s_src), tuple(s_dst)
 
                 prob_tile, dist_tile = results_tile[:2]
                 prob_tile, dist_tile = _prep(prob_tile[s_src], dist_tile[s_src])
+                prob[s_dst[:3]] = prob_tile.copy()
 
-                bs = list((b if s.start==0 else -1, b if s.stop==_sh else -1) for s,_sh in zip(s_dst, sh))
+                bs = list((b if s.start == 0 else -1, b if s.stop == _sh else -1) for s, _sh in zip(s_dst, sh))
                 bs.pop(channel)
-                inds   = _ind_prob_thresh(prob_tile, prob_thresh, b=bs)
+                inds = _ind_prob_thresh(prob_tile, prob_thresh, b=bs)
                 proba.extend(prob_tile[inds].copy())
                 dista.extend(dist_tile[inds].copy())
                 _points = np.stack(np.where(inds), axis=1)
-                offset = list(s.start for i,s in enumerate(s_dst))
+                offset = list(s.start for i, s in enumerate(s_dst))
                 offset.pop(channel)
-                _points = _points + np.array(offset).reshape((1,len(offset)))
-                _points = _points * np.array(self.config.grid).reshape((1,len(self.config.grid)))
+                _points = _points + np.array(offset).reshape((1, len(offset)))
+                _points = _points * np.array(self.config.grid).reshape((1, len(self.config.grid)))
                 pointsa.extend(_points)
 
                 if self._is_multiclass():
                     p = results_tile[2][s_src].copy()
-                    p = np.moveaxis(p,channel,-1)
+                    p = np.moveaxis(p, channel, -1)
                     prob_classa.extend(p[inds])
                 yield  # yield None after each processed tile
 
