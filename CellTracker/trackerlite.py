@@ -24,7 +24,7 @@ COORDS_REAL = "coords_real"
 LABELS = "labels"
 TRACK_RESULTS = "track_results"
 SEG = "seg"
-BETA, LAMBDA, MAX_ITERATION = (1.0, 1.0, 2000)
+BETA, LAMBDA, MAX_ITERATION = (3.0, 1.0, 2000)
 K_POINTS = 20
 
 
@@ -163,10 +163,10 @@ class TrackerLite:
 
         assert t2 not in self.miss_frame
 
+        segmented_pos_t1, inliers_t1 = self._get_segmented_pos(t1)
         if confirmed_coord_t1 is None:
-            segmented_pos_t1, inliers_t1 = self._get_segmented_pos(t1)
             confirmed_coord_t1 = segmented_pos_t1
-            match_confirmed_t1_and_seg_t1 = np.arange(confirmed_coord_t1.real.shape[0]).repeat(2).reshape(-1, 2)
+        match_confirmed_t1_and_seg_t1 = np.arange(confirmed_coord_t1.real.shape[0]).repeat(2).reshape(-1, 2)
 
         segmented_pos_t2, inliers_t2 = self._get_segmented_pos(t2)
 

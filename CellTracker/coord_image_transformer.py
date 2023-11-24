@@ -262,7 +262,7 @@ class CoordsToImageTransformer:
         self.coord_vol1 = Coordinates(np.asarray(coord_vol1), interpolation_factor, self.voxel_size, dtype="raw")
         coords_real_path = self.results_folder / TRACK_RESULTS / COORDS_REAL
         coords_real_path.mkdir(parents=True, exist_ok=True)
-        np.save(str(coords_real_path / "coords0001.npy"), np.asarray(coord_vol1))
+        np.save(str(coords_real_path / "coords0001.npy"), self.coord_vol1.real)
 
     def move_cells_in_3d_image(self, movements_nx3: ndarray = None, cells_missed: Set[int] = None):
         """

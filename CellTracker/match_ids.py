@@ -65,6 +65,8 @@ def predict_cell_links(fpm_model, coords_neuropal: ndarray, coords_wba: ndarray,
     """
     Predict
     """
+    plot_initial_pos(coords_wba, ids_neuropal, ids_wba, coords_neuropal*4)
+
     affine_aligned_coords_t1, match_seg_t1_seg_t2, neuropal_coords_norm_t2 = \
         predict_cell_positions(coords_wba, coords_neuropal, fpm_model, ids_wba, ids_neuropal, match_method, lambda_,
                                learning_rate, similarity_threshold, beta, verbosity)
@@ -78,6 +80,58 @@ def predict_cell_links(fpm_model, coords_neuropal: ndarray, coords_wba: ndarray,
                      neuropal_coords_norm_t2)
 
     return np.asarray([(ids_wba[i], ids_neuropal[j]) for i, j in match_seg_t1_seg_t2])
+
+
+def predict_cell_positions_old(coords_t1, coords_t2, fpm_model, ids_t1, ids_t2, match_method, lambda_, learning_rate,
+                           similarity_threshold, beta, verbosity):
+    print_initial_info(match_method, similarity_threshold, verbosity)
+    affine_aligned_coords_t1, neuropal_coords_norm_t2 = pre_alignment(coords_t1, coords_t2,
+                                                                      fpm_model, match_method,
+                                                                      similarity_threshold)
+    filtered_coords_norm_t1 = affine_aligned_coords_t1.copy()
+    filtered_coords_norm_t2 = neuropal_coords_norm_t2.copy()
+    predicted_coords_set1 = affine_aligned_coords_t1.copy()
+    n = affine_aligned_coords_t1.shape[0]
+    m = neuropal_coords_norm_t2.shape[0]
+    inliers_updated = (np.arange(n), np.arange(m))
+    iter = 3
+    similarity_scores = initial_matching_fpm(fpm_model, filtered_coords_norm_t1, filtered_coords_norm_t2, K_POINTS)
+    for i in range(iter):
+        inliers_pre = (inliers_updated[0], inliers_updated[1])
+        updated_similarity_scores = similarity_scores[np.ix_(inliers_updated[1], inliers_updated[0])].copy()
+        updated_matched_pairs = get_match_pairs(updated_similarity_scores, filtered_coords_norm_t1,
+                                                filtered_coords_norm_t2, threshold=similarity_threshold,
+                                                method=match_method)
+
+        print_and_plot_matching(filtered_coords_norm_t1, filtered_coords_norm_t2, i, ids_t2, ids_t1,
+                                inliers_updated, updated_matched_pairs, verbosity)
+
+        match_seg_t1_seg_t2 = np.column_stack(
+            (inliers_pre[0][updated_matched_pairs[:, 0]], inliers_pre[1][updated_matched_pairs[:, 1]]))
+
+        predicted_coords_t1_to_t2, similarity_scores = predict_matching_prgls(match_seg_t1_seg_t2,
+                                                                              predicted_coords_set1,
+                                                                              predicted_coords_set1,
+                                                                              neuropal_coords_norm_t2,
+                                                                              (m, n), beta, lambda_)
+        if verbosity >= 4:
+            print(f"prgls transformation (iteration={i}); beta={beta}):")
+            fig = plot_predicted_movements(predicted_coords_set1, neuropal_coords_norm_t2, predicted_coords_t1_to_t2,
+                                           -1, 1)
+
+        if i == iter - 1:
+            match_seg_t1_seg_t2 = greedy_match(similarity_scores, threshold=0.5)
+            break
+        else:
+            match_seg_t1_seg_t2 = greedy_match(similarity_scores, threshold=similarity_threshold)
+        filtered_coords_norm_t1, filtered_coords_norm_t2, inliers_updated = \
+            update_inliers_points(match_seg_t1_seg_t2, predicted_coords_t1_to_t2, neuropal_coords_norm_t2)
+
+        #beta *= 0.6
+        predicted_coords_set1 = (
+                    predicted_coords_set1 + (predicted_coords_t1_to_t2 - predicted_coords_set1) * learning_rate)
+        filtered_coords_norm_t1 = predicted_coords_set1[inliers_updated[0]]
+    return affine_aligned_coords_t1, match_seg_t1_seg_t2, neuropal_coords_norm_t2
 
 
 def predict_cell_positions(coords_t1, coords_t2, fpm_model, ids_t1, ids_t2, match_method, lambda_, learning_rate,
@@ -125,7 +179,7 @@ def predict_cell_positions(coords_t1, coords_t2, fpm_model, ids_t1, ids_t2, matc
         filtered_coords_norm_t1, filtered_coords_norm_t2, inliers_updated = \
             update_inliers_points(match_seg_t1_seg_t2, predicted_coords_t1_to_t2, neuropal_coords_norm_t2)
 
-        beta *= 0.6
+        #beta *= 0.6
         predicted_coords_set1 = (
                     predicted_coords_set1 + (predicted_coords_t1_to_t2 - predicted_coords_set1) * learning_rate)
         filtered_coords_norm_t1 = predicted_coords_set1[inliers_updated[0]]
@@ -174,12 +228,6 @@ def plot_final_matching_results(affine_aligned_coords_t1, ids_neuropal, ids_wba,
                                 t1=1, t2=-1,
                                 fig_width_px=2400,
                                 ids_tgt=ids_neuropal, ids_ref=ids_wba)
-    # shift = (0.5, 0, 0)
-    # fig = plot_matching_2d_with_plotly(neuropal_coords_norm_t2, affine_aligned_coords_t1,
-    #                               match_seg_t1_seg_t2[:, [1, 0]],
-    #                                    ids_ref=ids_neuropal, ids_tgt=ids_wba, shift=shift)
-    # fig.update_layout(width=1500, height=1000)
-    # fig.show()
     print("Final matching 3D:")
     fig = plot_initial_matching(affine_aligned_coords_t1,
                                 neuropal_coords_norm_t2,
@@ -187,6 +235,24 @@ def plot_final_matching_results(affine_aligned_coords_t1, ids_neuropal, ids_wba,
                                 t1=1, t2=-1,
                                 fig_width_px=2400,
                                 ids_tgt=ids_neuropal, ids_ref=ids_wba, show_3d=True)
+
+
+def plot_initial_pos(affine_aligned_coords_t1, ids_neuropal, ids_wba,
+                                neuropal_coords_norm_t2):
+    print("Initial 2D x-y:")
+    fig = plot_initial_matching(affine_aligned_coords_t1,
+                                neuropal_coords_norm_t2,
+                                [],
+                                t1=1, t2=-1,
+                                fig_width_px=2400,
+                                ids_tgt=ids_neuropal, ids_ref=ids_wba)
+    print("Initial 2D x-z:")
+    fig = plot_initial_matching(affine_aligned_coords_t1[:, [2, 1, 0]],
+                                neuropal_coords_norm_t2[:, [2, 1, 0]],
+                                [],
+                                t1=1, t2=-1,
+                                fig_width_px=2400,
+                                ids_tgt=ids_neuropal, ids_ref=ids_wba)
 
 
 def print_initial_info(match_method, similarity_threshold, verbosity):
