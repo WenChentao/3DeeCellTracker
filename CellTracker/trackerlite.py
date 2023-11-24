@@ -116,7 +116,7 @@ class TrackerLite:
         for t1 in get_volumes_list(current_vol=t2, skip_volumes=skipped_volumes, sampling_number=sampling_number,
                                    adjacent=adjacent):
             loaded_coord_t1 = np.load(
-                str(self.results_dir / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(4)}.npy"))
+                str(self.results_dir / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(6)}.npy"))
             loaded_coord_t1_ = Coordinates(loaded_coord_t1, coord_t1.interpolation_factor, coord_t1.voxel_size,
                                            dtype="real")
             coord_prgls.append(self.predict_cell_positions(t1=t1, t2=t2, confirmed_coord_t1=loaded_coord_t1_, beta=beta,
@@ -146,7 +146,7 @@ class TrackerLite:
         interp_factor = self.proofed_coords_vol1.interpolation_factor
         voxel_size = self.proofed_coords_vol1.voxel_size
 
-        pos = Coordinates(np.load(str(self.results_dir / SEG / f"coords{str(t).zfill(4)}.npy")),
+        pos = Coordinates(np.load(str(self.results_dir / SEG / f"coords{str(t).zfill(6)}.npy")),
                           interpolation_factor=interp_factor, voxel_size=voxel_size, dtype="raw")
         return pos
 

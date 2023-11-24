@@ -264,7 +264,7 @@ class CoordsToImageTransformer:
         self.coord_vol1 = Coordinates(np.asarray(coord_vol1), interpolation_factor, self.voxel_size, dtype="raw")
         coords_real_path = self.results_folder / TRACK_RESULTS / COORDS_REAL
         coords_real_path.mkdir(parents=True, exist_ok=True)
-        np.save(str(coords_real_path / "coords0001.npy"), np.asarray(coord_vol1))
+        np.save(str(coords_real_path / "coords000001.npy"), self.coord_vol1.real)
 
     def move_cells_in_3d_image(self, movements_nx3: ndarray = None, cells_missed: Set[int] = None):
         """
@@ -404,7 +404,7 @@ class CoordsToImageTransformer:
         return boundary_ids
 
     def accurate_correction(self, t: int, grid: Tuple[int, int, int], coords: Coordinates, ensemble: bool,
-                            max_repetition: int = 20):
+                            max_repetition: int = 20, format = "prob%06d.npy"):
         """
         Correct center positions of cells based on the probability map.
 
@@ -428,7 +428,7 @@ class CoordsToImageTransformer:
         corrected_labels_image : ndarray
             The corrected labels image.
         """
-        prob_map = np.load(str(self.results_folder / SEG / ("prob%05d.npy" % t)))
+        prob_map = np.load(str(self.results_folder / SEG / (format % t)))
         prob_map = np.repeat(np.repeat(np.repeat(prob_map, grid[1], axis=0), grid[2], axis=1), grid[0], axis=2)
         if prob_map.shape != self.proofed_segmentation.shape:
             x_lim, y_lim, z_lim = self.proofed_segmentation.shape
@@ -509,15 +509,15 @@ class CoordsToImageTransformer:
         images_path : str
             The path to the directory containing the raw images.
         """
-        np.save(str(self.results_folder / TRACK_RESULTS / COORDS_REAL / ("coords%05d.npy" % t2)), coords.real)
+        np.save(str(self.results_folder / TRACK_RESULTS / COORDS_REAL / ("coords%06d.npy" % t2)), coords.real)
         save_tracked_labels(self.results_folder, corrected_labels_image, t2, self.use_8_bit)
         self.save_merged_labels(corrected_labels_image, images_path, t2)
 
         confirmed_coord_t1 = np.load(
-            str(self.results_folder / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(4)}.npy"))
+            str(self.results_folder / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(6)}.npy"))
         segmented_pos_t2 = tracker._get_segmented_pos(t2)
         fig = plot_prgls_prediction(confirmed_coord_t1, segmented_pos_t2.real, coords.real, t1, t2)
-        fig.savefig(self.results_folder / TRACK_RESULTS / "figure" / f"matching_{str(t2).zfill(4)}.png",
+        fig.savefig(self.results_folder / TRACK_RESULTS / "figure" / f"matching_{str(t2).zfill(6)}.png",
                     facecolor='white')
         plt.close()
 
