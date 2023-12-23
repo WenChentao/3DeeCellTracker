@@ -1,16 +1,21 @@
 from __future__ import division, absolute_import, print_function, unicode_literals
 from __future__ import print_function, unicode_literals, absolute_import, division
 
+import datetime
 import functools
 import numbers
+import sys
 import warnings
 
 import numpy as np
 import scipy.ndimage as ndi
-from csbdeep.utils import _raise
+from csbdeep.utils import _raise, save_json
 from csbdeep.utils.tf import keras_import
+from scipy.optimize import minimize_scalar
+from stardist.matching import matching_dataset
 from stardist.models import StarDist3D
 from stardist.nms import _ind_prob_thresh
+from tqdm import tqdm
 
 K = keras_import('backend')
 Sequence = keras_import('utils', 'Sequence')
@@ -262,3 +267,101 @@ class StarDist3DCustom(StarDist3D):
         else:
             prob_classa = None
             yield proba, dista, pointsa, prob_map
+
+    def optimize_thresholds(self, X_val, Y_val, nms_threshs=[0.2, 0.3,0.4], iou_threshs=[0.3,0.5,0.7], predict_kwargs=None, optimize_kwargs=None, save_to_json=True):
+        """Optimize two thresholds (probability, NMS overlap) necessary for predicting object instances.
+
+        Note that the default thresholds yield good results in many cases, but optimizing
+        the thresholds for a particular dataset can further improve performance.
+
+        The optimized thresholds are automatically used for all further predictions
+        and also written to the model directory.
+
+        See ``utils.optimize_threshold`` for details and possible choices for ``optimize_kwargs``.
+
+        Parameters
+        ----------
+        X_val : list of ndarray
+            (Validation) input images (must be normalized) to use for threshold tuning.
+        Y_val : list of ndarray
+            (Validation) label images to use for threshold tuning.
+        nms_threshs : list of float
+            List of overlap thresholds to be considered for NMS.
+            For each value in this list, optimization is run to find a corresponding prob_thresh value.
+        iou_threshs : list of float
+            List of intersection over union (IOU) thresholds for which
+            the (average) matching performance is considered to tune the thresholds.
+        predict_kwargs: dict
+            Keyword arguments for ``predict`` function of this class.
+            (If not provided, will guess value for `n_tiles` to prevent out of memory errors.)
+        optimize_kwargs: dict
+            Keyword arguments for ``utils.optimize_threshold`` function.
+
+        """
+        if predict_kwargs is None:
+            predict_kwargs = {}
+        if optimize_kwargs is None:
+            optimize_kwargs = {}
+
+        def _predict_kwargs(x):
+            if 'n_tiles' in predict_kwargs:
+                return predict_kwargs
+            else:
+                return {**predict_kwargs, 'n_tiles': self._guess_n_tiles(x), 'show_tile_progress': False}
+
+        # only take first two elements of predict in case multi class is activated
+        Yhat_val = [self.predict(x, **_predict_kwargs(x))[:2] for x in X_val]
+
+        opt_prob_thresh, opt_measure, opt_nms_thresh = None, -np.inf, None
+        for _opt_nms_thresh in nms_threshs:
+            _opt_prob_thresh, _opt_measure = optimize_threshold(Y_val, Yhat_val, model=self, nms_thresh=_opt_nms_thresh, iou_threshs=iou_threshs, **optimize_kwargs)
+            if _opt_measure > opt_measure:
+                opt_prob_thresh, opt_measure, opt_nms_thresh = _opt_prob_thresh, _opt_measure, _opt_nms_thresh
+        opt_threshs = dict(prob=opt_prob_thresh, nms=opt_nms_thresh)
+
+        self.thresholds = opt_threshs
+        print(end='', file=sys.stderr, flush=True)
+        print("Using optimized values: prob_thresh={prob:g}, nms_thresh={nms:g}.".format(prob=self.thresholds.prob, nms=self.thresholds.nms))
+        if save_to_json and self.basedir is not None:
+            print("Saving to 'thresholds.json'.")
+            save_json(opt_threshs, str(self.logdir / 'thresholds.json'))
+        return opt_threshs
+
+
+def optimize_threshold(Y, Yhat, model, nms_thresh, measure='accuracy', iou_threshs=[0.3,0.5,0.7], bracket=None, tol=1e-2, maxiter=20, verbose=1):
+    """ Tune prob_thresh for provided (fixed) nms_thresh to maximize matching score (for given measure and averaged over iou_threshs). """
+    np.isscalar(nms_thresh) or _raise(ValueError("nms_thresh must be a scalar"))
+    iou_threshs = [iou_threshs] if np.isscalar(iou_threshs) else iou_threshs
+    values = dict()
+
+    if bracket is None:
+        max_prob = max([np.max(prob) for prob, dist in Yhat])
+        bracket = max_prob / 3, max_prob
+    # print("bracket =", bracket)
+
+    with tqdm(total=maxiter, disable=(verbose!=1), desc="NMS threshold = %g" % nms_thresh) as progress:
+
+        def fn(thr):
+            prob_thresh = np.clip(thr, *bracket)
+            value = values.get(prob_thresh)
+            if value is None:
+                Y_instances = [model._instances_from_prediction(y.shape, *prob_dist, prob_thresh=prob_thresh, nms_thresh=nms_thresh)[0] for y,prob_dist in zip(Y,Yhat)]
+                stats = matching_dataset(Y, Y_instances, thresh=iou_threshs, show_progress=False, parallel=True)
+                values[prob_thresh] = value = np.mean([s._asdict()[measure] for s in stats])
+            if verbose > 1:
+                print("{now}   thresh: {prob_thresh:f}   {measure}: {value:f}".format(
+                    now = datetime.datetime.now().strftime('%H:%M:%S'),
+                    prob_thresh = prob_thresh,
+                    measure = measure,
+                    value = value,
+                ), flush=True)
+            else:
+                progress.update()
+                progress.set_postfix_str("{prob_thresh:.3f} -> {value:.3f}".format(prob_thresh=prob_thresh, value=value))
+                progress.refresh()
+            return -value
+
+        opt = minimize_scalar(fn, method='golden', bracket=bracket, tol=tol, options={'maxiter': maxiter})
+
+    verbose > 1 and print('\n',opt, flush=True)
+    return opt.x, -opt.fun

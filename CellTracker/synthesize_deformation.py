@@ -52,36 +52,6 @@ class DataGeneratorFPN:
                                                         range_rotation_tgt=range_rotation_tgt,
                                                         movement_factor=movement_factor)
 
-    # def generate_valid_data(self):
-    #     self.train_point_sets_list = self.generate_train_point_sets(self.points_normalized_nx3)
-    #     self.train_data = self.generate_train_data()
-
-    # def generate_train_point_sets(self, points_nx3: ndarray) -> List[Tuple[ndarray, ndarray]]:
-    #     """Generate synthesized points sets by rotation and deformation"""
-    #     point_sets_list = []
-    #     longest_distance = get_longest_distance(points_nx3)
-    #     for degree in self.degrees_rotate_raw:
-    #         points_rotated_nx3 = rotate(points_nx3, np.array([[0, 0, degree]]), 1)[0, :, :]
-    #         target_points_mxnx3 = train_data_rotation(points_rotated_nx3, self.num_rotate)
-    #         target_points_mxnx3 = train_data_deformation(target_points_mxnx3, longest_distance, self.num_deform)
-    #         target_points_mxnx3 += (np.random.rand(*target_points_mxnx3.shape) - 0.5) * 4 * RANDOM_MOVEMENTS_FACTOR
-    #         point_sets_list.append((points_rotated_nx3, target_points_mxnx3))
-    #     return point_sets_list
-
-    # def generate_train_data(self):
-    #     points_num = self.train_point_sets_list[0][0].shape[0]
-    #     generated_sets_num = self.num_rotate * self.num_deform
-    #     train_sample_num = len(self.train_point_sets_list) * generated_sets_num * points_num * 2
-    #     x_mxf = np.empty((train_sample_num, NUMBER_FEATURES * 2), dtype=np.float32)
-    #     y_mx1 = np.empty((train_sample_num, 1), dtype=np.bool_)
-    #     for i, (points_raw, generated_point_sets) in enumerate(self.train_point_sets_list):
-    #         base = i * generated_sets_num * points_num * 2
-    #         for j, generated_points in enumerate(generated_point_sets):
-    #             points_wi_seg_errors, replaced_indexes = add_seg_errors(generated_points)
-    #             s_ = slice(base + j * points_num * 2, base + (j + 1) * points_num * 2)
-    #             points_to_features(x_mxf[s_, :], y_mx1[s_, 0], points_raw, points_wi_seg_errors, replaced_indexes)
-    #     return TensorDataset(tensor(x_mxf), tensor(y_mx1))
-
     @staticmethod
     def generator_train_data(points_nx3: ndarray, range_rotation_tgt: float,
                              batch_size: int = 128, movement_factor: float = 0.2) -> Generator[Tuple[ndarray, ndarray], None, None]:
@@ -93,7 +63,7 @@ class DataGeneratorFPN:
             The normalized points set
         batch_size: int
             The batch size
-        range_rotation_tgt: tuple, shape (2,)
+        range_rotation_tgt: float
             The range of rotation degrees for target points set
         movement_factor: float
             The movement factor for deformations
@@ -121,10 +91,10 @@ class DataGeneratorFPN:
             # Generate a relative large number of data than the batch size
             updated_points_nx3 = points_nx3.copy()
             for i in range(num_sets):
-                rotation_ref = np.random.randint(-180, 180, (1, 3))
-                rotation_tgt = np.random.randint(-range_rotation_tgt, range_rotation_tgt, (1, 3))
+                rotvec_ref = DataGeneratorFPN.random_rotvec((-np.pi, np.pi))
+                rotvec_tgt = DataGeneratorFPN.random_rotvec((-np.pi*range_rotation_tgt/180, np.pi*range_rotation_tgt/180))
                 longest_distance = get_longest_distance(updated_points_nx3)
-                points_ref_nx3, points_tgt_nx3 = generate_points_pair(updated_points_nx3, rotation_ref, rotation_tgt,
+                points_ref_nx3, points_tgt_nx3 = generate_points_pair(updated_points_nx3, rotvec_ref, rotvec_tgt,
                                                                       longest_distance, mv_factor=movement_factor)
                 points_tgt_with_errors, replaced_indexes = add_seg_errors(points_tgt_nx3)
                 point_set_s_ = slice(i * num_batch_per_set, (i + 1) * num_batch_per_set)
@@ -138,12 +108,27 @@ class DataGeneratorFPN:
                 batch_i_s_ = np.s_[random_indexes[i * batch_size:(i + 1) * batch_size],:]
                 yield x_bxkp2xfx2[batch_i_s_], y_bx1[batch_i_s_]
 
+    @staticmethod
+    def random_rotvec(vec_alpha: tuple):
+        phi = np.random.uniform(0, np.pi)  # 与z轴的角度
+        theta = np.random.uniform(0, 2 * np.pi)  # x-y平面上与x轴的角度
+        alpha = np.random.uniform(vec_alpha[0], vec_alpha[1])  # 旋转角度
 
-def train_data_rotation(points_normalized_nx3: ndarray, num_ptr_set: int = NUM_POINT_SET) -> ndarray:
-    degrees_mx3 = np.zeros((num_ptr_set, 3))
-    degrees_mx3[:, 2] = np.hstack((np.linspace(0, 40, num_ptr_set//2),
-                                   np.linspace(-40, -10, num_ptr_set - num_ptr_set//2)))
-    return rotate(points_normalized_nx3, degrees_mx3, num_ptr_set)
+        # 先创建基于phi和theta的单位向量
+        unit_vector = np.array([np.sin(phi) * np.cos(theta),
+                                np.sin(phi) * np.sin(theta),
+                                np.cos(phi)])
+
+        # 然后将这个向量的每个分量乘以alpha
+        rotation_ref = unit_vector * alpha
+        return rotation_ref
+
+
+# def train_data_rotation(points_normalized_nx3: ndarray, num_ptr_set: int = NUM_POINT_SET) -> ndarray:
+#     degrees_mx3 = np.zeros((num_ptr_set, 3))
+#     degrees_mx3[:, 2] = np.hstack((np.linspace(0, 40, num_ptr_set//2),
+#                                    np.linspace(-40, -10, num_ptr_set - num_ptr_set//2)))
+#     return rotate(points_normalized_nx3, degrees_mx3, num_ptr_set)
 
 
 def train_data_deformation(points_normalized_mxnx3: ndarray, longest_distance: float, num_ptr_set: int = NUM_POINT_SET) \
@@ -273,7 +258,7 @@ def add_seg_errors(points_normalized_nx3: ndarray, ratio: float = RATIO_SEG_ERRO
     return new_points_nx3, replaced_indexes
 
 
-def generate_points_pair(points_nx3: ndarray, degree_ref_1x3: ndarray, degree_tgt_1x3: ndarray,
+def generate_points_pair(points_nx3: ndarray, rotvec_ref_3: ndarray, rotvec_tgt_3: ndarray,
                          longest_distance: Optional[float] = None,
                          mv_factor: float = None, width: float = None):
     """
@@ -283,9 +268,9 @@ def generate_points_pair(points_nx3: ndarray, degree_ref_1x3: ndarray, degree_tg
     ----------
     points_nx3: ndarray
         The normalized points set
-    degree_ref_1x3: ndarray
+    rotvec_ref_3: ndarray
         degree of rotation for reference points set
-    degree_tgt_1x3: ndarray
+    rotvec_tgt_3: ndarray
         degree of rotation for target points set
     longest_distance: float
         The longest distance of points set
@@ -303,21 +288,25 @@ def generate_points_pair(points_nx3: ndarray, degree_ref_1x3: ndarray, degree_tg
     """
     if longest_distance is None:
         longest_distance = get_longest_distance(points_nx3)
-    points_ref_nx3 = rotate(points_nx3, degree_ref_1x3, 1)[0, :, :]
-    points_tgt_nx3 = rotate(points_ref_nx3, degree_tgt_1x3, 1)[0, :, :]
+    points_ref_nx3 = rotate_one_point_set(points_nx3, rotvec_ref_3)
+    points_tgt_nx3 = rotate_one_point_set(points_ref_nx3, rotvec_tgt_3)
     points_ref_nx3 = deform(points_ref_nx3, longest_distance, num_ptr_set=1, mv_factor=mv_factor, width=width)[0, :, :]
     points_tgt_nx3 = deform(points_tgt_nx3, longest_distance, num_ptr_set=1, mv_factor=mv_factor, width=width)[0, :, :]
     points_tgt_nx3 += (np.random.rand(*points_tgt_nx3.shape) - 0.5) * 4 * RANDOM_MOVEMENTS_FACTOR
     return points_ref_nx3, points_tgt_nx3
 
 
-def rotate(points_nx3: ndarray, degrees_mx3: ndarray, num_ptr_set: int) -> ndarray:
-    new_points_mxnx3 = np.empty((num_ptr_set, points_nx3.shape[0], 3))
-    rad_mx3 = degrees_mx3 * np.pi / 180
-    for i in range(num_ptr_set):
-        r = Rotation.from_rotvec(rad_mx3[i, :])
-        new_points_mxnx3[i, ...] = np.dot(points_nx3, r.as_matrix())
-    return new_points_mxnx3
+# def rotate(points_nx3: ndarray, rad_mx3: ndarray, num_ptr_set: int) -> ndarray:
+#     new_points_mxnx3 = np.empty((num_ptr_set, points_nx3.shape[0], 3))
+#     for i in range(num_ptr_set):
+#         r = Rotation.from_rotvec(rad_mx3[i, :])
+#         new_points_mxnx3[i, ...] = np.dot(points_nx3, r.as_matrix())
+#     return new_points_mxnx3
+
+
+def rotate_one_point_set(points_nx3: ndarray, rad_3: ndarray) -> ndarray:
+    r = Rotation.from_rotvec(rad_3)
+    return np.dot(points_nx3, r.as_matrix())
 
 
 def deform(points_normalized_nx3: ndarray, longest_distance: float, num_ptr_set: int, mv_factor: float = None,
