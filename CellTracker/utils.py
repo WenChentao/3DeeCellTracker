@@ -1,5 +1,6 @@
-from __future__ import division, absolute_import, print_function, unicode_literals
+from __future__ import division, absolute_import, print_function, unicode_literals, annotations
 
+import os
 from glob import glob
 from typing import Union, Tuple
 
@@ -12,17 +13,29 @@ from sklearn.decomposition import PCA
 from tifffile import imread
 
 
-def load_2d_slices_at_time(slice_paths: str, t: int, do_normalize: bool = True):
+def load_2d_slices_at_time(images_path: str | dict, t: int, do_normalize: bool = True):
     """Load all 2D slices at time t and normalize the resulted 3D image"""
-    slice_paths_at_t = sorted(glob(slice_paths % t))
-    if len(slice_paths_at_t) == 0:
-        raise FileNotFoundError(f"No image at time {t} was found")
-    x = imread(slice_paths_at_t)
+    if isinstance(images_path, str):
+        file_extension = os.path.splitext(images_path)[1]
+        assert file_extension in [".tif", ".tiff"], "Currently only TIFF sequences or HDF5 dataset are supported"
+        slice_paths_at_t = sorted(glob(images_path % t))
+        if len(slice_paths_at_t) == 0:
+            raise FileNotFoundError(f"No image at time {t} was found")
+        x = imread(slice_paths_at_t)
+    elif isinstance(images_path, dict):
+        file_extension = os.path.splitext(images_path["h5_file"])[1]
+        assert file_extension in [".h5", ".hdf5"], "Currently only TIFF sequences or HDF5 dataset are supported"
+
+        import h5py
+        with h5py.File(images_path["h5_file"], 'r') as f:
+            x = f["default"][t - 1, images_path["channel"], :, :, :]
+    else:
+        raise ValueError("image_paths should be a str for TIFF sequences or dict for HDF5 dataset")
+
     if do_normalize:
         axis_norm = (0, 1, 2)  # normalize channels independently
         return normalize(x, 1, 99.8, axis=axis_norm)
     return x
-
 
 def normalize_points(points: ndarray, return_para: bool = False) -> Union[ndarray, Tuple[ndarray, Tuple[any, any]]]:
     """

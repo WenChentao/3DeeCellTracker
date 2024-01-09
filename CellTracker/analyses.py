@@ -5,6 +5,7 @@ This module provides tools for analyzing the activities from the tracked cells
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import scipy
 from tifffile import imread
 
 mpl.rcParams["axes.spines.right"] = False
@@ -49,6 +50,51 @@ def get_activities(raw_path: str, tracked_labels_path: str, volume_num: int, lay
             threshold = np.floor(np.size(intensity_label_i) * discard_ratio).astype(int)
             sorted_intensity_idx = np.argsort(intensity_label_i)
             activities[frame-1, label-1] = np.mean(intensity_label_i[sorted_intensity_idx[threshold:]])
+    return activities
+
+
+def get_activities_quick(raw_path: str, tracked_labels_path: str, volume_num: int, layer_num: int):
+    """
+    Get activities of all cells
+
+    Parameters
+    ----------
+    raw_path : str
+        The path of the images for extracting activities
+    tracked_labels_path : str
+        The path of the tracked labels
+    volume_num : int
+        The number of the volumes
+    layer_num : int
+        the number of layers in the raw images and the tracked labels
+
+    Returns
+    -------
+    activities : numpy.ndarray
+        The extracted activities with shape (volume, label)
+    """
+    images_label, images_raw = _read_image(1, layer_num, raw_path, tracked_labels_path)
+    cell_num = np.max(images_label)
+    activities = np.zeros((volume_num, cell_num))
+    discard_ratio = 0.1
+    for frame in range(1, volume_num + 1):
+
+        print("t=%i" % frame, end="\r")
+
+        # read raw images and labels
+        if frame >= 2:
+            images_label, images_raw = _read_image(frame, layer_num, raw_path, tracked_labels_path)
+
+        # calculate mean intensities of each cell of top 90% area
+        found_bbox = scipy.ndimage.find_objects(images_label, max_label=cell_num)
+        for label in range(1, cell_num + 1):
+            bbox = found_bbox[label-1]
+            if found_bbox[label-1] is not None:
+                intensity_label_i = images_raw[bbox][images_label[bbox] == label]
+                threshold = np.floor(np.size(intensity_label_i) * discard_ratio).astype(int)
+                sorted_intensity_idx = np.argsort(intensity_label_i)
+                activities[frame - 1, label - 1] = np.mean(intensity_label_i[sorted_intensity_idx[threshold:]])
+
     return activities
 
 
