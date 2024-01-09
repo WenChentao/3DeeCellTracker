@@ -96,8 +96,8 @@ def predict_and_save(images_path: str, model: StarDist3DCustom, results_folder: 
                 break
             (labels, details), prob_map = model.predict_instances(x)
             # Save predicted instance coordinates as numpy arrays
-            coords_filepath = str(_seg_path / f"coords{str(t).zfill(4)}.npy")
-            prob_filepath = str(_seg_path / f"prob{str(t).zfill(4)}.npy")
+            coords_filepath = str(_seg_path / f"coords{str(t).zfill(6)}.npy")
+            prob_filepath = str(_seg_path / f"prob{str(t).zfill(6)}.npy")
             np.save(coords_filepath, details["points"][:, [1, 2, 0]])
             np.save(prob_filepath, prob_map.transpose((1, 2, 0)))
             if t == smallest_number:
@@ -138,7 +138,7 @@ def save_auto_seg_vol1(labels_xyz, results_folder):
     dtype = np.uint8 if labels_xyz.max() <= 255 else np.uint16
     for z in range(1, labels_xyz.shape[2] + 1):
         img2d = labels_xyz[:, :, z - 1].astype(dtype)
-        Image.fromarray(img2d).save(str(_seg_path / ("auto_vol1_z%05i.tif" % z)))
+        Image.fromarray(img2d).save(str(_seg_path / ("auto_vol1_z%04i.tif" % z)))
 
 
 def save_arrays_to_folder(arrays, folder_path):
