@@ -13,24 +13,27 @@ from sklearn.decomposition import PCA
 from tifffile import imread
 
 
-def load_2d_slices_at_time(images_path: str | dict, t: int, do_normalize: bool = True):
+def load_2d_slices_at_time(images_path: str | dict, t: int, do_normalize: bool = True, raw_path="default"):
     """Load all 2D slices at time t and normalize the resulted 3D image"""
     if isinstance(images_path, str):
         file_extension = os.path.splitext(images_path)[1]
-        assert file_extension in [".tif", ".tiff"], "Currently only TIFF sequences or HDF5 dataset are supported"
+        assert file_extension in [".tif", ".tiff"], "Currently only TIFF sequences or HDF5/NWB dataset are supported"
         slice_paths_at_t = sorted(glob(images_path % t))
         if len(slice_paths_at_t) == 0:
             raise FileNotFoundError(f"No image at time {t} was found")
         x = imread(slice_paths_at_t)
     elif isinstance(images_path, dict):
         file_extension = os.path.splitext(images_path["h5_file"])[1]
-        assert file_extension in [".h5", ".hdf5"], "Currently only TIFF sequences or HDF5 dataset are supported"
+        assert file_extension in [".h5", ".hdf5", ".nwb"], "Currently only TIFF sequences or HDF5/NWB dataset are supported"
 
         import h5py
         with h5py.File(images_path["h5_file"], 'r') as f:
-            x = f["default"][t - 1, images_path["channel"], :, :, :]
+            if file_extension != ".nwb":
+                x = f[raw_path][t - 1, images_path["channel"], :, :, :]
+            else:
+                x = f[raw_path][t - 1, :, :, :, images_path["channel"]].transpose((2,0,1))
     else:
-        raise ValueError("image_paths should be a str for TIFF sequences or dict for HDF5 dataset")
+        raise ValueError("image_paths should be a str for TIFF sequences or dict for HDF5/NWB dataset")
 
     if do_normalize:
         axis_norm = (0, 1, 2)  # normalize channels independently
@@ -132,3 +135,4 @@ def set_unique_xlim(ax1, ax2):
     x2_min, x2_max = ax2.get_xlim()
     ax1.set_xlim(min((x1_min, x2_min)), max((x1_max, x2_max)))
     ax2.set_xlim(min((x1_min, x2_min)), max((x1_max, x2_max)))
+
