@@ -2,6 +2,7 @@ from glob import glob
 from pathlib import Path
 from typing import Tuple, List, Set
 
+import h5py
 import numpy as np
 import scipy.ndimage.measurements as ndm
 import skimage.filters as skf
@@ -15,6 +16,8 @@ from tifffile import imread
 from CellTracker.plot import plot_predicted_movements
 from CellTracker.stardistwrapper import lbl_cmap
 from CellTracker.utils import load_2d_slices_at_time, recalculate_cell_boundaries
+
+PAD_WIDTH = 3
 
 MERGED_LABELS_XZ = "merged_labels_xz"
 MERGED_LABELS = "merged_labels"
@@ -166,21 +169,15 @@ class CoordsToImageTransformer:
 
     def load_segmentation(self, manual_vol1_path: str) -> None:
         """
-        Load the proofed segmentation from a directory containing image slices.
+        Load the proofed segmentation from a single tif file.
 
         Parameters
         ----------
         manual_vol1_path : str
-            The path to the image slices of the manually corrected segmentation.
+            The path to the tif file of manually corrected segmentation.
         """
-        # Get list of paths to image slices
-        slice_paths = sorted(glob(manual_vol1_path))
-        if len(slice_paths) == 0:
-            # Raise an error if no image slices are found in the specified directory
-            raise FileNotFoundError(f"No image in {manual_vol1_path} was found")
-
         # Load the proofed segmentation and relabel it to sequential integers
-        proofed_segmentation = imread(slice_paths).transpose((1, 2, 0))
+        proofed_segmentation = imread(manual_vol1_path).transpose((1, 2, 0))
         self.proofed_segmentation, _, _ = relabel_sequential(proofed_segmentation)
 
         # Print a message confirming that the proofed segmentation has been loaded and its shape
@@ -426,7 +423,8 @@ class CoordsToImageTransformer:
         corrected_labels_image : ndarray
             The corrected labels image.
         """
-        prob_map = self.load_prob_map(grid, t)
+        with h5py.File(str(self.results_folder / "seg.h5"), "r") as seg_file:
+            prob_map = self.load_prob_map(grid, t, seg_file)
 
         boundary_ids = set(self.get_cells_on_boundary(coords.real, ensemble=ensemble).tolist())
 
@@ -440,8 +438,8 @@ class CoordsToImageTransformer:
         corrected_labels_image = self.move_cells_in_3d_image((coords - self.coord_vol1).interp, boundary_ids)
         return coords, corrected_labels_image
 
-    def load_prob_map(self, grid, t):
-        prob_map = np.load(str(self.results_folder / SEG / ("prob%04d.npy" % t)))
+    def load_prob_map(self, grid, t, h5_file):
+        prob_map = h5_file["prob"][t, ...].transpose((1,2,0))
         prob_map = np.repeat(np.repeat(np.repeat(prob_map, grid[1], axis=0), grid[2], axis=1), grid[0], axis=2)
         if prob_map.shape != self.proofed_segmentation.shape:
             x_lim, y_lim, z_lim = self.proofed_segmentation.shape
@@ -610,13 +608,22 @@ def gaussian_interpolation_3d(label_image, interpolation_factor=10, smooth_sigma
         print(f"Interpolating... cell:{label}", end="\r")
         bbox = bboxes[label - 1]
         sub_img = (label_image[bbox] == label).astype(np.float32)
-        percentage = 1 - np.count_nonzero(sub_img) / sub_img.size
-        img_smooth = skf.gaussian(np.repeat(sub_img, interpolation_factor, axis=2),
+        repeated_sub_img = np.pad(np.repeat(sub_img, interpolation_factor, axis=2), PAD_WIDTH)
+        img_smooth = skf.gaussian(repeated_sub_img,
                                   sigma=smooth_sigma, mode='constant')
+        percentage = 1 - np.count_nonzero(sub_img) / (img_smooth.size/interpolation_factor)
         threshold = np.percentile(img_smooth, percentage * 100)
-        interpolated_bbox = (bbox[0], bbox[1],
-                             slice(bbox[2].start * interpolation_factor, bbox[2].stop * interpolation_factor,
-                                   bbox[2].step))
+        interpolated_bbox = (slice(bbox[0].start - PAD_WIDTH,
+                                   bbox[0].stop + PAD_WIDTH,
+                                   None),
+                             slice(bbox[1].start - PAD_WIDTH,
+                                   bbox[1].stop + PAD_WIDTH,
+                                   None)
+                             ,
+                             slice(bbox[2].start * interpolation_factor - PAD_WIDTH,
+                                   bbox[2].stop * interpolation_factor + PAD_WIDTH,
+                                   None)
+                             )
         subregions.append((interpolated_bbox, img_smooth > threshold))
     return subregions
 

@@ -4,8 +4,9 @@ Author: Chentao Wen
 Modification Description: This module is a wrapper of 3D StarDist modified according to 2_training.ipynb in GitHub StarDist repository
 """
 
-from __future__ import print_function, unicode_literals, absolute_import, division
+from __future__ import print_function, unicode_literals, absolute_import, division, annotations
 
+import os
 import re
 import sys
 from glob import glob
@@ -14,13 +15,12 @@ from typing import List
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from PIL import Image
 from csbdeep.utils import Path, normalize
 from numpy import ndarray
 from stardist import Rays_GoldenSpiral, fill_label_holes, random_label_cmap, calculate_extents, gputools_available
 from stardist.models import Config3D
 from stardist.utils import _normalize_grid
-from tifffile import imread
+from tifffile import imread, imwrite
 from tqdm import tqdm
 
 from CellTracker.utils import load_2d_slices_at_time
@@ -41,7 +41,7 @@ def load_stardist_model(model_name: str = "stardist", basedir: str = STARDIST_MO
     return model
 
 
-def predict_and_save(images_path: str, model: StarDist3DCustom, results_folder: str):
+def predict_and_save(images_path: str | dict, model: StarDist3DCustom, results_folder: str):
     """
     Load 2D slices of a 3D image stack obtained at time t and predict instance coordinates using a trained StarDist3DCustom model.
     Save the predicted coordinates as numpy arrays in a folder.
@@ -50,49 +50,82 @@ def predict_and_save(images_path: str, model: StarDist3DCustom, results_folder: 
         images_path (str): The file path of the 3D image stack with 2D slices at each time point.
         model (StarDist3DCustom): A trained StarDist3DCustom model for instance segmentation of 3D image stacks.
         results_folder (str): The folder path to save the results.
+        raw_path (str): The path of raw image in the h5/nwb file. Only used when images_path is of dict type
     """
     # Check if the folder exists and create it if necessary
-    _seg_path = Path(results_folder) / "seg"
-    _seg_path.mkdir(parents=True, exist_ok=True)
+    _results_folder = Path(results_folder)
+    _results_folder.mkdir(parents=True, exist_ok=True)
+    import h5py
 
     # Get the list of image file names
-    images_path_search = Path(images_path)
-    new_filename = "*t*" + images_path_search.suffix
-    filenames = glob(str(images_path_search.parent / new_filename))
-    assert len(filenames) > 0, f"No image files were found in {images_path_search.parent / new_filename}"
-    numbers = [int(re.findall(r"t(\d+)", f)[0]) for f in filenames]
-    smallest_number = min(numbers)
-    largest_number = max(numbers)
+    if isinstance(images_path, str):
+        images_path_search = Path(images_path)
+        new_filename = "*t*" + images_path_search.suffix
+        filenames = glob(str(images_path_search.parent / new_filename))
+        assert len(filenames) > 0, f"No image files were found in {images_path_search.parent / new_filename}"
+        numbers = [int(re.findall(r"t(\d+)", f)[0]) for f in filenames]
+        smallest_number = min(numbers)
+        largest_number = max(numbers)
 
-    # Process images and predict instance coordinates
-    with tqdm(total=largest_number - smallest_number + 1, desc="Segmenting images", ncols=50) as pbar:
-        for t in range(smallest_number, largest_number + 1):
-            try:
-                # Load 2D slices at time t
-                x = load_2d_slices_at_time(images_path, t=t)
-            except FileNotFoundError:
-                # Handle missing image files
-                print(f"Warning: Segmentation has been stopped since images at t={t - 1} cannot be loaded!")
-                break
-            (labels, details), prob_map = model.predict_instances(x)
-            # Save predicted instance coordinates as numpy arrays
-            coords_filepath = str(_seg_path / f"coords{str(t).zfill(4)}.npy")
-            prob_filepath = str(_seg_path / f"prob{str(t).zfill(4)}.npy")
-            np.save(coords_filepath, details["points"][:, [1, 2, 0]])
-            np.save(prob_filepath, prob_map.transpose((1, 2, 0)))
-            if t == smallest_number:
-                save_auto_seg_vol1(labels.transpose((1, 2, 0)), results_folder)
-            pbar.update(1)
-    print(f"All images from t={smallest_number} to t={largest_number} have been Segmented")
+        # Process images and predict instance coordinates
+        with h5py.File(str(_results_folder / "seg.h5"), 'w') as f_seg:
+            num_vol = largest_number - smallest_number + 1
+            with tqdm(total=num_vol, desc="Segmenting images", ncols=50) as pbar:
+                for t in range(smallest_number, largest_number + 1):
+                    try:
+                        # Load 2D slices at time t
+                        x = load_2d_slices_at_time(images_path, t=t)
+                        if t == smallest_number:
+                            dset_prob = f_seg.create_dataset('prob', shape=(num_vol, *x.shape),
+                                                             chunks=(1, *x.shape), dtype="float16",
+                                                             compression="lzf")
+                    except FileNotFoundError:
+                        # Handle missing image files
+                        print(f"Warning: Segmentation has been stopped since images at t={t - 1} cannot be loaded!")
+                        break
+                    (labels, details), prob_map = model.predict_instances(x)
+                    # Save predicted instance coordinates as numpy arrays
+                    dset_prob[t-smallest_number,...] = prob_map
+                    f_seg.create_dataset(f'coords_{str(t-smallest_number).zfill(6)}',
+                                         data=details["points"][:, [1, 2, 0]])
+                    if t == smallest_number:
+                        save_auto_seg_vol1(labels, _results_folder)
+                    pbar.update(1)
+            print(f"All images from t={smallest_number} to t={largest_number} have been Segmented")
+    elif isinstance(images_path, dict):
+        file_extension = os.path.splitext(images_path["h5_file"])[1]
+        with h5py.File(images_path["h5_file"], 'r+') as f_raw, h5py.File(str(_results_folder / "seg.h5"), 'w') as f_seg:
+            raw_images = f_raw[images_path["raw_path"]]
+            num_vol = raw_images.shape[0]
+            with tqdm(total=num_vol, desc="Segmenting images", ncols=50) as pbar:
+                for t in range(1, num_vol + 1):
+                    # Load 2D slices at time t
+                    if file_extension != ".nwb":
+                        x = raw_images[t - 1, images_path["channel"], :, :, :]
+                    else:
+                        x = raw_images[t - 1, :, :, :, images_path["channel"]].transpose((2, 0, 1))
+                    x = normalize(x, axis=(0, 1, 2))
+
+                    # Save predicted instance coordinates as numpy arrays
+                    (labels, details), prob_map = model.predict_instances(x)
+                    if t == 1:
+                        dset_prob = f_seg.create_dataset('prob', shape=(num_vol, *prob_map.shape),
+                                                         chunks=(1, *prob_map.shape), dtype="float16",
+                                                         compression="lzf")
+                    dset_prob[t - 1, ...] = prob_map
+                    f_seg.create_dataset(f'coords_{str(t - 1).zfill(6)}',
+                                         data=details["points"][:, [1, 2, 0]])
+                    if t == 1:
+                        save_auto_seg_vol1(labels, _results_folder)
+                    pbar.update(1)
+            print(f"All images from t={1} to t={num_vol} have been Segmented")
+    else:
+        raise ValueError("images_path should be of str or dict type")
 
 
-def save_auto_seg_vol1(labels_xyz, results_folder):
-    _seg_path = Path(results_folder) / "auto_vol1"
-    _seg_path.mkdir(parents=True, exist_ok=True)
+def save_auto_seg_vol1(labels_xyz, results_folder: Path):
     dtype = np.uint8 if labels_xyz.max() <= 255 else np.uint16
-    for z in range(1, labels_xyz.shape[2] + 1):
-        img2d = labels_xyz[:, :, z - 1].astype(dtype)
-        Image.fromarray(img2d).save(str(_seg_path / ("auto_vol1_z%04i.tif" % z)))
+    imwrite(str(results_folder / "auto_vol1.tif"), labels_xyz.astype(dtype))
 
 
 def save_arrays_to_folder(arrays, folder_path):
@@ -130,7 +163,7 @@ def load_training_images(path_train_images: str, path_train_labels: str, max_pro
             "Normalizing image channels %s." % ('jointly' if axis_norm is None or 3 in axis_norm else 'independently'))
         sys.stdout.flush()
 
-    X = [normalize(x, 1, 99.8, axis=axis_norm) for x in tqdm(X)]
+    X = [normalize(x, axis=axis_norm) for x in tqdm(X)]
     Y = [fill_label_holes(y) for y in tqdm(Y)]
     if len(X) == 1:
         print(

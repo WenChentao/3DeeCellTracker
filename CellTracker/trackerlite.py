@@ -3,6 +3,7 @@ from glob import glob
 from pathlib import Path
 from typing import List, Tuple
 
+import h5py
 import numpy as np
 from numpy import ndarray
 from scipy.interpolate import RBFInterpolator
@@ -304,8 +305,9 @@ class TrackerLite:
         interp_factor = self.proofed_coords_vol1.interpolation_factor
         voxel_size = self.proofed_coords_vol1.voxel_size
 
-        coordinates_stardist = np.load(str(self.results_dir / SEG / f"coords{str(t).zfill(4)}.npy"))
-        prob_map = self.coords2image.load_prob_map(self.stardist_model.config.grid, t)
+        with h5py.File(str(self.results_dir / "seg.h5"), "r") as seg_file:
+            coordinates_stardist = seg_file[f'coords_{str(t-1).zfill(6)}'][:]
+            prob_map = self.coords2image.load_prob_map(self.stardist_model.config.grid, t, seg_file)
         extra_coordinates = get_full_cell_candidates(coordinates_stardist, prob_map)
         combined_coordinates = np.concatenate((coordinates_stardist, extra_coordinates), axis=0)
         pos = Coordinates(combined_coordinates, interpolation_factor=interp_factor, voxel_size=voxel_size, dtype="raw")

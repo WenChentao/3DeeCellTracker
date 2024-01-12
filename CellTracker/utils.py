@@ -13,7 +13,7 @@ from sklearn.decomposition import PCA
 from tifffile import imread
 
 
-def load_2d_slices_at_time(images_path: str | dict, t: int, do_normalize: bool = True, raw_path="default"):
+def load_2d_slices_at_time(images_path: str | dict, t: int, do_normalize: bool = True):
     """Load all 2D slices at time t and normalize the resulted 3D image"""
     if isinstance(images_path, str):
         file_extension = os.path.splitext(images_path)[1]
@@ -29,15 +29,15 @@ def load_2d_slices_at_time(images_path: str | dict, t: int, do_normalize: bool =
         import h5py
         with h5py.File(images_path["h5_file"], 'r') as f:
             if file_extension != ".nwb":
-                x = f[raw_path][t - 1, images_path["channel"], :, :, :]
+                x = f[images_path["raw_path"]][t - 1, images_path["channel"], :, :, :]
             else:
-                x = f[raw_path][t - 1, :, :, :, images_path["channel"]].transpose((2,0,1))
+                x = f[images_path["raw_path"]][t - 1, :, :, :, images_path["channel"]].transpose((2,0,1))
     else:
         raise ValueError("image_paths should be a str for TIFF sequences or dict for HDF5/NWB dataset")
 
     if do_normalize:
         axis_norm = (0, 1, 2)  # normalize channels independently
-        return normalize(x, 1, 99.8, axis=axis_norm)
+        return normalize(x, axis=axis_norm)
     return x
 
 def normalize_points(points: ndarray, return_para: bool = False) -> Union[ndarray, Tuple[ndarray, Tuple[any, any]]]:
