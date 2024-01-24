@@ -41,7 +41,7 @@ def load_stardist_model(model_name: str = "stardist", basedir: str = STARDIST_MO
     return model
 
 
-def predict_and_save(images_path: str | dict, model: StarDist3DCustom, results_folder: str):
+def predict_and_save(images_path: str | dict, model: StarDist3DCustom, results_folder: str, t_start: int = None):
     """
     Load 2D slices of a 3D image stack obtained at time t and predict instance coordinates using a trained StarDist3DCustom model.
     Save the predicted coordinates as numpy arrays in a folder.
@@ -50,7 +50,7 @@ def predict_and_save(images_path: str | dict, model: StarDist3DCustom, results_f
         images_path (str): The file path of the 3D image stack with 2D slices at each time point.
         model (StarDist3DCustom): A trained StarDist3DCustom model for instance segmentation of 3D image stacks.
         results_folder (str): The folder path to save the results.
-        raw_path (str): The path of raw image in the h5/nwb file. Only used when images_path is of dict type
+        t_start (int): When provided, skip the previous time points that have been processed.
     """
     # Check if the folder exists and create it if necessary
     _results_folder = Path(results_folder)
@@ -64,17 +64,18 @@ def predict_and_save(images_path: str | dict, model: StarDist3DCustom, results_f
         filenames = glob(str(images_path_search.parent / new_filename))
         assert len(filenames) > 0, f"No image files were found in {images_path_search.parent / new_filename}"
         numbers = [int(re.findall(r"t(\d+)", f)[0]) for f in filenames]
-        smallest_number = min(numbers)
+        smallest_number = max(min(numbers), t_start)
         largest_number = max(numbers)
 
         # Process images and predict instance coordinates
-        with h5py.File(str(_results_folder / "seg.h5"), 'w') as f_seg:
+        with h5py.File(str(_results_folder / "seg.h5"), 'a') as f_seg:
             num_vol = largest_number - smallest_number + 1
             with tqdm(total=num_vol, desc="Segmenting images", ncols=50) as pbar:
                 for t in range(smallest_number, largest_number + 1):
                     try:
                         # Load 2D slices at time t
                         x = load_2d_slices_at_time(images_path, t=t)
+                        x = normalize(x, 1, 99.8, axis=(0, 1, 2))
                         if t == smallest_number:
                             dset_prob = f_seg.create_dataset('prob', shape=(num_vol, *x.shape),
                                                              chunks=(1, *x.shape), dtype="float16",
@@ -94,25 +95,23 @@ def predict_and_save(images_path: str | dict, model: StarDist3DCustom, results_f
             print(f"All images from t={smallest_number} to t={largest_number} have been Segmented")
     elif isinstance(images_path, dict):
         file_extension = os.path.splitext(images_path["h5_file"])[1]
-        with h5py.File(images_path["h5_file"], 'r+') as f_raw, h5py.File(str(_results_folder / "seg.h5"), 'w') as f_seg:
+        with h5py.File(images_path["h5_file"], 'r+') as f_raw, h5py.File(str(_results_folder / "seg.h5"), 'a') as f_seg:
             raw_images = f_raw[images_path["raw_path"]]
+            _t_start = 1 if t_start is None else t_start
             num_vol = raw_images.shape[0]
-            with tqdm(total=num_vol, desc="Segmenting images", ncols=50) as pbar:
-                for t in range(1, num_vol + 1):
-                    # Load 2D slices at time t
-                    if file_extension != ".nwb":
-                        x = raw_images[t - 1, images_path["channel"], :, :, :]
-                    else:
-                        x = raw_images[t - 1, :, :, :, images_path["channel"]].transpose((2, 0, 1))
-                    x = normalize(x, axis=(0, 1, 2))
+            with tqdm(total=num_vol, initial=_t_start, desc="Segmenting images", ncols=50) as pbar:
+                for t in range(_t_start, num_vol + 1):
+                    # Load 2D slices at time t. The raw_images should have the shape (time, channel, depth, height, width)
+                    x = raw_images[t - 1, images_path["channel"], :, :, :]
+                    x = normalize(x, 1, 99.8, axis=(0, 1, 2))
 
                     # Save predicted instance coordinates as numpy arrays
                     (labels, details), prob_map = model.predict_instances(x)
                     if t == 1:
-                        dset_prob = f_seg.create_dataset('prob', shape=(num_vol, *prob_map.shape),
+                        f_seg.create_dataset('prob', shape=(num_vol, *prob_map.shape),
                                                          chunks=(1, *prob_map.shape), dtype="float16",
                                                          compression="lzf")
-                    dset_prob[t - 1, ...] = prob_map
+                    f_seg["prob"][t - 1, ...] = prob_map
                     f_seg.create_dataset(f'coords_{str(t - 1).zfill(6)}',
                                          data=details["points"][:, [1, 2, 0]])
                     if t == 1:

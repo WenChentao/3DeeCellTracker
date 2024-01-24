@@ -1,6 +1,7 @@
 from __future__ import division, absolute_import, print_function, unicode_literals, annotations
 
 import os
+import sys
 from glob import glob
 from typing import Union, Tuple
 
@@ -136,3 +137,11 @@ def set_unique_xlim(ax1, ax2):
     ax1.set_xlim(min((x1_min, x2_min)), max((x1_max, x2_max)))
     ax2.set_xlim(min((x1_min, x2_min)), max((x1_max, x2_max)))
 
+
+def simple_progress_bar(current, total, bar_length=50):
+    percent = float(current) / total
+    arrow = '-' * int(round(percent * bar_length) - 1) + '>'
+    spaces = ' ' * (bar_length - len(arrow))
+
+    sys.stdout.write("\rProgress: [{0}] {1}%".format(arrow + spaces, int(round(percent * 100))))
+    sys.stdout.flush()

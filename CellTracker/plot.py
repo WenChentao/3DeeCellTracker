@@ -30,8 +30,8 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
     # Plot the matching relationships between the two sets of points
     for ref_index, tgt_index in pairs_px2:
         # Get the coordinates of the matched points in the two point sets
-        pt1 = np.asarray([ref_ptrs[ref_index, 1], -ref_ptrs[ref_index, 0]])
-        pt2 = np.asarray([tgt_ptrs[tgt_index, 1], -tgt_ptrs[tgt_index, 0]])
+        pt1 = np.asarray([ref_ptrs[ref_index, 1], ref_ptrs[ref_index, 0]])
+        pt2 = np.asarray([tgt_ptrs[tgt_index, 1], tgt_ptrs[tgt_index, 0]])
 
         # Draw a connection between the matched points in the two subplots using the `ConnectionPatch` class
         con = ConnectionPatch(xyA=pt2, xyB=pt1, coordsA="data", coordsB="data",
@@ -325,8 +325,8 @@ def plot_matching_2d_with_plotly(neuropal_ptrs: np.ndarray, wba_ptrs: np.ndarray
 
 def plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, ax1=None, ax2=None, single_panel=False):
     for ref_ptr, tgt_ptr in zip(ref_ptrs, predicted_ref_ptrs):
-        pt1 = np.asarray([ref_ptr[1], -ref_ptr[0]])
-        pt2 = np.asarray([tgt_ptr[1], -tgt_ptr[0]])
+        pt1 = np.asarray([ref_ptr[1], ref_ptr[0]])
+        pt2 = np.asarray([tgt_ptr[1], tgt_ptr[0]])
 
         if single_panel:
             plt.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], lw=1, color="C1")
@@ -348,7 +348,7 @@ def plot_predicted_movements(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref
     plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, ax1, ax2, single_panel=False)
     set_unique_xlim(ax1, ax2)
     plt.pause(0.1)
-    return fig
+    return fig, (ax1, ax2)
 
 
 def plot_predicted_movements_one_panel(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray, t1: int,
@@ -421,15 +421,18 @@ def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarra
     else:
         # print("Using left-right layout")
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(fig_width_in, fig_height_in))
+
     # Plot the point sets on the respective subplots
-    ax1.scatter(ref_ptrs[:, 1], -ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')
-
+    ax1.scatter(ref_ptrs[:, 1], ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')
     for i, txt in enumerate(ids_ref):
-        ax1.annotate(txt, (ref_ptrs[i, 1], -ref_ptrs[i, 0]))
-    ax2.scatter(tgt_ptrs[:, 1], -tgt_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 2')
+        ax1.annotate(txt, (ref_ptrs[i, 1], ref_ptrs[i, 0]))
 
+    ax2.scatter(tgt_ptrs[:, 1], tgt_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 2')
     for i, txt in enumerate(ids_tgt):
-        ax2.annotate(txt, (tgt_ptrs[i, 1], -tgt_ptrs[i, 0]))
+        ax2.annotate(txt, (tgt_ptrs[i, 1], tgt_ptrs[i, 0]))
+
+    ax1.invert_yaxis()
+    ax2.invert_yaxis()
 
     unify_xy_lims(ax1, ax2)
 

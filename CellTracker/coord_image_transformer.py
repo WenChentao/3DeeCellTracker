@@ -142,6 +142,22 @@ class Coordinates:
         return self._raw.shape[0]
 
 
+def mix_img_labels(corrected_labels_image: ndarray, raw_img: ndarray, interpolation_factor: int, alpha: float):
+    labels_rgb = lbl_cmap.colors[corrected_labels_image.max(axis=2)]
+    labels_rgb = Image.fromarray((labels_rgb * 255).astype(np.uint8))
+    labels_rgb_xz = lbl_cmap.colors[corrected_labels_image.max(axis=0)].transpose(1, 0, 2)
+    labels_rgb_xz = np.repeat(labels_rgb_xz, interpolation_factor, axis=0)
+    labels_rgb_xz = Image.fromarray((labels_rgb_xz * 255).astype(np.uint8))
+    raw_img_xy = np.max(raw_img, axis=0)
+    raw_rgb = Image.fromarray((raw_img_xy * 255 / raw_img_xy.max()).astype(np.uint8)).convert('RGB')
+    raw_img_xz = np.max(raw_img, axis=1)
+    raw_img_xz = np.repeat(raw_img_xz, interpolation_factor, axis=0)
+    raw_rgb_xz = Image.fromarray((raw_img_xz * 255 / raw_img_xz.max()).astype(np.uint8)).convert('RGB')
+    merged_labels = Image.blend(labels_rgb, raw_rgb, alpha=alpha)
+    merged_labels_xz = Image.blend(labels_rgb_xz, raw_rgb_xz, alpha=alpha)
+    return merged_labels, merged_labels_xz
+
+
 class CoordsToImageTransformer:
     """
     A class to transform cell coordinates into an image with the cells represented as labeled regions.
@@ -303,65 +319,13 @@ class CoordsToImageTransformer:
             The new image with the overlapping regions.
         """
 
-        def add_bbox_with_movements(bbox: Tuple[slice, slice, slice], movements: ndarray, image_shape: tuple):
-            """
-            Add movements to the start and stop indices of the given slices and return the updated slices
-            and the partial slices indicating how to clip the bbox when the target is out of range.
-
-            Parameters
-            ----------
-            bbox : Tuple[slice, slice, slice]
-                A tuple of slices representing the bounding box.
-            movements : ndarray
-                A 1x3 NumPy array representing the movements to apply to the bounding box.
-            image_shape : tuple
-                A tuple of integers representing the shape of the 3D image.
-
-            Returns
-            -------
-            new_bbox : Tuple[slice, slice, slice]
-                The updated bounding box with applied movements.
-            partial_bbox : Tuple[slice, slice, slice]
-                The partial slices indicating how to clip the bounding box when the target is out of range.
-            """
-            if len(bbox) != 3 or len(movements) != 3 or len(image_shape) != 3:
-                raise ValueError("bbox, movements_1x3 and image_shape must be (3,) shape")
-
-            new_bbox = []
-            partial_bbox = []
-            for s, c, size in zip(bbox, movements, image_shape):
-                new_start_ = s.start + int(c)
-                new_start = max(new_start_, 0)
-                partial_start = new_start - new_start_
-                new_stop_ = s.stop + int(c)
-                new_stop = min(new_stop_, size)
-                partial_stop = (s.stop - s.start) - (new_stop_ - new_stop)
-                new_bbox.append(slice(new_start, new_stop, None))
-                partial_bbox.append(slice(partial_start, partial_stop, None))
-                if new_start >= new_stop:
-                    raise ValueError(f"Slices are out of range for image of size {image_shape}")
-
-            return tuple(new_bbox), tuple(partial_bbox)
-
-        if movements_nx3 is None:
-            movements_nx3 = np.zeros((len(self.subregions), 3))
-        else:
-            assert movements_nx3.shape[0] == len(self.subregions)
-        if cells_missed is None:
-            cells_missed = []
-
-        output_img = np.repeat(np.zeros_like(self.proofed_segmentation), self.interpolation_factor, axis=2)
-        mask = output_img.copy()
-        siz_x, siz_y, siz_z = self.proofed_segmentation.shape
-        interp_shape = (siz_x, siz_y, siz_z * self.interpolation_factor)
-        for i, (bbox, subimage) in enumerate(self.subregions):
-            label = i + 1
-            if label in cells_missed:
-                continue
-            bbox_moved, partial_bbox = add_bbox_with_movements(bbox, movements_nx3[i], interp_shape)
-            output_img[bbox_moved] += (subimage * label).astype(output_img.dtype)[partial_bbox]
-            mask[bbox_moved] += (subimage * 1).astype(mask.dtype)[partial_bbox]
-        return output_img, mask
+        return move_cells(
+            self.subregions,
+            self.proofed_segmentation,
+            self.interpolation_factor,
+            movements_nx3,
+            cells_missed
+        )
 
     def get_cells_on_boundary(self, coordinates_real_nx3: ndarray, ensemble: bool, boundary_xy: int = 6):
         """
@@ -511,17 +475,19 @@ class CoordsToImageTransformer:
         """
         np.save(str(self.results_folder / TRACK_RESULTS / COORDS_REAL / ("coords%04d.npy" % t2)), coords.real)
         save_tracked_labels(self.results_folder, corrected_labels_image, t2, self.use_8_bit)
-        self.save_merged_labels(corrected_labels_image, images_path, t2)
+
+        raw_img = load_2d_slices_at_time(images_path, t=t2)
+        self.save_merged_labels(corrected_labels_image, raw_img, t2)
 
         confirmed_coord_t1 = np.load(
             str(self.results_folder / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(4)}.npy"))
         segmented_pos_t2, _ = tracker._get_segmented_pos(t2)
-        fig = plot_predicted_movements(confirmed_coord_t1, segmented_pos_t2.real, coords.real, t1, t2)
+        fig, _ = plot_predicted_movements(confirmed_coord_t1, segmented_pos_t2.real, coords.real, t1, t2)
         fig.savefig(self.results_folder / TRACK_RESULTS / "figure" / f"matching_{str(t2).zfill(4)}.png",
                     facecolor='white')
         plt.close()
 
-    def save_merged_labels(self, corrected_labels_image: ndarray, images_path: str, t: int):
+    def save_merged_labels(self, corrected_labels_image: ndarray, raw_img: ndarray, t: int):
         """
         Save the merged labels, which is an overlay of the labels and raw images.
 
@@ -529,27 +495,13 @@ class CoordsToImageTransformer:
         ----------
         corrected_labels_image : ndarray
             The corrected labels image.
-        images_path : str
-            The path to the directory containing the raw images.
+        raw_img : ndarray
+            The raw images.
         t : int
             The time point at which the merged labels are saved.
         """
-        labels_rgb = lbl_cmap.colors[corrected_labels_image.max(axis=2)]
-        labels_rgb = Image.fromarray((labels_rgb * 255).astype(np.uint8))
-
-        labels_rgb_xz = lbl_cmap.colors[corrected_labels_image.max(axis=0)].transpose(1, 0, 2)
-        labels_rgb_xz = np.repeat(labels_rgb_xz, self.interpolation_factor, axis=0)
-        labels_rgb_xz = Image.fromarray((labels_rgb_xz * 255).astype(np.uint8))
-
-        raw_img = np.max(load_2d_slices_at_time(images_path, t=t), axis=0)
-        raw_rgb = Image.fromarray((raw_img * 255 / raw_img.max()).astype(np.uint8)).convert('RGB')
-
-        raw_img_xz = np.max(load_2d_slices_at_time(images_path, t=t), axis=1)
-        raw_img_xz = np.repeat(raw_img_xz, self.interpolation_factor, axis=0)
-        raw_rgb_xz = Image.fromarray((raw_img_xz * 255 / raw_img_xz.max()).astype(np.uint8)).convert('RGB')
-
-        merged_labels = Image.blend(labels_rgb, raw_rgb, alpha=0.5)
-        merged_labels_xz = Image.blend(labels_rgb_xz, raw_rgb_xz, alpha=0.5)
+        merged_labels, merged_labels_xz = mix_img_labels(
+            corrected_labels_image, raw_img, self.interpolation_factor, alpha=0.6)
 
         (self.results_folder / TRACK_RESULTS / MERGED_LABELS).mkdir(parents=True, exist_ok=True)
         (self.results_folder / TRACK_RESULTS / MERGED_LABELS_XZ).mkdir(parents=True, exist_ok=True)
@@ -654,4 +606,96 @@ def fix_labeling_errors(segmentation: np.ndarray) -> Tuple[np.ndarray, bool]:
     return new_segmentation, was_corrected
 
 
+def move_cells(
+    subregions: List[Tuple[Tuple[slice, slice, slice], ndarray]],
+    segmentation_t1: ndarray,
+    interpolation_factor: int,
+    movements_nx3: ndarray = None,
+    cells_missed: List[int] = None
+) -> Tuple[ndarray, ndarray]:
+    """
+    Parameters
+    ----------
+    subregions : List[Tuple[Tuple[slice, slice, slice], ndarray]]
+        A list of tuples, each containing a bounding box and the corresponding subimage.
+    segmentation_t1 : ndarray
+        A 3D array representing the segmentation to be moved.
+    interpolation_factor : int
+        A factor by which the z-axis of the segmentation is interpolated.
+    movements_nx3 : ndarray, optional
+        Movements of each cell, by default None.
+    cells_missed : List[int], optional
+        A list of cell indices that were missed during the tracking process, by default None.
 
+    Returns
+    -------
+    output : numpy.ndarray
+        The new image with moved cells.
+    mask : numpy.ndarray
+        The new image with the overlapping regions.
+    """
+    # Initialize movements_nx3 and cells_missed if they are None
+    if movements_nx3 is None:
+        movements_nx3 = np.zeros((len(subregions), 3))
+    if cells_missed is None:
+        cells_missed = set()
+
+    # Initialize output images
+    output_img = np.repeat(np.zeros_like(segmentation_t1), interpolation_factor, axis=2)
+    mask = output_img.copy()
+
+    # Calculate interpolated shape
+    siz_x, siz_y, siz_z = segmentation_t1.shape
+    interp_shape = (siz_x, siz_y, siz_z * interpolation_factor)
+
+    # Iterate over subregions and apply movements
+    for i, (bbox, subimage) in enumerate(subregions):
+        label = i + 1
+        if label in cells_missed:
+            continue
+        bbox_moved, partial_bbox = add_bbox_with_movements(bbox, movements_nx3[i], interp_shape)
+        output_img[bbox_moved] += (subimage * label).astype(output_img.dtype)[partial_bbox]
+        mask[bbox_moved] += (subimage * 1).astype(mask.dtype)[partial_bbox]
+
+    return output_img, mask
+
+
+def add_bbox_with_movements(bbox: Tuple[slice, slice, slice], movements: ndarray, image_shape: tuple):
+    """
+    Add movements to the start and stop indices of the given slices and return the updated slices
+    and the partial slices indicating how to clip the bbox when the target is out of range.
+
+    Parameters
+    ----------
+    bbox : Tuple[slice, slice, slice]
+        A tuple of slices representing the bounding box.
+    movements : ndarray
+        A 1x3 NumPy array representing the movements to apply to the bounding box.
+    image_shape : tuple
+        A tuple of integers representing the shape of the 3D image.
+
+    Returns
+    -------
+    new_bbox : Tuple[slice, slice, slice]
+        The updated bounding box with applied movements.
+    partial_bbox : Tuple[slice, slice, slice]
+        The partial slices indicating how to clip the bounding box when the target is out of range.
+    """
+    if len(bbox) != 3 or len(movements) != 3 or len(image_shape) != 3:
+        raise ValueError("bbox, movements_1x3 and image_shape must be (3,) shape")
+
+    new_bbox = []
+    partial_bbox = []
+    for s, c, size in zip(bbox, movements, image_shape):
+        new_start_ = s.start + int(c)
+        new_start = max(new_start_, 0)
+        partial_start = new_start - new_start_
+        new_stop_ = s.stop + int(c)
+        new_stop = min(new_stop_, size)
+        partial_stop = (s.stop - s.start) - (new_stop_ - new_stop)
+        new_bbox.append(slice(new_start, new_stop, None))
+        partial_bbox.append(slice(partial_start, partial_stop, None))
+        if new_start >= new_stop:
+            raise ValueError(f"Slices are out of range for image of size {image_shape}")
+
+    return tuple(new_bbox), tuple(partial_bbox)

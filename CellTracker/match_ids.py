@@ -6,10 +6,10 @@ from numpy import ndarray
 import pandas as pd
 
 from CellTracker.fpm import initial_matching_fpm
-from CellTracker.simple_alignment import pre_alignment
+from CellTracker.simple_alignment import pre_alignment, greedy_match, get_match_pairs, K_POINTS
 from CellTracker.robust_match import update_inliers_points
-from CellTracker.trackerlite import BETA, LAMBDA, K_POINTS, get_match_pairs, cal_norm_prob, \
-    prgls_with_two_ref, greedy_match
+from CellTracker.trackerlite import BETA, LAMBDA, cal_norm_prob, \
+    prgls_with_two_ref
 from CellTracker.plot import plot_initial_matching, plot_predicted_movements
 
 
@@ -138,8 +138,10 @@ def predict_cell_positions(coords_t1, coords_t2, fpm_model, ids_t1, ids_t2, matc
                            similarity_threshold, beta, verbosity):
     print_initial_info(match_method, similarity_threshold, verbosity)
     affine_aligned_coords_t1, neuropal_coords_norm_t2 = pre_alignment(coords_t1, coords_t2,
-                                                                      fpm_model, match_method,
-                                                                      similarity_threshold)
+                                                                      match_model=fpm_model, predict_method=initial_matching_fpm,
+                                                                      match_method=match_method,
+                                                                      similarity_threshold=similarity_threshold,
+                                                                      ttype="projective")
     filtered_coords_norm_t1 = affine_aligned_coords_t1.copy()
     filtered_coords_norm_t2 = neuropal_coords_norm_t2.copy()
     predicted_coords_set1 = affine_aligned_coords_t1.copy()
@@ -157,7 +159,7 @@ def predict_cell_positions(coords_t1, coords_t2, fpm_model, ids_t1, ids_t2, matc
 
         print_and_plot_matching(filtered_coords_norm_t1, filtered_coords_norm_t2, i, ids_t2, ids_t1,
                                 inliers_updated, updated_matched_pairs, verbosity)
-
+        raise
         match_seg_t1_seg_t2 = np.column_stack(
             (inliers_pre[0][updated_matched_pairs[:, 0]], inliers_pre[1][updated_matched_pairs[:, 1]]))
 

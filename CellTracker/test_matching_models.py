@@ -1,8 +1,7 @@
 import numpy as np
 
 from CellTracker.fpm import initial_matching_fpm
-from CellTracker.simple_alignment import rotation_align_by_control_points
-from CellTracker.trackerlite import K_POINTS, get_match_pairs
+from CellTracker.simple_alignment import rotation_align_by_control_points, get_match_pairs, K_POINTS
 from CellTracker.utils import normalize_points
 from CellTracker.v1_modules.ffn import initial_matching_ffn
 

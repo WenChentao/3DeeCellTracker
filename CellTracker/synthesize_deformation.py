@@ -3,9 +3,10 @@ from typing import Tuple, Optional, List, Union, Generator, Callable
 import numpy as np
 from matplotlib import pyplot as plt
 from numpy import ndarray
-from scipy.spatial import ConvexHull
+from scipy.spatial import ConvexHull, Delaunay
 from scipy.spatial.distance import cdist
 from scipy.spatial.transform import Rotation
+from skimage.transform import estimate_transform
 from sklearn.decomposition import PCA
 from sklearn.neighbors import KernelDensity, NearestNeighbors
 
@@ -135,7 +136,7 @@ def train_data_deformation(points_normalized_mxnx3: ndarray, longest_distance: f
         -> ndarray:
     new_points_mxmxnx3 = np.empty(((num_ptr_set), *points_normalized_mxnx3.shape))
     for i, points_nx3 in enumerate(points_normalized_mxnx3):
-        new_points_mxmxnx3[i, ...] = deform(points_nx3, longest_distance, num_ptr_set)
+        new_points_mxmxnx3[i, ...] = random_deform(points_nx3, longest_distance, num_ptr_set)
     new_points_kxnx3 = new_points_mxmxnx3.reshape((-1, points_normalized_mxnx3.shape[1], 3))
     return new_points_kxnx3
 
@@ -290,8 +291,8 @@ def generate_points_pair(points_nx3: ndarray, rotvec_ref_3: ndarray, rotvec_tgt_
         longest_distance = get_longest_distance(points_nx3)
     points_ref_nx3 = rotate_one_point_set(points_nx3, rotvec_ref_3)
     points_tgt_nx3 = rotate_one_point_set(points_ref_nx3, rotvec_tgt_3)
-    points_ref_nx3 = deform(points_ref_nx3, longest_distance, num_ptr_set=1, mv_factor=mv_factor, width=width)[0, :, :]
-    points_tgt_nx3 = deform(points_tgt_nx3, longest_distance, num_ptr_set=1, mv_factor=mv_factor, width=width)[0, :, :]
+    points_ref_nx3 = random_deform(points_ref_nx3, longest_distance, num_ptr_set=1, mv_factor=mv_factor, width=width)[0, :, :]
+    points_tgt_nx3 = random_deform(points_tgt_nx3, longest_distance, num_ptr_set=1, mv_factor=mv_factor, width=width)[0, :, :]
     points_tgt_nx3 += (np.random.rand(*points_tgt_nx3.shape) - 0.5) * 4 * RANDOM_MOVEMENTS_FACTOR
     return points_ref_nx3, points_tgt_nx3
 
@@ -309,8 +310,8 @@ def rotate_one_point_set(points_nx3: ndarray, rad_3: ndarray) -> ndarray:
     return np.dot(points_nx3, r.as_matrix())
 
 
-def deform(points_normalized_nx3: ndarray, longest_distance: float, num_ptr_set: int, mv_factor: float = None,
-           width: float = None, appy_to_z: bool = True) -> ndarray:
+def random_deform(points_normalized_nx3: ndarray, longest_distance: float, num_ptr_set: int, mv_factor: float = None,
+                  width: float = None, appy_to_z: bool = True) -> ndarray:
     """Make random deformation to a point set
 
     Parameters
@@ -343,12 +344,28 @@ def deform(points_normalized_nx3: ndarray, longest_distance: float, num_ptr_set:
     target_movement_mx1x3 = (longest_distance * mv_factor) * np.random.uniform(-1, 1, size=(num_ptr_set, 1, 3))
     if not appy_to_z:
         target_movement_mx1x3[..., 2] = 0
-    distances_to_targets_mxn = cdist(points_normalized_nx3[target_points_m, :], points_normalized_nx3, metric='euclidean')
-    scale_factors_mxnx1 = np.exp(-0.5 * (distances_to_targets_mxn / (width * longest_distance))**2)[:, :, np.newaxis]
+    return apply_deform(points_normalized_nx3, target_points_m, target_movement_mx1x3, longest_distance, width)
+
+
+def apply_deform(points_normalized_nx3, target_points_m, target_movement_mx1x3, longest_distance, width):
+    distances_to_targets_mxn = cdist(points_normalized_nx3[target_points_m, :], points_normalized_nx3,
+                                     metric='euclidean')
+    scale_factors_mxnx1 = np.exp(-0.5 * (distances_to_targets_mxn / (width * longest_distance)) ** 2)[:, :, np.newaxis]
     all_movements_mxnx3 = scale_factors_mxnx1 * target_movement_mx1x3
     new_points_mxnx3 = points_normalized_nx3[np.newaxis, :, :] + all_movements_mxnx3
     return new_points_mxnx3
 
+
+def apply_deform_0_max(points_normalized_nx3: ndarray, movements: dict) -> ndarray:
+    target_node = movements["node"]
+    sigma = movements["sigma"]
+    distances_to_targets_n = cdist(points_normalized_nx3[target_node:target_node+1, :], points_normalized_nx3, metric='euclidean')[0]
+    scale_factors_nx1 = np.exp(-0.5 * (distances_to_targets_n / sigma) ** 2)[:, np.newaxis]
+    factor_min = scale_factors_nx1.min()
+    scale_factors_nx1 = (scale_factors_nx1 - factor_min) / (1 - factor_min)
+    ax_force, ay_force, az_force, node = polar2cartesian(node_with_vector=movements)
+    all_movements_nx3 = scale_factors_nx1 * np.asarray([[ax_force, ay_force, az_force]])
+    return points_normalized_nx3 + all_movements_nx3
 
 def get_longest_distance(points_normalized_nx3: ndarray) -> float:
     """
@@ -444,3 +461,105 @@ def cart2sph(coordinates_nxkx3: ndarray, return_dist: bool = False) -> \
     else:
         return theta_z_nxk, theta_x_nxk, theta_y_nxk
 
+
+def cal_spring_net_acc(coords_nx3: ndarray, velocity_nx3: ndarray, connections_mx2: ndarray,
+                       equilibrium_lengths_m: ndarray, node_with_force: dict = None, k=1, c=1):
+    """
+    Calculate the net acceleration of nodes in a spring-connected system.
+
+    This function computes the accelerations for a set of nodes that are interconnected by springs,
+    based on Hooke's law. The system is defined by the coordinates of the nodes, the connections between them
+    (i.e., which nodes each spring connects), and the equilibrium lengths of the springs.
+
+    Parameters:
+    coords_nx3 (ndarray): An array of shape (n, 3), where n is the number of nodes.
+                          Each row represents the x, y, z coordinates of a node.
+    connections_mx2 (ndarray): An array of shape (m, 2), where m is the number of springs.
+                               Each row represents a spring, with the values being indices
+                               into coords_nx3 of the two nodes the spring connects.
+    equilibrium_lengths_m (ndarray): A one-dimensional array of length m, where each element
+                                     is the equilibrium length of the corresponding spring in connections_mx2.
+    node_with_force (dict): A dictionary containing information about an external force applied to a node.
+                            It should have the following keys:
+                            - "node" (int): The index of the node to which the force is applied.
+                            - "polar angle" (float): The polar angle (in degrees) of the force direction.
+                            - "azimuthal angle" (float): The azimuthal angle (in degrees) of the force direction.
+                            - "strength" (float): The magnitude of the force.
+
+    Returns:
+    ndarray: An array of shape (n, 3) containing the net acceleration of each node.
+    """
+    a_nx3 = np.zeros(coords_nx3.shape)
+    k_m = k / equilibrium_lengths_m
+    # Hooke's law: a = - k * displacement / m along spring, here m = 1 for all nodes
+    vertices1_m = connections_mx2[:, 0]
+    vertices2_m = connections_mx2[:, 1]
+    displacements_mx3 = coords_nx3[vertices1_m, :] - coords_nx3[vertices2_m, :]
+    current_lengths_m = np.linalg.norm(displacements_mx3, axis=1)
+    diff_lengths_m = (current_lengths_m - equilibrium_lengths_m)
+    acc = - k_m * diff_lengths_m / current_lengths_m
+    ax = acc * displacements_mx3[:, 0]
+    ay = acc * displacements_mx3[:, 1]
+    az = acc * displacements_mx3[:, 2]
+    np.add.at(a_nx3[:, 0], vertices1_m, ax)
+    np.add.at(a_nx3[:, 1], vertices1_m, ay)
+    np.add.at(a_nx3[:, 2], vertices1_m, az)
+    np.add.at(a_nx3[:, 0], vertices2_m, -ax)
+    np.add.at(a_nx3[:, 1], vertices2_m, -ay)
+    np.add.at(a_nx3[:, 2], vertices2_m, -az)
+
+    if node_with_force is not None:
+        ax_force, ay_force, az_force, node = polar2cartesian(node_with_force)
+        np.add.at(a_nx3[:, 0], node, ax_force)
+        np.add.at(a_nx3[:, 1], node, ay_force)
+        np.add.at(a_nx3[:, 2], node, az_force)
+
+    a_nx3 -= velocity_nx3 * c
+
+    return a_nx3
+
+
+def polar2cartesian(node_with_vector: dict):
+    theta = np.deg2rad(node_with_vector["polar angle"])
+    phi = np.deg2rad(node_with_vector["azimuthal angle"])
+    r = node_with_vector["strength"]
+    node = node_with_vector["node"]
+    ax_force = r * np.sin(theta) * np.cos(phi)
+    ay_force = r * np.sin(theta) * np.sin(phi)
+    az_force = r * np.cos(theta)
+    return ax_force, ay_force, az_force, node
+
+
+def cal_spring_net_coords(coords_nx3: ndarray, velocity_nx3: ndarray, acc_nx3: ndarray, dt: float):
+    """
+    Calculate the new positions and velocities of nodes in a spring-connected system using midpoint method.
+    """
+    new_velocity = velocity_nx3 + acc_nx3 * dt
+    new_coords = coords_nx3 + 0.5 * (velocity_nx3 + new_velocity) * dt
+    return new_coords, new_velocity
+
+
+def get_connections(tri: Delaunay):
+    connections: List[Tuple[int, int]] = []
+    for pt_1, pt_2, pt_3, pt_4 in  tri.simplices:
+        add_pair(pt_1, pt_2, connections)
+        add_pair(pt_2, pt_3, connections)
+        add_pair(pt_1, pt_3, connections)
+        add_pair(pt_1, pt_4, connections)
+        add_pair(pt_2, pt_4, connections)
+        add_pair(pt_3, pt_4, connections)
+    connections_mx2 = np.asarray(connections)
+    connections_mx2 = connections_mx2[np.lexsort((connections_mx2[:, 1], connections_mx2[:, 0]))]
+    return connections_mx2
+
+
+def add_pair(pt_1, pt_2, connections: List[Tuple[int, int]]):
+    pair = (pt_1, pt_2) if pt_1 < pt_2 else (pt_2, pt_1)
+    if pair not in connections:
+        connections.append(pair)
+
+
+def align_rotation(ref_pos_nx3: ndarray, tgt_pos_nx3xt: ndarray):
+    tform = estimate_transform("euclidean", tgt_pos_nx3xt[..., -1], ref_pos_nx3)
+    aligned_tgt_pos_nx3xt = np.einsum("ndt, dl -> nlt", tgt_pos_nx3xt, tform.params.T[:3, :3]) + tform.params.T[3:4, :3, None]
+    return aligned_tgt_pos_nx3xt
