@@ -1,8 +1,10 @@
+from functools import partial
 from typing import Tuple, Optional, List, Union, Generator, Callable
 
 import numpy as np
 from matplotlib import pyplot as plt
 from numpy import ndarray
+from scipy.integrate import solve_ivp
 from scipy.spatial import ConvexHull, Delaunay
 from scipy.spatial.distance import cdist
 from scipy.spatial.transform import Rotation
@@ -363,8 +365,8 @@ def apply_deform_0_max(points_normalized_nx3: ndarray, movements: dict) -> ndarr
     scale_factors_nx1 = np.exp(-0.5 * (distances_to_targets_n / sigma) ** 2)[:, np.newaxis]
     factor_min = scale_factors_nx1.min()
     scale_factors_nx1 = (scale_factors_nx1 - factor_min) / (1 - factor_min)
-    ax_force, ay_force, az_force, node = polar2cartesian(node_with_vector=movements)
-    all_movements_nx3 = scale_factors_nx1 * np.asarray([[ax_force, ay_force, az_force]])
+    move_x, move_y, move_z, _ = polar2cartesian(node_with_vector=movements)
+    all_movements_nx3 = scale_factors_nx1 * np.asarray([[move_x, move_y, move_z]])
     return points_normalized_nx3 + all_movements_nx3
 
 def get_longest_distance(points_normalized_nx3: ndarray) -> float:
@@ -524,10 +526,10 @@ def polar2cartesian(node_with_vector: dict):
     phi = np.deg2rad(node_with_vector["azimuthal angle"])
     r = node_with_vector["strength"]
     node = node_with_vector["node"]
-    ax_force = r * np.sin(theta) * np.cos(phi)
-    ay_force = r * np.sin(theta) * np.sin(phi)
-    az_force = r * np.cos(theta)
-    return ax_force, ay_force, az_force, node
+    x = r * np.sin(theta) * np.cos(phi)
+    y = r * np.sin(theta) * np.sin(phi)
+    z = r * np.cos(theta)
+    return x, y, z, node
 
 
 def cal_spring_net_coords(coords_nx3: ndarray, velocity_nx3: ndarray, acc_nx3: ndarray, dt: float):
@@ -563,3 +565,70 @@ def align_rotation(ref_pos_nx3: ndarray, tgt_pos_nx3xt: ndarray):
     tform = estimate_transform("euclidean", tgt_pos_nx3xt[..., -1], ref_pos_nx3)
     aligned_tgt_pos_nx3xt = np.einsum("ndt, dl -> nlt", tgt_pos_nx3xt, tform.params.T[:3, :3]) + tform.params.T[3:4, :3, None]
     return aligned_tgt_pos_nx3xt
+
+
+def cal_connections(points_nx3: ndarray):
+    tri = Delaunay(points_nx3)
+    triangles = []
+    for tetra in tri.simplices:
+        triangles.append([tetra[0], tetra[1], tetra[2]])
+        triangles.append([tetra[0], tetra[1], tetra[3]])
+        triangles.append([tetra[0], tetra[2], tetra[3]])
+        triangles.append([tetra[1], tetra[2], tetra[3]])
+
+    connections_mx2 = get_connections(tri)
+    equilibrium_disp_m = points_nx3[connections_mx2[:, 0]] - points_nx3[connections_mx2[:, 1]]
+    equilibrium_lengths_m = np.linalg.norm(equilibrium_disp_m, axis=1)
+    return connections_mx2, equilibrium_lengths_m
+
+
+def func_spring_network(t, x_and_v_6n: np.ndarray, connections_mx2: ndarray, equilibrium_lengths_m: ndarray):
+    assert len(x_and_v_6n) % 2 == 0
+    len_3n = len(x_and_v_6n) // 2
+    assert len_3n % 3 == 0
+    pos_n = x_and_v_6n[:len_3n].reshape((-1, 3))
+    v_n = x_and_v_6n[len_3n:].reshape((-1, 3))
+    v_dev = cal_spring_net_acc(coords_nx3=pos_n, velocity_nx3=v_n, connections_mx2=connections_mx2,
+                       equilibrium_lengths_m=equilibrium_lengths_m, node_with_force=None,
+                               k=1, c=3).flatten()
+    pos_dev = x_and_v_6n[len_3n:]
+    return np.concatenate((pos_dev, v_dev), axis=0)
+
+
+def random_deform_spring(points_nx3: ndarray):
+    movements = {"node": np.random.randint(0, points_nx3.shape[0] + 1),
+                 "polar angle": np.random.uniform(0,180),
+                 "azimuthal angle": np.random.uniform(0,360),
+                 "strength": 0.4,
+                 "sigma": np.random.uniform(0.4,0.6)}
+    points_with_deform = apply_deform_0_max(points_normalized_nx3=points_nx3, movements=movements)
+    pos = points_with_deform.flatten()
+    v = np.zeros_like(pos)
+    y = np.concatenate((pos, v), axis=0)
+
+    connections_mx2, equilibrium_lengths_m = cal_connections(points_nx3)
+
+    func_spring_partial = partial(func_spring_network, connections_mx2=connections_mx2, equilibrium_lengths_m=equilibrium_lengths_m)
+    t_max = 15
+    sol = solve_ivp(func_spring_partial, (0, t_max), t_eval=(t_max+1)**(np.arange(0, 100)/99)-1, y0=y)
+
+    n, t = sol.y.shape
+    points_updated = sol.y.reshape((n // 3, 3, t))
+    aligned_points_nx3xt = align_rotation(ref_pos_nx3=points_nx3, tgt_pos_nx3xt=points_updated[:n // 6])
+    displacements_mx3xt = aligned_points_nx3xt[connections_mx2[:,0], ...] - aligned_points_nx3xt[connections_mx2[:,1], ...]
+    dist_mxt = np.linalg.norm(displacements_mx3xt, axis=1)
+    energy_t = np.sum(0.5 * (1.0 / equilibrium_lengths_m)[:, None] * (dist_mxt - equilibrium_lengths_m[:, None])**2, axis=0)
+    return aligned_points_nx3xt, sol.t, energy_t
+
+
+def sample_random_deform_spring(points_nx3: ndarray):
+    aligned_points_nx3xt, timings_t, energy_t = random_deform_spring(points_nx3)
+    samples_timings_10 = np.zeros((10,), dtype=int)
+    upper_limit = 0.9 * energy_t.max()
+    lower_limit = max(0.1 * energy_t.max(), energy_t.min())
+    pointer = 1
+    for i, level in enumerate(np.linspace(upper_limit, lower_limit, 10)):
+        samples_timings_10[i] = np.argmin(np.abs(energy_t[pointer:] - level)) + pointer
+        pointer = samples_timings_10[i] + 1
+    print(samples_timings_10)
+    return aligned_points_nx3xt, timings_t, energy_t, samples_timings_10
