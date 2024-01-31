@@ -6,12 +6,13 @@ import tensorflow as tf
 from numpy import ndarray
 from sklearn.neighbors import NearestNeighbors
 from tensorflow.keras import Model, Input
-from tensorflow.keras.layers import Dense, BatchNormalization, LeakyReLU, Concatenate, Conv2D, Flatten, DepthwiseConv2D, Add
+from tensorflow.keras.layers import Dense, BatchNormalization, LeakyReLU, Concatenate, Conv2D, Flatten, Add
 from tifffile import imread
 from tqdm import tqdm
 
 from CellTracker.utils import normalize_points
-from CellTracker.synthesize_deformation import DataGeneratorFPN, K_NEIGHBORS, NUM_FEATURES, spherical_features_of_points
+from CellTracker.synthesize_deformation import K_NEIGHBORS, NUM_FEATURES, \
+    spherical_features_of_points, BATCH_SIZE, generator_train_data
 
 FPN_WEIGHTS_NAME = "weights_training_"
 RANGE_ROT_TGT = 180
@@ -63,13 +64,23 @@ class TrainFPM:
         else:
             raise ValueError("Either the segmentation1_path or the points1_path should be provided")
         self.optimizer = tf.keras.optimizers.Adam()
-        self.points_generator = DataGeneratorFPN(self.points_t1, num_rotations=10, num_deformations=10,
-                                                 range_rotation_tgt=range_rotation_tgt,
-                                                 movement_factor=move_factor)
+        self.range_rotation_tgt=range_rotation_tgt
 
     def train(self, num_epochs=10, iteration=5000, weights_name=FPN_WEIGHTS_NAME):
         train_loss_fn = tf.keras.losses.BinaryCrossentropy()
-        train_loader = self.points_generator.train_data_gen
+
+        dataset = tf.data.Dataset.from_generator(
+            generator_train_data,
+            args=(self.points_t1, self.range_rotation_tgt),
+            output_types=(tf.float32, tf.float32),
+            output_shapes=(
+                tf.TensorShape([BATCH_SIZE, K_NEIGHBORS + 2, NUM_FEATURES, 2]),
+                tf.TensorShape([BATCH_SIZE, 1])
+            )
+        )
+        dataset = dataset.prefetch(tf.data.AUTOTUNE)
+
+        #train_loader = self.points_generator.train_data_gen
         accuracy = tf.keras.metrics.BinaryAccuracy()
 
         start_epoch = self.current_epoch
@@ -79,7 +90,7 @@ class TrainFPM:
             train_acc = 0
             n = 0
             with tqdm(total=iteration, desc=f'Epoch {epoch}/{end_epoch - 1}', ncols=50, unit='batch') as pbar:
-                for X, y in train_loader:
+                for X, y in dataset:
                     with tf.GradientTape() as tape:
                         # Calculate the loss
                         X_prediction = self.model(X)

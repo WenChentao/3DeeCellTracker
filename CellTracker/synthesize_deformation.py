@@ -1,3 +1,4 @@
+from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from typing import Tuple, Optional, List, Union, Generator, Callable
 
@@ -12,6 +13,10 @@ from skimage.transform import estimate_transform
 from sklearn.decomposition import PCA
 from sklearn.neighbors import KernelDensity, NearestNeighbors
 
+BATCH_SIZE = 128
+
+NUM_SAMPLE = 10
+
 NUM_FEATURES = 4
 
 WIDTH_DEFORM = 0.3
@@ -20,111 +25,130 @@ MV_FACTOR = 0.2
 
 RATIO_SEG_ERROR = 0.15
 
-RANDOM_MOVEMENTS_FACTOR = 0.001
+RANDOM_MOVEMENTS_FACTOR = 0.004
 
 NUM_POINT_SET = 100
 K_NEIGHBORS = 20  # number of neighbors for calculating relative coordinates
 NUMBER_FEATURES = K_NEIGHBORS * 4 + 8
 
 
-class DataGeneratorFPN:
-    degrees_rotate_raw: Tuple[int] = (-135, -90, -45, 0, 45, 90, 135, 180)
+def generator_train_data_(points_nx3: ndarray, range_rotation_tgt: float, batch_size: int = BATCH_SIZE) \
+        -> Generator[Tuple[ndarray, ndarray], None, None]:
+    """Generate training data for FPN model
 
-    def __init__(self, points_normalized_nx3: ndarray, num_rotations: int, num_deformations: int,
-                 range_rotation_tgt: float, movement_factor: float = 0.2):
-        """
-        This class is used to generate training data for FPN model.
+    Parameters
+    ----------
+    points_nx3: ndarray, shape (n, 3)
+        The normalized points set
+    batch_size: int
+        The batch size
+    range_rotation_tgt: float
+        The range of rotation degrees for target points set
+    movement_factor: float
+        The movement factor for deformations
 
-        Parameters
-        ----------
-        points_normalized_nx3: ndarray
-            The normalized points set
-        num_rotations: int
-            The number of rotations
-        num_deformations: int
-            The number of deformations
-        range_rotation_tgt: tuple
-            The range of rotation degrees for target points set
-        movement_factor: float
-            The movement factor for deformations
-        """
-        self.num_rotate = num_rotations
-        self.num_deform = num_deformations
-        self.points_normalized_nx3 = points_normalized_nx3
-        self.train_data_gen = self.generator_train_data(points_normalized_nx3,
-                                                        range_rotation_tgt=range_rotation_tgt,
-                                                        movement_factor=movement_factor)
+    Yields
+    ------
+    y_sxkp2xfx2[batch_i_s_]: ndarray, shape (batch_size, num_neighbors + 2, num_features, 2)
+        The features of reference points and target points in each batch
+    y_sx1[batch_i_s_]: ndarray, shape (batch_siz, 1)
+        The label of the matching of reference points and target points in each batch
+    """
+    n = points_nx3.shape[0]
+    num_sample_per_set = n * 2
+    num_sets = 20
+    num_sample = num_sample_per_set * num_sets * NUM_SAMPLE
+    assert num_sample > batch_size, "The batch size is too large"
 
-    @staticmethod
-    def generator_train_data(points_nx3: ndarray, range_rotation_tgt: float,
-                             batch_size: int = 128, movement_factor: float = 0.2) -> Generator[Tuple[ndarray, ndarray], None, None]:
-        """Generate training data for FPN model
+    x_sxkp2xfx2 = np.empty((num_sample, K_NEIGHBORS + 2, NUM_FEATURES, 2), dtype=np.float32)
+    y_sx1 = np.empty((num_sample, 1), dtype=np.bool_)
 
-        Parameters
-        ----------
-        points_nx3: ndarray, shape (n, 3)
-            The normalized points set
-        batch_size: int
-            The batch size
-        range_rotation_tgt: float
-            The range of rotation degrees for target points set
-        movement_factor: float
-            The movement factor for deformations
+    random_indexes = np.arange(num_sample)
 
-        Yields
-        ------
-        xy_bxkxfx2: ndarray, shape (batch_size, num_neighbors + 2, num_features, 2)
-            The features of reference points and target points in each batch
-        y_bx1: ndarray, shape (batch_siz, 1)
-            The label of the matching of reference points and target points in each batch
-        """
-        n = points_nx3.shape[0]
-        num_batch_per_set = n * 2
-        num_sets = 20
-        num_batch = num_batch_per_set * num_sets
-        assert num_batch > batch_size, "The batch size is too large"
+    # Generate training data
+    while True:
+        # Generate a relative large number of data than the batch size
+        for i in range(num_sets):
+            rotvec_ref = random_rotvec((-np.pi, np.pi))
+            rotvec_tgt = random_rotvec((np.deg2rad(-range_rotation_tgt), np.deg2rad(range_rotation_tgt)))
+            points_ref_nx3x10, points_tgt_nx3x10 = generate_corresponding_point_sets(points_nx3, rotvec_ref, rotvec_tgt)
+            points_tgt_with_errors_nx3x10, replaced_indexes_rx10 = add_seg_errors(points_tgt_nx3x10)
+            for j in range(NUM_SAMPLE):
+                k = i * NUM_SAMPLE + j
+                point_set_s_ = slice(k * num_sample_per_set, (k + 1) * num_sample_per_set)
+                x_sxkp2xfx2[point_set_s_, ...], y_sx1[point_set_s_, :] = \
+                    points_to_features(points_ref_nx3x10[..., -j-1], points_tgt_with_errors_nx3x10[..., j], replaced_indexes_rx10[..., j])
 
-        x_bxkp2xfx2 = np.empty((num_batch, K_NEIGHBORS + 2, NUM_FEATURES, 2), dtype=np.float32)
-        y_bx1 = np.empty((num_batch, 1), dtype=np.bool_)
+        # Yield small batches from the generated data set in a shuffled order
+        np.random.shuffle(random_indexes)
+        for i in range(num_sample // batch_size):
+            batch_i_s_ = np.s_[random_indexes[i * batch_size:(i + 1) * batch_size],:]
+            yield x_sxkp2xfx2[batch_i_s_], y_sx1[batch_i_s_]
 
-        random_indexes = np.arange(num_batch)
 
-        # Generate training data
-        while True:
-            # Generate a relative large number of data than the batch size
-            updated_points_nx3 = points_nx3.copy()
-            for i in range(num_sets):
-                rotvec_ref = DataGeneratorFPN.random_rotvec((-np.pi, np.pi))
-                rotvec_tgt = DataGeneratorFPN.random_rotvec((-np.pi*range_rotation_tgt/180, np.pi*range_rotation_tgt/180))
-                longest_distance = get_longest_distance(updated_points_nx3)
-                points_ref_nx3, points_tgt_nx3 = generate_points_pair(updated_points_nx3, rotvec_ref, rotvec_tgt,
-                                                                      longest_distance, mv_factor=movement_factor)
-                points_tgt_with_errors, replaced_indexes = add_seg_errors(points_tgt_nx3)
-                point_set_s_ = slice(i * num_batch_per_set, (i + 1) * num_batch_per_set)
-                x_bxkp2xfx2[point_set_s_, ...], y_bx1[point_set_s_, :] = \
-                    points_to_features(points_ref_nx3, points_tgt_with_errors, replaced_indexes)
-                updated_points_nx3 = points_tgt_with_errors.copy()
+def process_batch(args):
+    points_nx3, range_rotation_tgt, num_sample_per_set = args
+    # 这里放置原来循环内部的逻辑
+    rotvec_ref = random_rotvec((-np.pi, np.pi))
+    rotvec_tgt = random_rotvec((np.deg2rad(-range_rotation_tgt), np.deg2rad(range_rotation_tgt)))
+    points_ref_nx3x10, points_tgt_nx3x10 = generate_corresponding_point_sets(points_nx3, rotvec_ref, rotvec_tgt)
+    points_tgt_with_errors_nx3x10, replaced_indexes_rx10 = add_seg_errors(points_tgt_nx3x10)
+    local_results_x = np.empty((num_sample_per_set * NUM_SAMPLE, K_NEIGHBORS + 2, NUM_FEATURES, 2), dtype=np.float32)
+    local_results_y = np.empty((num_sample_per_set * NUM_SAMPLE, 1), dtype=np.bool_)
+    for i in range(NUM_SAMPLE):
+        # k = i * NUM_SAMPLE + j
+        point_set_s_ = slice(i * num_sample_per_set, (i + 1) * num_sample_per_set)
+        local_results_x[point_set_s_], local_results_y[point_set_s_] = \
+            points_to_features(points_ref_nx3x10[..., i], points_tgt_with_errors_nx3x10[..., i], replaced_indexes_rx10[..., i])
+    return local_results_x, local_results_y
 
-            # Yield small batches from the generated data set in a shuffled order
-            np.random.shuffle(random_indexes)
-            for i in range(num_batch // batch_size):
-                batch_i_s_ = np.s_[random_indexes[i * batch_size:(i + 1) * batch_size],:]
-                yield x_bxkp2xfx2[batch_i_s_], y_bx1[batch_i_s_]
 
-    @staticmethod
-    def random_rotvec(vec_alpha: tuple):
-        phi = np.random.uniform(0, np.pi)  # 与z轴的角度
-        theta = np.random.uniform(0, 2 * np.pi)  # x-y平面上与x轴的角度
-        alpha = np.random.uniform(vec_alpha[0], vec_alpha[1])  # 旋转角度
+def generator_train_data(points_nx3: ndarray, range_rotation_tgt: float, batch_size: int = BATCH_SIZE):
+    n = points_nx3.shape[0]
+    num_sample_per_set = n * 2
+    num_sets = 20
+    num_sample = num_sample_per_set * num_sets * NUM_SAMPLE
+    assert num_sample > batch_size, "The batch size is too large"
 
-        # 先创建基于phi和theta的单位向量
-        unit_vector = np.array([np.sin(phi) * np.cos(theta),
-                                np.sin(phi) * np.sin(theta),
-                                np.cos(phi)])
+    args = [(points_nx3, range_rotation_tgt, num_sample_per_set)] * num_sets
 
-        # 然后将这个向量的每个分量乘以alpha
-        rotation_ref = unit_vector * alpha
-        return rotation_ref
+    random_indexes = np.arange(num_sample)
+
+    while True:
+        # 使用 ProcessPoolExecutor 来并行处理
+        with ProcessPoolExecutor() as executor:
+            results = list(executor.map(process_batch, args))
+
+        x_sxkp2xfx2 = np.empty((num_sample, K_NEIGHBORS + 2, NUM_FEATURES, 2), dtype=np.float32)
+        y_sx1 = np.empty((num_sample, 1), dtype=np.bool_)
+        # 展平结果
+        for i, sublist in enumerate(results):
+            local_x, local_y = sublist
+            point_set_s_ = slice(i*num_sample_per_set * NUM_SAMPLE, (i+1)*num_sample_per_set * NUM_SAMPLE)
+            x_sxkp2xfx2[point_set_s_] = local_x
+            y_sx1[point_set_s_] = local_y
+
+        # Yield small batches from the generated data set in a shuffled order
+        np.random.shuffle(random_indexes)
+        for i in range(num_sample // batch_size):
+            batch_i_s_ = np.s_[random_indexes[i * batch_size:(i + 1) * batch_size],:]
+            yield x_sxkp2xfx2[batch_i_s_], y_sx1[batch_i_s_]
+
+
+
+def random_rotvec(range_rotation: tuple):
+    alpha = np.random.uniform(range_rotation[0], range_rotation[1])  # 旋转角度
+
+    theta = np.random.uniform(0, np.pi)  # 与z轴的角度
+    phi = np.random.uniform(0, 2 * np.pi)  # x-y平面上与x轴的角度
+
+    # 先创建基于phi和theta的单位向量
+    x, y, z = polar2cartesian(phi, 1, theta)
+    unit_vector = np.array([x, y, z])
+
+    # 然后将这个向量乘以alpha
+    rot_vec = unit_vector * alpha
+    return rot_vec
 
 
 # def train_data_rotation(points_normalized_nx3: ndarray, num_ptr_set: int = NUM_POINT_SET) -> ndarray:
@@ -134,13 +158,13 @@ class DataGeneratorFPN:
 #     return rotate(points_normalized_nx3, degrees_mx3, num_ptr_set)
 
 
-def train_data_deformation(points_normalized_mxnx3: ndarray, longest_distance: float, num_ptr_set: int = NUM_POINT_SET) \
-        -> ndarray:
-    new_points_mxmxnx3 = np.empty(((num_ptr_set), *points_normalized_mxnx3.shape))
-    for i, points_nx3 in enumerate(points_normalized_mxnx3):
-        new_points_mxmxnx3[i, ...] = random_deform(points_nx3, longest_distance, num_ptr_set)
-    new_points_kxnx3 = new_points_mxmxnx3.reshape((-1, points_normalized_mxnx3.shape[1], 3))
-    return new_points_kxnx3
+# def train_data_deformation(points_normalized_mxnx3: ndarray, longest_distance: float, num_ptr_set: int = NUM_POINT_SET) \
+#         -> ndarray:
+#     new_points_mxmxnx3 = np.empty(((num_ptr_set), *points_normalized_mxnx3.shape))
+#     for i, points_nx3 in enumerate(points_normalized_mxnx3):
+#         new_points_mxmxnx3[i, ...] = random_deform(points_nx3, longest_distance, num_ptr_set)
+#     new_points_kxnx3 = new_points_mxmxnx3.reshape((-1, points_normalized_mxnx3.shape[1], 3))
+#     return new_points_kxnx3
 
 
 def points_to_features(points_raw_nx3: ndarray, points_gen_nx3: ndarray,
@@ -224,14 +248,14 @@ def shuffle_points(points_nx3: ndarray) -> ndarray:
     return shuffled_points_nx3
 
 
-def add_seg_errors(points_normalized_nx3: ndarray, ratio: float = RATIO_SEG_ERROR, bandwidth: float = 0.1) -> Tuple[ndarray, ndarray]:
+def add_seg_errors(points_normalized_nx3x10: ndarray, ratio: float = RATIO_SEG_ERROR, bandwidth: float = 0.1) -> Tuple[ndarray, ndarray]:
     """
     Add segmentation errors to points set by replacing some points with new points sampled from KDE model
 
     Parameters
     ----------
-    points_normalized_nx3: ndarray
-        The normalized points set
+    points_normalized_nx3x10: ndarray
+        The normalized points sets
     ratio: float
         The ratio of points to be replaced by new points
     bandwidth: float
@@ -239,31 +263,32 @@ def add_seg_errors(points_normalized_nx3: ndarray, ratio: float = RATIO_SEG_ERRO
 
     Returns
     -------
-    new_points_nx3: ndarray
+    new_points_nx3x10: ndarray
         The new points set with segmentation errors
     """
     if ratio <= 0 or ratio >= 1:
         raise ValueError(f"ratio should be set between 0 and 1 but = {ratio}")
 
     # Randomly select points to be replaced
-    num_points = points_normalized_nx3.shape[0]
+    num_points = points_normalized_nx3x10.shape[0]
     num_replaced_points = int(np.ceil(num_points * ratio))
+    replaced_indexes_rx10 = np.zeros((num_replaced_points, 10), dtype=int)
     points_indexes = np.arange(num_points)
-    np.random.shuffle(points_indexes)
-    replaced_indexes = points_indexes[:num_replaced_points]
+    for i in range(10):
+        np.random.shuffle(points_indexes)
+        replaced_indexes_rx10[:, i] = points_indexes[:num_replaced_points]
 
     # Sample new points from KDE model
     kde_model = KernelDensity(bandwidth=bandwidth)
-    kde_model.fit(points_normalized_nx3)
-    new_points_nx3 = points_normalized_nx3.copy()
-    new_points_nx3[replaced_indexes, :] = kde_model.sample(num_replaced_points)
+    new_points_nx3x10 = points_normalized_nx3x10.copy()
+    for i in range(10):
+        kde_model.fit(points_normalized_nx3x10[..., i])
+        new_points_nx3x10[replaced_indexes_rx10[:, i], :, i] = kde_model.sample(num_replaced_points)
 
-    return new_points_nx3, replaced_indexes
+    return new_points_nx3x10, replaced_indexes_rx10
 
 
-def generate_points_pair(points_nx3: ndarray, rotvec_ref_3: ndarray, rotvec_tgt_3: ndarray,
-                         longest_distance: Optional[float] = None,
-                         mv_factor: float = None, width: float = None):
+def generate_corresponding_point_sets(points_nx3: ndarray, rotvec_ref_3: ndarray, rotvec_tgt_3: ndarray):
     """
     Generate a pair of points set with rotation and deformation
 
@@ -275,28 +300,20 @@ def generate_points_pair(points_nx3: ndarray, rotvec_ref_3: ndarray, rotvec_tgt_
         degree of rotation for reference points set
     rotvec_tgt_3: ndarray
         degree of rotation for target points set
-    longest_distance: float
-        The longest distance of points set
-    mv_factor: float
-        The strength of deformations
-    width: float
-        The spatial range of deformations
 
     Returns
     -------
-    points_ref_nx3: ndarray
-        The reference points set
-    points_tgt_nx3: ndarray
-        The target points set
+    points_ref_nx3x10: ndarray
+        The reference points sets
+    points_tgt_nx3x10: ndarray
+        The target points sets
     """
-    if longest_distance is None:
-        longest_distance = get_longest_distance(points_nx3)
     points_ref_nx3 = rotate_one_point_set(points_nx3, rotvec_ref_3)
     points_tgt_nx3 = rotate_one_point_set(points_ref_nx3, rotvec_tgt_3)
-    points_ref_nx3 = random_deform(points_ref_nx3, longest_distance, num_ptr_set=1, mv_factor=mv_factor, width=width)[0, :, :]
-    points_tgt_nx3 = random_deform(points_tgt_nx3, longest_distance, num_ptr_set=1, mv_factor=mv_factor, width=width)[0, :, :]
-    points_tgt_nx3 += (np.random.rand(*points_tgt_nx3.shape) - 0.5) * 4 * RANDOM_MOVEMENTS_FACTOR
-    return points_ref_nx3, points_tgt_nx3
+    points_ref_nx3x10 = random_deform(points_ref_nx3)
+    points_tgt_nx3x10 = random_deform(points_tgt_nx3)
+    points_tgt_nx3x10 += (np.random.rand(*points_tgt_nx3x10.shape) - 0.5) * RANDOM_MOVEMENTS_FACTOR
+    return points_ref_nx3x10, points_tgt_nx3x10
 
 
 # def rotate(points_nx3: ndarray, rad_mx3: ndarray, num_ptr_set: int) -> ndarray:
@@ -312,50 +329,21 @@ def rotate_one_point_set(points_nx3: ndarray, rad_3: ndarray) -> ndarray:
     return np.dot(points_nx3, r.as_matrix())
 
 
-def random_deform(points_normalized_nx3: ndarray, longest_distance: float, num_ptr_set: int, mv_factor: float = None,
-                  width: float = None, appy_to_z: bool = True) -> ndarray:
-    """Make random deformation to a point set
-
-    Parameters
-    ----------
-    points_normalized_nx3 :
-        The initial point set normalized by the normalize_pts function
-    longest_distance :
-        The longest distance in the initial point set
-    num_ptr_set :
-        The number of point sets to be generated
-    mv_factor :
-        affect the max movements along each axis: mv_factor * longest distance
-    width :
-        affect the range of deformation around the target point
-    appy_to_z :
-        If False, deformation will only be applied in x-y plane
-
-    Notes
-    -----
-    A randomly selected point is applied a large movement, while other points were applied smaller movements according
-    to the distances to the point.
-    m: number of point sets to be generated
-    n: number of points in the initial point set
+def random_deform(points_normalized_nx3: ndarray) -> ndarray:
     """
-    if mv_factor is None:
-        mv_factor = MV_FACTOR
-    if width is None:
-        width = WIDTH_DEFORM
-    target_points_m = np.random.randint(points_normalized_nx3.shape[0], size=num_ptr_set)
-    target_movement_mx1x3 = (longest_distance * mv_factor) * np.random.uniform(-1, 1, size=(num_ptr_set, 1, 3))
-    if not appy_to_z:
-        target_movement_mx1x3[..., 2] = 0
-    return apply_deform(points_normalized_nx3, target_points_m, target_movement_mx1x3, longest_distance, width)
+    Make 10 deformations to a point set based on a spring network model
+    """
+    aligned_points_nx3xt, timings_t, energy_t, samples_timings_10 = sample_random_deform_spring(points_normalized_nx3)
+    return aligned_points_nx3xt[:,:, samples_timings_10]
 
 
-def apply_deform(points_normalized_nx3, target_points_m, target_movement_mx1x3, longest_distance, width):
-    distances_to_targets_mxn = cdist(points_normalized_nx3[target_points_m, :], points_normalized_nx3,
-                                     metric='euclidean')
-    scale_factors_mxnx1 = np.exp(-0.5 * (distances_to_targets_mxn / (width * longest_distance)) ** 2)[:, :, np.newaxis]
-    all_movements_mxnx3 = scale_factors_mxnx1 * target_movement_mx1x3
-    new_points_mxnx3 = points_normalized_nx3[np.newaxis, :, :] + all_movements_mxnx3
-    return new_points_mxnx3
+# def apply_deform(points_normalized_nx3, target_points_m, target_movement_mx1x3, longest_distance, width):
+#     distances_to_targets_mxn = cdist(points_normalized_nx3[target_points_m, :], points_normalized_nx3,
+#                                      metric='euclidean')
+#     scale_factors_mxnx1 = np.exp(-0.5 * (distances_to_targets_mxn / (width * longest_distance)) ** 2)[:, :, np.newaxis]
+#     all_movements_mxnx3 = scale_factors_mxnx1 * target_movement_mx1x3
+#     new_points_mxnx3 = points_normalized_nx3[np.newaxis, :, :] + all_movements_mxnx3
+#     return new_points_mxnx3
 
 
 def apply_deform_0_max(points_normalized_nx3: ndarray, movements: dict) -> ndarray:
@@ -365,7 +353,7 @@ def apply_deform_0_max(points_normalized_nx3: ndarray, movements: dict) -> ndarr
     scale_factors_nx1 = np.exp(-0.5 * (distances_to_targets_n / sigma) ** 2)[:, np.newaxis]
     factor_min = scale_factors_nx1.min()
     scale_factors_nx1 = (scale_factors_nx1 - factor_min) / (1 - factor_min)
-    move_x, move_y, move_z, _ = polar2cartesian(node_with_vector=movements)
+    move_x, move_y, move_z, _ = dict2movements(node_with_vector=movements)
     all_movements_nx3 = scale_factors_nx1 * np.asarray([[move_x, move_y, move_z]])
     return points_normalized_nx3 + all_movements_nx3
 
@@ -511,7 +499,7 @@ def cal_spring_net_acc(coords_nx3: ndarray, velocity_nx3: ndarray, connections_m
     np.add.at(a_nx3[:, 2], vertices2_m, -az)
 
     if node_with_force is not None:
-        ax_force, ay_force, az_force, node = polar2cartesian(node_with_force)
+        ax_force, ay_force, az_force, node = dict2movements(node_with_force)
         np.add.at(a_nx3[:, 0], node, ax_force)
         np.add.at(a_nx3[:, 1], node, ay_force)
         np.add.at(a_nx3[:, 2], node, az_force)
@@ -521,15 +509,20 @@ def cal_spring_net_acc(coords_nx3: ndarray, velocity_nx3: ndarray, connections_m
     return a_nx3
 
 
-def polar2cartesian(node_with_vector: dict):
+def dict2movements(node_with_vector: dict):
     theta = np.deg2rad(node_with_vector["polar angle"])
     phi = np.deg2rad(node_with_vector["azimuthal angle"])
     r = node_with_vector["strength"]
     node = node_with_vector["node"]
+    x, y, z = polar2cartesian(phi, r, theta)
+    return x, y, z, node
+
+
+def polar2cartesian(phi, r, theta):
     x = r * np.sin(theta) * np.cos(phi)
     y = r * np.sin(theta) * np.sin(phi)
     z = r * np.cos(theta)
-    return x, y, z, node
+    return x, y, z
 
 
 def cal_spring_net_coords(coords_nx3: ndarray, velocity_nx3: ndarray, acc_nx3: ndarray, dt: float):
@@ -596,11 +589,32 @@ def func_spring_network(t, x_and_v_6n: np.ndarray, connections_mx2: ndarray, equ
 
 
 def random_deform_spring(points_nx3: ndarray):
-    movements = {"node": np.random.randint(0, points_nx3.shape[0] + 1),
+    """
+    Applies a random deformation to a spring network and simulates its dynamics.
+
+    This function takes an array of points representing nodes in a spring network,
+    applies a random deformation, and then simulates the dynamics of the network
+    using a spring model. The simulation calculates new positions of the nodes over
+    time and computes the energy of the system.
+
+    Parameters:
+    points_nx3 (ndarray): An array of shape (n, 3) representing the initial positions
+                          of n points (nodes) in 3D space.
+
+    Returns:
+    tuple: A tuple containing three elements:
+           - aligned_points_nx3xt (ndarray): An array of shape (n, 3, t) representing
+                                             the positions of the points at different
+                                             time steps.
+           - sol.t (ndarray): An array of time points at which the positions are calculated.
+           - energy_t (ndarray): An array representing the energy of the system at
+                                 each time step.
+        """
+    movements = {"node": np.random.randint(0, points_nx3.shape[0]),
                  "polar angle": np.random.uniform(0,180),
                  "azimuthal angle": np.random.uniform(0,360),
                  "strength": 0.4,
-                 "sigma": np.random.uniform(0.4,0.6)}
+                 "sigma": np.random.uniform(0.4,0.8)}
     points_with_deform = apply_deform_0_max(points_normalized_nx3=points_nx3, movements=movements)
     pos = points_with_deform.flatten()
     v = np.zeros_like(pos)
@@ -622,13 +636,36 @@ def random_deform_spring(points_nx3: ndarray):
 
 
 def sample_random_deform_spring(points_nx3: ndarray):
+    """
+    Generates samples from a spring network simulation at specific energy levels.
+
+    This function first applies a random deformation to a spring network by calling
+    `random_deform_spring`. It then selects sample points based on specific energy
+    levels within the simulated energy range of the system. The function aims to
+    capture the system's state at diverse stages of its energy distribution.
+
+    Parameters:
+    points_nx3 (ndarray): An array of shape (n, 3) representing the initial positions
+                          of n points (nodes) in 3D space.
+
+    Returns:
+    tuple: A tuple containing four elements:
+           - aligned_points_nx3xt (ndarray): An array of shape (n, 3, t) representing
+                                             the positions of the points at different
+                                             time steps.
+           - timings_t (ndarray): An array of time points at which the positions are calculated.
+           - energy_t (ndarray): An array representing the energy of the system at
+                                 each time step.
+           - samples_timings_10 (ndarray): An array of 10 time indices corresponding
+                                           to specific energy levels sampled from
+                                           the energy distribution.
+    """
     aligned_points_nx3xt, timings_t, energy_t = random_deform_spring(points_nx3)
     samples_timings_10 = np.zeros((10,), dtype=int)
-    upper_limit = 0.9 * energy_t.max()
-    lower_limit = max(0.1 * energy_t.max(), energy_t.min())
+    upper_limit = 0.95 * energy_t.max()
+    lower_limit = max(0.05 * energy_t.max(), energy_t.min())
     pointer = 1
     for i, level in enumerate(np.linspace(upper_limit, lower_limit, 10)):
         samples_timings_10[i] = np.argmin(np.abs(energy_t[pointer:] - level)) + pointer
         pointer = samples_timings_10[i] + 1
-    print(samples_timings_10)
     return aligned_points_nx3xt, timings_t, energy_t, samples_timings_10
