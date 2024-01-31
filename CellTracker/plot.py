@@ -1,10 +1,10 @@
+from __future__ import division, absolute_import, print_function, unicode_literals, annotations
+
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.patches import ConnectionPatch
 from numpy import ndarray
 from plotly import graph_objects as go
-
-from CellTracker.utils import set_unique_xlim
 
 
 def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, fig_width_px=1800,
@@ -475,3 +475,10 @@ def validate_inputs(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: nd
     assert isinstance(predicted_ref_ptrs, ndarray) and predicted_ref_ptrs.ndim == 2 and predicted_ref_ptrs.shape[
         1] == 3, \
         "predicted_ref_ptrs should be a 2D array with shape (n, 3)"
+
+
+def set_unique_xlim(ax1, ax2):
+    x1_min, x1_max = ax1.get_xlim()
+    x2_min, x2_max = ax2.get_xlim()
+    ax1.set_xlim(min((x1_min, x2_min)), max((x1_max, x2_max)))
+    ax2.set_xlim(min((x1_min, x2_min)), max((x1_max, x2_max)))
