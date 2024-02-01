@@ -39,7 +39,7 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
         ax2.add_artist(con)
     # ax1.axis('equal')
     # ax2.axis('equal')
-    set_unique_xlim(ax1, ax2)
+    #set_unique_xlim(ax1, ax2)
     plt.pause(0.1)
     return fig
 
@@ -431,9 +431,6 @@ def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarra
     for i, txt in enumerate(ids_tgt):
         ax2.annotate(txt, (tgt_ptrs[i, 1], tgt_ptrs[i, 0]))
 
-    ax1.invert_yaxis()
-    ax2.invert_yaxis()
-
     unify_xy_lims(ax1, ax2)
 
     # Set plot titles or y-axis labels based on the layout
@@ -457,14 +454,17 @@ def unify_xy_lims(ax1, ax2):
     ax2 : matplotlib.axes.Axes
         The second Axes object.
     """
+    ax1.invert_yaxis()
+    ax2.invert_yaxis()
     # Determine the shared x_lim and y_lim
     x_lim = [min(ax1.get_xlim()[0], ax2.get_xlim()[0]), max(ax1.get_xlim()[1], ax2.get_xlim()[1])]
-    y_lim = [min(ax1.get_ylim()[0], ax2.get_ylim()[0]), max(ax1.get_ylim()[1], ax2.get_ylim()[1])]
+    y_lim = [min(ax1.get_ylim()[1], ax2.get_ylim()[1]), max(ax1.get_ylim()[0], ax2.get_ylim()[0])]
+
     # Set the same x_lim and y_lim on both axes
-    ax1.set_xlim(x_lim)
-    ax1.set_ylim(y_lim)
-    ax2.set_xlim(x_lim)
-    ax2.set_ylim(y_lim)
+    ax1.set_xlim(x_lim[0], x_lim[1])
+    ax1.set_ylim(y_lim[1], y_lim[0])
+    ax2.set_xlim(x_lim[0], x_lim[1])
+    ax2.set_ylim(y_lim[1], y_lim[0])
 
 
 def validate_inputs(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray):

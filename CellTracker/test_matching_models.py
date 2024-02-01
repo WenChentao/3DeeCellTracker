@@ -1,7 +1,9 @@
 import numpy as np
 
 from CellTracker.fpm import initial_matching_fpm
-from CellTracker.simple_alignment import align_by_control_points, get_match_pairs, K_POINTS
+from CellTracker.match_ids import predict_matching_prgls
+from CellTracker.simple_alignment import align_by_control_points, get_match_pairs, K_POINTS, greedy_match
+from CellTracker.trackerlite import BETA, LAMBDA
 from CellTracker.utils import normalize_points
 from CellTracker.v1_modules.ffn import initial_matching_ffn
 
@@ -34,9 +36,26 @@ def match_by_fpm(fpm_model, points1, points2, similarity_threshold=0.4, match_me
     # Initialize the model
     coords_norm_t1 = normalize_points(points1)
     coords_norm_t2 = normalize_points(points2)
-    pairs_px2 = _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold)
+    pairs_px2 = _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, 'coherence', similarity_threshold)
     aligned_coords_t1 = align_by_control_points(coords_norm_t1, coords_norm_t2, pairs_px2, method="affine")
-    return _match_fpm(aligned_coords_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold)
+    pairs_px2 = _match_fpm(aligned_coords_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold)
+    return pairs_px2, (aligned_coords_t1, coords_norm_t1, coords_norm_t2)
+
+
+def match_by_fpm_prgls(fpm_model, points1, points2, similarity_threshold=0.4, match_method='coherence'):
+    pairs_px2, (aligned_coords_t1, coords_norm_t1, coords_norm_t2) = \
+        match_by_fpm(fpm_model, points1, points2, similarity_threshold, match_method)
+    n = aligned_coords_t1.shape[0]
+    m = points2.shape[0]
+    predicted_coords_t1_to_t2, similarity_scores = predict_matching_prgls(pairs_px2,
+                                                                          aligned_coords_t1,
+                                                                          aligned_coords_t1,
+                                                                          coords_norm_t2,
+                                                                          (m, n), beta=BETA, lambda_=LAMBDA)
+
+        # pairs_px2 = _match_fpm(predicted_coords_t1_to_t2, points2, fpm_model, match_method, similarity_threshold)
+    match_seg_t1_seg_t2 = greedy_match(similarity_scores, threshold=similarity_threshold)
+    return match_seg_t1_seg_t2
 
 
 def _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold):
