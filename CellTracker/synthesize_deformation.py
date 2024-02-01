@@ -32,58 +32,58 @@ K_NEIGHBORS = 20  # number of neighbors for calculating relative coordinates
 NUMBER_FEATURES = K_NEIGHBORS * 4 + 8
 
 
-def generator_train_data_(points_nx3: ndarray, range_rotation_tgt: float, batch_size: int = BATCH_SIZE) \
-        -> Generator[Tuple[ndarray, ndarray], None, None]:
-    """Generate training data for FPN model
-
-    Parameters
-    ----------
-    points_nx3: ndarray, shape (n, 3)
-        The normalized points set
-    batch_size: int
-        The batch size
-    range_rotation_tgt: float
-        The range of rotation degrees for target points set
-    movement_factor: float
-        The movement factor for deformations
-
-    Yields
-    ------
-    y_sxkp2xfx2[batch_i_s_]: ndarray, shape (batch_size, num_neighbors + 2, num_features, 2)
-        The features of reference points and target points in each batch
-    y_sx1[batch_i_s_]: ndarray, shape (batch_siz, 1)
-        The label of the matching of reference points and target points in each batch
-    """
-    n = points_nx3.shape[0]
-    num_sample_per_set = n * 2
-    num_sets = 20
-    num_sample = num_sample_per_set * num_sets * NUM_SAMPLE
-    assert num_sample > batch_size, "The batch size is too large"
-
-    x_sxkp2xfx2 = np.empty((num_sample, K_NEIGHBORS + 2, NUM_FEATURES, 2), dtype=np.float32)
-    y_sx1 = np.empty((num_sample, 1), dtype=np.bool_)
-
-    random_indexes = np.arange(num_sample)
-
-    # Generate training data
-    while True:
-        # Generate a relative large number of data than the batch size
-        for i in range(num_sets):
-            rotvec_ref = random_rotvec((-np.pi, np.pi))
-            rotvec_tgt = random_rotvec((np.deg2rad(-range_rotation_tgt), np.deg2rad(range_rotation_tgt)))
-            points_ref_nx3x10, points_tgt_nx3x10 = generate_corresponding_point_sets(points_nx3, rotvec_ref, rotvec_tgt)
-            points_tgt_with_errors_nx3x10, replaced_indexes_rx10 = add_seg_errors(points_tgt_nx3x10)
-            for j in range(NUM_SAMPLE):
-                k = i * NUM_SAMPLE + j
-                point_set_s_ = slice(k * num_sample_per_set, (k + 1) * num_sample_per_set)
-                x_sxkp2xfx2[point_set_s_, ...], y_sx1[point_set_s_, :] = \
-                    points_to_features(points_ref_nx3x10[..., -j-1], points_tgt_with_errors_nx3x10[..., j], replaced_indexes_rx10[..., j])
-
-        # Yield small batches from the generated data set in a shuffled order
-        np.random.shuffle(random_indexes)
-        for i in range(num_sample // batch_size):
-            batch_i_s_ = np.s_[random_indexes[i * batch_size:(i + 1) * batch_size],:]
-            yield x_sxkp2xfx2[batch_i_s_], y_sx1[batch_i_s_]
+# def generator_train_data_(points_nx3: ndarray, range_rotation_tgt: float, batch_size: int = BATCH_SIZE) \
+#         -> Generator[Tuple[ndarray, ndarray], None, None]:
+#     """Generate training data for FPN model
+#
+#     Parameters
+#     ----------
+#     points_nx3: ndarray, shape (n, 3)
+#         The normalized points set
+#     batch_size: int
+#         The batch size
+#     range_rotation_tgt: float
+#         The range of rotation degrees for target points set
+#     movement_factor: float
+#         The movement factor for deformations
+#
+#     Yields
+#     ------
+#     y_sxkp2xfx2[batch_i_s_]: ndarray, shape (batch_size, num_neighbors + 2, num_features, 2)
+#         The features of reference points and target points in each batch
+#     y_sx1[batch_i_s_]: ndarray, shape (batch_siz, 1)
+#         The label of the matching of reference points and target points in each batch
+#     """
+#     n = points_nx3.shape[0]
+#     num_sample_per_set = n * 2
+#     num_sets = 20
+#     num_sample = num_sample_per_set * num_sets * NUM_SAMPLE
+#     assert num_sample > batch_size, "The batch size is too large"
+#
+#     x_sxkp2xfx2 = np.empty((num_sample, K_NEIGHBORS + 2, NUM_FEATURES, 2), dtype=np.float32)
+#     y_sx1 = np.empty((num_sample, 1), dtype=np.bool_)
+#
+#     random_indexes = np.arange(num_sample)
+#
+#     # Generate training data
+#     while True:
+#         # Generate a relative large number of data than the batch size
+#         for i in range(num_sets):
+#             rotvec_ref = random_rotvec((-np.pi, np.pi))
+#             rotvec_tgt = random_rotvec((np.deg2rad(-range_rotation_tgt), np.deg2rad(range_rotation_tgt)))
+#             points_ref_nx3x10, points_tgt_nx3x10 = generate_corresponding_point_sets(points_nx3, rotvec_ref, rotvec_tgt)
+#             points_tgt_with_errors_nx3x10, replaced_indexes_rx10 = add_seg_errors(points_tgt_nx3x10)
+#             for j in range(NUM_SAMPLE):
+#                 k = i * NUM_SAMPLE + j
+#                 point_set_s_ = slice(k * num_sample_per_set, (k + 1) * num_sample_per_set)
+#                 x_sxkp2xfx2[point_set_s_, ...], y_sx1[point_set_s_, :] = \
+#                     points_to_features(points_ref_nx3x10[..., -j-1], points_tgt_with_errors_nx3x10[..., j], replaced_indexes_rx10[..., j])
+#
+#         # Yield small batches from the generated data set in a shuffled order
+#         np.random.shuffle(random_indexes)
+#         for i in range(num_sample // batch_size):
+#             batch_i_s_ = np.s_[random_indexes[i * batch_size:(i + 1) * batch_size],:]
+#             yield x_sxkp2xfx2[batch_i_s_], y_sx1[batch_i_s_]
 
 
 def process_batch(args):
@@ -110,11 +110,12 @@ def generator_train_data(points_nx3: ndarray, range_rotation_tgt: float, batch_s
     num_sample = num_sample_per_set * num_sets * NUM_SAMPLE
     assert num_sample > batch_size, "The batch size is too large"
 
-    args = [(points_nx3, range_rotation_tgt, num_sample_per_set)] * num_sets
-
     random_indexes = np.arange(num_sample)
 
     while True:
+        points_resampled_nx3 = add_seg_errors(points_nx3[:,:,None])[0][..., 0]
+        args = [(points_resampled_nx3, range_rotation_tgt, num_sample_per_set)] * num_sets
+
         # 使用 ProcessPoolExecutor 来并行处理
         with ProcessPoolExecutor() as executor:
             results = list(executor.map(process_batch, args))
@@ -248,13 +249,13 @@ def shuffle_points(points_nx3: ndarray) -> ndarray:
     return shuffled_points_nx3
 
 
-def add_seg_errors(points_normalized_nx3x10: ndarray, ratio: float = RATIO_SEG_ERROR, bandwidth: float = 0.1) -> Tuple[ndarray, ndarray]:
+def add_seg_errors(points_normalized_nx3xt: ndarray, ratio: float = RATIO_SEG_ERROR, bandwidth: float = 0.1) -> Tuple[ndarray, ndarray]:
     """
     Add segmentation errors to points set by replacing some points with new points sampled from KDE model
 
     Parameters
     ----------
-    points_normalized_nx3x10: ndarray
+    points_normalized_nx3xt: ndarray
         The normalized points sets
     ratio: float
         The ratio of points to be replaced by new points
@@ -263,29 +264,29 @@ def add_seg_errors(points_normalized_nx3x10: ndarray, ratio: float = RATIO_SEG_E
 
     Returns
     -------
-    new_points_nx3x10: ndarray
+    new_points_nx3xt: ndarray
         The new points set with segmentation errors
     """
     if ratio <= 0 or ratio >= 1:
         raise ValueError(f"ratio should be set between 0 and 1 but = {ratio}")
 
     # Randomly select points to be replaced
-    num_points = points_normalized_nx3x10.shape[0]
+    num_points, _, t = points_normalized_nx3xt.shape
     num_replaced_points = int(np.ceil(num_points * ratio))
-    replaced_indexes_rx10 = np.zeros((num_replaced_points, 10), dtype=int)
+    replaced_indexes_rxt = np.zeros((num_replaced_points, t), dtype=int)
     points_indexes = np.arange(num_points)
-    for i in range(10):
+    for i in range(t):
         np.random.shuffle(points_indexes)
-        replaced_indexes_rx10[:, i] = points_indexes[:num_replaced_points]
+        replaced_indexes_rxt[:, i] = points_indexes[:num_replaced_points]
 
     # Sample new points from KDE model
     kde_model = KernelDensity(bandwidth=bandwidth)
-    new_points_nx3x10 = points_normalized_nx3x10.copy()
-    for i in range(10):
-        kde_model.fit(points_normalized_nx3x10[..., i])
-        new_points_nx3x10[replaced_indexes_rx10[:, i], :, i] = kde_model.sample(num_replaced_points)
+    new_points_nx3xt = points_normalized_nx3xt.copy()
+    for i in range(t):
+        kde_model.fit(points_normalized_nx3xt[..., i])
+        new_points_nx3xt[replaced_indexes_rxt[:, i], :, i] = kde_model.sample(num_replaced_points)
 
-    return new_points_nx3x10, replaced_indexes_rx10
+    return new_points_nx3xt, replaced_indexes_rxt
 
 
 def generate_corresponding_point_sets(points_nx3: ndarray, rotvec_ref_3: ndarray, rotvec_tgt_3: ndarray):

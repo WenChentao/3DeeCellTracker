@@ -1,7 +1,7 @@
 import numpy as np
 
 from CellTracker.fpm import initial_matching_fpm
-from CellTracker.simple_alignment import rotation_align_by_control_points, get_match_pairs, K_POINTS
+from CellTracker.simple_alignment import align_by_control_points, get_match_pairs, K_POINTS
 from CellTracker.utils import normalize_points
 from CellTracker.v1_modules.ffn import initial_matching_ffn
 
@@ -18,7 +18,7 @@ def rotation_align_by_fpm(fpm_model_rot, points1, points2, similarity_threshold=
                                 threshold=similarity_threshold, method=match_method)
 
     #fig = plot_initial_matching(coords_norm_t1, coords_norm_t2, pairs_px2, 1, 2, ids_ref=ids_ref, ids_tgt=ids_tgt)
-    aligned_coords_t1 = rotation_align_by_control_points(coords_norm_t1, coords_norm_t2, pairs_px2)
+    aligned_coords_t1 = align_by_control_points(coords_norm_t1, coords_norm_t2, pairs_px2)
     #fig = plot_initial_matching(aligned_coords_t1, coords_norm_t2, pairs_px2, 1, 2, ids_ref=ids_ref, ids_tgt=ids_tgt)
     sorted_pairs = _sort_pairs(pairs_px2)
 
@@ -34,6 +34,12 @@ def match_by_fpm(fpm_model, points1, points2, similarity_threshold=0.4, match_me
     # Initialize the model
     coords_norm_t1 = normalize_points(points1)
     coords_norm_t2 = normalize_points(points2)
+    pairs_px2 = _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold)
+    aligned_coords_t1 = align_by_control_points(coords_norm_t1, coords_norm_t2, pairs_px2, method="affine")
+    return _match_fpm(aligned_coords_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold)
+
+
+def _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold):
     initial_matching = initial_matching_fpm(fpm_model, coords_norm_t1, coords_norm_t2,
                                             K_POINTS)
     updated_matching = initial_matching.copy()

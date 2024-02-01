@@ -41,10 +41,10 @@ def get_transform(coords_t1: ndarray, coords_t2: ndarray, match_model: Model, pr
     return estimate_transform(ttype, src, dst)
 
 
-def rotation_align_by_control_points(coords_norm_t1: ndarray, coords_norm_t2: ndarray, initial_matched_pairs: ndarray):
+def align_by_control_points(coords_norm_t1: ndarray, coords_norm_t2: ndarray, initial_matched_pairs: ndarray, method="euclidean"):
     src = coords_norm_t1[initial_matched_pairs[:, 0]]
     dst = coords_norm_t2[initial_matched_pairs[:, 1]]
-    tform = estimate_transform("euclidean", src, dst)
+    tform = estimate_transform(method, src, dst)
     aligned_coords_t1 = tform(coords_norm_t1)
     return aligned_coords_t1
 
