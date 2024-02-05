@@ -23,7 +23,7 @@ NUM_FEATURES2 = 4
 class TrainFPM:
     def __init__(self, model_name: str, match_model: Model, points1_path: str = None, segmentation1_path: str = None, voxel_size: tuple = (1, 1, 1),
                  range_rotation_tgt: float = RANGE_ROT_TGT,
-                 basedir: str = "./fpm_models", move_factor: float = 0.2):
+                 basedir: str = "./fpm_models", replacement=False, strength=0.4):
 
         """
         Set the model name and load/process a points set
@@ -42,6 +42,8 @@ class TrainFPM:
         self.current_epoch = 1
 
         self.model = match_model
+
+        self.strength = strength
 
        # Load the points set
         if points1_path is not None:
@@ -65,13 +67,14 @@ class TrainFPM:
             raise ValueError("Either the segmentation1_path or the points1_path should be provided")
         self.optimizer = tf.keras.optimizers.Adam()
         self.range_rotation_tgt=range_rotation_tgt
+        self.replacement = replacement
 
     def train(self, num_epochs=10, iteration=5000, weights_name=FPN_WEIGHTS_NAME):
         train_loss_fn = tf.keras.losses.BinaryCrossentropy()
 
         dataset = tf.data.Dataset.from_generator(
             generator_train_data,
-            args=(self.points_t1, self.range_rotation_tgt),
+            args=(self.points_t1, self.range_rotation_tgt, self.replacement, self.strength),
             output_types=(tf.float32, tf.float32),
             output_shapes=(
                 tf.TensorShape([BATCH_SIZE, K_NEIGHBORS + 2, NUM_FEATURES, 2]),

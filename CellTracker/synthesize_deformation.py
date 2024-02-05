@@ -13,6 +13,8 @@ from skimage.transform import estimate_transform
 from sklearn.decomposition import PCA
 from sklearn.neighbors import KernelDensity, NearestNeighbors
 
+from CellTracker.utils import normalize_points
+
 BATCH_SIZE = 128
 
 NUM_SAMPLE = 10
@@ -23,7 +25,7 @@ WIDTH_DEFORM = 0.3
 
 MV_FACTOR = 0.2
 
-RATIO_SEG_ERROR = 0.15
+RATIO_SEG_ERROR = 0.1
 
 RANDOM_MOVEMENTS_FACTOR = 0.004
 
@@ -87,11 +89,11 @@ NUMBER_FEATURES = K_NEIGHBORS * 4 + 8
 
 
 def process_batch(args):
-    points_nx3, range_rotation_tgt, num_sample_per_set = args
+    points_nx3, range_rotation_tgt, num_sample_per_set, strength = args
     # 这里放置原来循环内部的逻辑
     rotvec_ref = random_rotvec((-np.pi, np.pi))
     rotvec_tgt = random_rotvec((np.deg2rad(-range_rotation_tgt), np.deg2rad(range_rotation_tgt)))
-    points_ref_nx3x10, points_tgt_nx3x10 = generate_corresponding_point_sets(points_nx3, rotvec_ref, rotvec_tgt)
+    points_ref_nx3x10, points_tgt_nx3x10 = generate_corresponding_point_sets(points_nx3, rotvec_ref, rotvec_tgt, strength)
     points_tgt_with_errors_nx3x10, replaced_indexes_rx10 = add_seg_errors(points_tgt_nx3x10)
     local_results_x = np.empty((num_sample_per_set * NUM_SAMPLE, K_NEIGHBORS + 2, NUM_FEATURES, 2), dtype=np.float32)
     local_results_y = np.empty((num_sample_per_set * NUM_SAMPLE, 1), dtype=np.bool_)
@@ -99,11 +101,11 @@ def process_batch(args):
         # k = i * NUM_SAMPLE + j
         point_set_s_ = slice(i * num_sample_per_set, (i + 1) * num_sample_per_set)
         local_results_x[point_set_s_], local_results_y[point_set_s_] = \
-            points_to_features(points_ref_nx3x10[..., i], points_tgt_with_errors_nx3x10[..., i], replaced_indexes_rx10[..., i])
+            points_to_features(points_ref_nx3x10[..., -i-1], points_tgt_with_errors_nx3x10[..., i], replaced_indexes_rx10[..., i])
     return local_results_x, local_results_y
 
 
-def generator_train_data(points_nx3: ndarray, range_rotation_tgt: float, batch_size: int = BATCH_SIZE):
+def generator_train_data(points_nx3: ndarray, range_rotation_tgt: float, replacement: bool, strength: float, batch_size: int = BATCH_SIZE):
     n = points_nx3.shape[0]
     num_sample_per_set = n * 2
     num_sets = 20
@@ -112,9 +114,13 @@ def generator_train_data(points_nx3: ndarray, range_rotation_tgt: float, batch_s
 
     random_indexes = np.arange(num_sample)
 
+    if not replacement:
+        args = [(points_nx3, range_rotation_tgt, num_sample_per_set, strength)] * num_sets
+
     while True:
-        points_resampled_nx3 = add_seg_errors(points_nx3[:,:,None])[0][..., 0]
-        args = [(points_resampled_nx3, range_rotation_tgt, num_sample_per_set)] * num_sets
+        if replacement:
+            points_nx3_replaced = add_seg_errors(points_nx3[:,:,None])[0][...,0]
+            args = [(points_nx3_replaced, range_rotation_tgt, num_sample_per_set, strength)] * num_sets
 
         # 使用 ProcessPoolExecutor 来并行处理
         with ProcessPoolExecutor() as executor:
@@ -289,7 +295,7 @@ def add_seg_errors(points_normalized_nx3xt: ndarray, ratio: float = RATIO_SEG_ER
     return new_points_nx3xt, replaced_indexes_rxt
 
 
-def generate_corresponding_point_sets(points_nx3: ndarray, rotvec_ref_3: ndarray, rotvec_tgt_3: ndarray):
+def generate_corresponding_point_sets(points_nx3: ndarray, rotvec_ref_3: ndarray, rotvec_tgt_3: ndarray, strength: float):
     """
     Generate a pair of points set with rotation and deformation
 
@@ -311,10 +317,19 @@ def generate_corresponding_point_sets(points_nx3: ndarray, rotvec_ref_3: ndarray
     """
     points_ref_nx3 = rotate_one_point_set(points_nx3, rotvec_ref_3)
     points_tgt_nx3 = rotate_one_point_set(points_ref_nx3, rotvec_tgt_3)
-    points_ref_nx3x10 = random_deform(points_ref_nx3)
-    points_tgt_nx3x10 = random_deform(points_tgt_nx3)
+    points_ref_nx3x10 = random_deform(points_ref_nx3, strength)
+    points_tgt_nx3x10 = random_deform(points_tgt_nx3, strength)
     points_tgt_nx3x10 += (np.random.rand(*points_tgt_nx3x10.shape) - 0.5) * RANDOM_MOVEMENTS_FACTOR
-    return points_ref_nx3x10, points_tgt_nx3x10
+
+    return normalize_x10(points_ref_nx3x10), normalize_x10(points_tgt_nx3x10)
+
+
+def normalize_x10(points_nx3x10):
+    assert points_nx3x10.shape[2]==10
+    new_points_nx3x10 = np.zeros_like(points_nx3x10)
+    for i in range(10):
+        new_points_nx3x10[..., i] = normalize_points(points_nx3x10[..., i])
+    return new_points_nx3x10
 
 
 # def rotate(points_nx3: ndarray, rad_mx3: ndarray, num_ptr_set: int) -> ndarray:
@@ -330,11 +345,11 @@ def rotate_one_point_set(points_nx3: ndarray, rad_3: ndarray) -> ndarray:
     return np.dot(points_nx3, r.as_matrix())
 
 
-def random_deform(points_normalized_nx3: ndarray) -> ndarray:
+def random_deform(points_normalized_nx3: ndarray, strength) -> ndarray:
     """
     Make 10 deformations to a point set based on a spring network model
     """
-    aligned_points_nx3xt, timings_t, energy_t, samples_timings_10 = sample_random_deform_spring(points_normalized_nx3)
+    aligned_points_nx3xt, timings_t, energy_t, samples_timings_10 = sample_random_deform_spring(points_normalized_nx3, strength)
     return aligned_points_nx3xt[:,:, samples_timings_10]
 
 
@@ -589,7 +604,7 @@ def func_spring_network(t, x_and_v_6n: np.ndarray, connections_mx2: ndarray, equ
     return np.concatenate((pos_dev, v_dev), axis=0)
 
 
-def random_deform_spring(points_nx3: ndarray):
+def random_deform_spring(points_nx3: ndarray, strength: float):
     """
     Applies a random deformation to a spring network and simulates its dynamics.
 
@@ -614,7 +629,7 @@ def random_deform_spring(points_nx3: ndarray):
     movements = {"node": np.random.randint(0, points_nx3.shape[0]),
                  "polar angle": np.random.uniform(0,180),
                  "azimuthal angle": np.random.uniform(0,360),
-                 "strength": 0.4,
+                 "strength": strength,
                  "sigma": np.random.uniform(0.4,0.8)}
     points_with_deform = apply_deform_0_max(points_normalized_nx3=points_nx3, movements=movements)
     pos = points_with_deform.flatten()
@@ -636,7 +651,7 @@ def random_deform_spring(points_nx3: ndarray):
     return aligned_points_nx3xt, sol.t, energy_t
 
 
-def sample_random_deform_spring(points_nx3: ndarray):
+def sample_random_deform_spring(points_nx3: ndarray, strength):
     """
     Generates samples from a spring network simulation at specific energy levels.
 
@@ -661,7 +676,7 @@ def sample_random_deform_spring(points_nx3: ndarray):
                                            to specific energy levels sampled from
                                            the energy distribution.
     """
-    aligned_points_nx3xt, timings_t, energy_t = random_deform_spring(points_nx3)
+    aligned_points_nx3xt, timings_t, energy_t = random_deform_spring(points_nx3, strength)
     samples_timings_10 = np.zeros((10,), dtype=int)
     upper_limit = 0.95 * energy_t.max()
     lower_limit = max(0.05 * energy_t.max(), energy_t.min())

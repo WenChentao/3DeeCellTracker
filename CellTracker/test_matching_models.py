@@ -32,14 +32,27 @@ def _sort_pairs(pairs_px2):
     return np.column_stack((pairs_px2[sorted_indices, 0], pairs_px2[sorted_indices, 1]))
 
 
-def match_by_fpm(fpm_model, points1, points2, similarity_threshold=0.4, match_method='coherence'):
+def match_by_fpm(fpm_model, points1, points2, similarity_threshold=0.4, match_method='coherence', with_rotation=False):
     # Initialize the model
     coords_norm_t1 = normalize_points(points1)
     coords_norm_t2 = normalize_points(points2)
-    pairs_px2 = _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, 'coherence', similarity_threshold)
-    aligned_coords_t1 = align_by_control_points(coords_norm_t1, coords_norm_t2, pairs_px2, method="affine")
-    pairs_px2 = _match_fpm(aligned_coords_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold)
-    return pairs_px2, (aligned_coords_t1, coords_norm_t1, coords_norm_t2)
+    if with_rotation:
+        pairs_px2 = _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, 'greedy', similarity_threshold)
+        return pairs_px2, None
+    else:
+        pairs_px2 = _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, 'coherence', similarity_threshold)
+        aligned_coords_t1 = align_by_control_points(coords_norm_t1, coords_norm_t2, pairs_px2, method="affine")
+        pairs_px2 = _match_fpm(aligned_coords_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold)
+        return pairs_px2, (aligned_coords_t1, coords_norm_t1, coords_norm_t2)
+
+
+def _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold):
+    initial_matching = initial_matching_fpm(fpm_model, coords_norm_t1, coords_norm_t2,
+                                            K_POINTS)
+    updated_matching = initial_matching.copy()
+    pairs_px2 = get_match_pairs(updated_matching, coords_norm_t1, coords_norm_t2,
+                                threshold=similarity_threshold, method=match_method)
+    return pairs_px2
 
 
 def match_by_fpm_prgls(fpm_model, points1, points2, similarity_threshold=0.4, match_method='coherence'):
@@ -56,15 +69,6 @@ def match_by_fpm_prgls(fpm_model, points1, points2, similarity_threshold=0.4, ma
         # pairs_px2 = _match_fpm(predicted_coords_t1_to_t2, points2, fpm_model, match_method, similarity_threshold)
     match_seg_t1_seg_t2 = greedy_match(similarity_scores, threshold=similarity_threshold)
     return match_seg_t1_seg_t2
-
-
-def _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold):
-    initial_matching = initial_matching_fpm(fpm_model, coords_norm_t1, coords_norm_t2,
-                                            K_POINTS)
-    updated_matching = initial_matching.copy()
-    pairs_px2 = get_match_pairs(updated_matching, coords_norm_t1, coords_norm_t2,
-                                threshold=similarity_threshold, method=match_method)
-    return pairs_px2
 
 
 def match_by_ffn(ffn_model, points1, points2, similarity_threshold=0.4, match_method='coherence'):
