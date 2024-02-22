@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 import scipy.ndimage
 from numpy import ndarray
-from scipy.special import erf
 from skimage import measure
 from skimage.segmentation import relabel_sequential
 from sklearn.covariance import MinCovDet
@@ -112,7 +111,8 @@ def filter_matching_outliers(matched_pairs: List[Tuple[int, int]], coordinates_n
     return np.asarray(updated_pairs)
 
 
-def filter_matching_outliers_global(matched_pairs: List[Tuple[int, int]], coordinates_nx3_t1: ndarray, coordinates_mx3_t2: ndarray) -> ndarray:
+def filter_matching_outliers_global(matched_pairs: List[Tuple[int, int]], coordinates_nx3_t1: ndarray, coordinates_mx3_t2: ndarray,
+                                    threshold_mdist: float) -> ndarray:
     """
     This function filters the pairs with significantly different movements between two sets of coordinates (t1 and t2)
     by using a Mahalanobis distance threshold to determine outliers.
@@ -124,7 +124,6 @@ def filter_matching_outliers_global(matched_pairs: List[Tuple[int, int]], coordi
     mahalanobis_distances = outlier_detector.fit(movements_px3).mahalanobis(movements_px3)
     # Filter out matched pairs where the Mahalanobis distance is greater than the threshold
     updated_pairs = []
-    threshold_mdist = 5 ** 2
     for (ind_t1, ind_t2), mahalanobis_distance in zip(matched_pairs, mahalanobis_distances):
         if mahalanobis_distance <= threshold_mdist:
             updated_pairs.append((ind_t1, ind_t2))
@@ -192,7 +191,7 @@ def add_inliers_within_a_radius(predicted_coords_t1_to_t2, segmented_coords_norm
     return np.asarray(inliers_t2)
 
 
-def calc_min_path(pairs: List[Tuple[int, int]], coordinates_nx3_t1, coordinates_mx3_t2):
+def robust_distance(pairs: List[Tuple[int, int]], coordinates_nx3_t1, coordinates_mx3_t2):
     n = coordinates_nx3_t1.shape[0]
     m = coordinates_mx3_t2.shape[0]
 
@@ -204,14 +203,9 @@ def calc_min_path(pairs: List[Tuple[int, int]], coordinates_nx3_t1, coordinates_
         path_length = np.linalg.norm(dist_to_xi[:, None, :] + dist_to_y_from_yi[None, :, :], axis=-1)
         mask = np.linalg.norm(dist_to_xi, axis=-1) != 0
         min_path_length = np.where(mask[:, np.newaxis], np.minimum(min_path_length, path_length), min_path_length)
-    min_path_length = convert_to_rank(min_path_length)
+    rank_path_length = convert_to_rank(min_path_length)
 
-    knn = NearestNeighbors(n_neighbors=1).fit(coordinates_nx3_t1)
-    dist, _ = knn.kneighbors()
-    sigma = 2
-    # map the orders to a probability according to Gaussian distribution: 0->1.0, +inf->0.0
-    prob_result = 1 - erf(min_path_length / (sigma * np.sqrt(2)))
-    return prob_result.T
+    return rank_path_length
 
 
 def convert_to_rank(min_path_length):
@@ -220,3 +214,5 @@ def convert_to_rank(min_path_length):
     for i in range(rank_matrix.shape[0]):
         rank_result[i, rank_matrix[i]] = np.arange(0, rank_matrix.shape[1])
     return rank_result
+
+

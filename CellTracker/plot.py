@@ -245,7 +245,7 @@ def plot_matching_with_arrows_3d_plotly(points_t1, points_t2, pairs, ids_t1, ids
 
 
 def plot_initial_matching_one_panel(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, fig_width_px=1800,
-                          dpi=96, ids_ref=None, ids_tgt=None):
+                          dpi=96):
     """Draws the initial matching between two sets of 3D points and their matching relationships.
 
     Args:
@@ -260,19 +260,31 @@ def plot_initial_matching_one_panel(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_
     """
     # Plot the scatters of the ref_points and tgt_points
     fig_width_in = fig_width_px / dpi  # convert to inches assuming the given dpi
-    fig_height_in = fig_width_in / 1.618  # set height to golden ratio
-    fig = plt.figure(figsize=(fig_width_in, fig_height_in), dpi=dpi)
-    plt.scatter(ref_ptrs[:, 1], -ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')
-    plt.scatter(tgt_ptrs[:, 1], -tgt_ptrs[:, 0], marker="x", facecolors='r', edgecolors='r', label='Set 2')
+
+    # Calculate best figure height
+    x_min = min(np.min(ref_ptrs[:, 1]), np.min(tgt_ptrs[:, 1]))
+    x_max = max(np.max(ref_ptrs[:, 1]), np.max(tgt_ptrs[:, 1]))
+    y_min = min(np.min(ref_ptrs[:, 0]), np.min(tgt_ptrs[:, 0]))
+    y_max = max(np.max(ref_ptrs[:, 0]), np.max(tgt_ptrs[:, 0]))
+    x_range = x_max - x_min
+    y_range = y_max - y_min
+    actual_aspect_ratio = x_range / y_range
+    fig_height_in = fig_width_in / actual_aspect_ratio
+
+    fig, ax = plt.subplots(figsize=(fig_width_in, fig_height_in), dpi=dpi)
+    plt.scatter(ref_ptrs[:, 1], ref_ptrs[:, 0], facecolors='b', edgecolors='b', label=str(t1))
+    plt.scatter(tgt_ptrs[:, 1], tgt_ptrs[:, 0], marker="x", facecolors='r', edgecolors='r', label=str(t2))
+    ax.invert_yaxis()
 
     # Plot the matching relationships between the two sets of points
     for ref_index, tgt_index in pairs_px2:
         # Get the coordinates of the matched points in the two point sets
-        pt1 = np.asarray([ref_ptrs[ref_index, 1], -ref_ptrs[ref_index, 0]])
-        pt2 = np.asarray([tgt_ptrs[tgt_index, 1], -tgt_ptrs[tgt_index, 0]])
+        pt1 = np.asarray([ref_ptrs[ref_index, 1], ref_ptrs[ref_index, 0]])
+        pt2 = np.asarray([tgt_ptrs[tgt_index, 1], tgt_ptrs[tgt_index, 0]])
 
         # Draw a connection between the matched points in the two subplots using the `ConnectionPatch` class
         plt.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], lw=1, color="C1")
+        plt.legend()
     plt.axis('equal')
     return fig
 

@@ -3,11 +3,15 @@ from typing import Callable
 import numpy as np
 from numpy import ndarray
 from scipy.optimize import linear_sum_assignment
+from scipy.special import erf
 from skimage.transform import estimate_transform
 from tensorflow.python.keras import Model
 
-from CellTracker.robust_match import calc_min_path, filter_matching_outliers_global
+from CellTracker.robust_match import robust_distance, filter_matching_outliers_global
 from CellTracker.utils import normalize_points
+
+N_NEIGHBOR_LOCAL_ALIGNMENT = 30
+K_POINTS = 20
 
 
 def pre_alignment(coords_t1: ndarray, coords_t2: ndarray, match_model: Model, predict_method: Callable, match_method: str,
@@ -41,22 +45,44 @@ def get_transform(coords_t1: ndarray, coords_t2: ndarray, match_model: Model, pr
     return estimate_transform(ttype, src, dst)
 
 
-def align_by_control_points(coords_norm_t1: ndarray, coords_norm_t2: ndarray, initial_matched_pairs: ndarray, method="euclidean"):
+def align_by_control_points(coords_norm_t1: ndarray, coords_norm_t2: ndarray, initial_matched_pairs: ndarray, method="euclidean",
+                            return_tform=False):
     src = coords_norm_t1[initial_matched_pairs[:, 0]]
     dst = coords_norm_t2[initial_matched_pairs[:, 1]]
     tform = estimate_transform(method, src, dst)
     aligned_coords_t1 = tform(coords_norm_t1)
+
+    if return_tform:
+        return aligned_coords_t1, tform
+
+    return aligned_coords_t1
+
+
+def local_align_by_control_points(coords_norm_t1: ndarray, coords_norm_t2: ndarray, initial_matched_pairs: ndarray,
+                                  method="euclidean", n_neighbors: int = N_NEIGHBOR_LOCAL_ALIGNMENT):
+    src = coords_norm_t1[initial_matched_pairs[:, 0]]
+    dst = coords_norm_t2[initial_matched_pairs[:, 1]]
+    aligned_coords_t1 = np.zeros_like(coords_norm_t1)
+    from sklearn.neighbors import NearestNeighbors
+
+    knn_model = NearestNeighbors(n_neighbors=n_neighbors).fit(src)
+    neighbors_inds = knn_model.kneighbors(coords_norm_t1, return_distance=False)
+    for i, inds in enumerate(neighbors_inds):
+        _src = src[inds, :]
+        _dst = dst[inds, :]
+        tform = estimate_transform(method, _src, _dst)
+        aligned_coords_t1[i, :] = tform(coords_norm_t1[i:i+1,:])[0, :]
     return aligned_coords_t1
 
 
 def coherence_match(updated_match_matrix: ndarray, segmented_coords_norm_t1, segmented_coords_norm_t2, threshold):
     matched_pairs = greedy_match(updated_match_matrix, threshold)
-    for i in range(5):
-        coherence = calc_min_path(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2)
+    for i in range(10):
+        distances_matrix = robust_distance(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2)
+        # map the ranks to a probability: rank = 0 -> 1.0, rank = +inf -> 0.0
+        coherence = 1 - erf(distances_matrix / 3).T
         updated_match_matrix = np.sqrt(updated_match_matrix * coherence)
         matched_pairs = greedy_match(updated_match_matrix, threshold)
-    #matched_pairs = filter_matching_outliers(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2, neighbors=10)
-    matched_pairs = filter_matching_outliers_global(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2,)
     return matched_pairs
 
 
@@ -97,5 +123,3 @@ def get_match_pairs(updated_match_matrix: ndarray, segmented_coords_norm_t1, seg
         return coherence_match(updated_match_matrix, segmented_coords_norm_t1, segmented_coords_norm_t2, threshold)
     raise ValueError("method should be 'greedy', 'hungarian' or 'coherence'")
 
-
-K_POINTS = 20

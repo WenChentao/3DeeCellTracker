@@ -30,9 +30,9 @@ def load_2d_slices_at_time(images_path: str | dict, t: int, do_normalize: bool =
         import h5py
         with h5py.File(images_path["h5_file"], 'r') as f:
             if file_extension != ".nwb":
-                x = f[images_path["raw_path"]][t - 1, images_path["channel"], :, :, :]
+                x = f[images_path["dset"]][t - 1, images_path["channel"], :, :, :]
             else:
-                x = f[images_path["raw_path"]][t - 1, :, :, :, images_path["channel"]].transpose((2,0,1))
+                x = f[images_path["dset"]][t - 1, :, :, :, images_path["channel"]].transpose((2,0,1))
     else:
         raise ValueError("image_paths should be a str for TIFF sequences or dict for HDF5/NWB dataset")
 

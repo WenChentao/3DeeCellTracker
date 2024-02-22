@@ -89,6 +89,11 @@ NUMBER_FEATURES = K_NEIGHBORS * 4 + 8
 
 
 def process_batch(args):
+    sample_ref = np.arange(10)
+    np.random.shuffle(sample_ref)
+    sample_tgt = np.arange(10)
+    np.random.shuffle(sample_tgt)
+
     points_nx3, range_rotation_tgt, num_sample_per_set, strength = args
     # 这里放置原来循环内部的逻辑
     rotvec_ref = random_rotvec((-np.pi, np.pi))
@@ -98,10 +103,11 @@ def process_batch(args):
     local_results_x = np.empty((num_sample_per_set * NUM_SAMPLE, K_NEIGHBORS + 2, NUM_FEATURES, 2), dtype=np.float32)
     local_results_y = np.empty((num_sample_per_set * NUM_SAMPLE, 1), dtype=np.bool_)
     for i in range(NUM_SAMPLE):
-        # k = i * NUM_SAMPLE + j
+        t_ref = sample_ref[i]
+        t_tgt = sample_tgt[i]
         point_set_s_ = slice(i * num_sample_per_set, (i + 1) * num_sample_per_set)
         local_results_x[point_set_s_], local_results_y[point_set_s_] = \
-            points_to_features(points_ref_nx3x10[..., -i-1], points_tgt_with_errors_nx3x10[..., i], replaced_indexes_rx10[..., i])
+            points_to_features(points_ref_nx3x10[..., t_ref], points_tgt_with_errors_nx3x10[..., t_tgt], replaced_indexes_rx10[..., t_tgt])
     return local_results_x, local_results_y
 
 
@@ -367,8 +373,8 @@ def apply_deform_0_max(points_normalized_nx3: ndarray, movements: dict) -> ndarr
     sigma = movements["sigma"]
     distances_to_targets_n = cdist(points_normalized_nx3[target_node:target_node+1, :], points_normalized_nx3, metric='euclidean')[0]
     scale_factors_nx1 = np.exp(-0.5 * (distances_to_targets_n / sigma) ** 2)[:, np.newaxis]
-    factor_min = scale_factors_nx1.min()
-    scale_factors_nx1 = (scale_factors_nx1 - factor_min) / (1 - factor_min)
+    # factor_min = scale_factors_nx1.min()
+    # scale_factors_nx1 = (scale_factors_nx1 - factor_min) / (1 - factor_min)
     move_x, move_y, move_z, _ = dict2movements(node_with_vector=movements)
     all_movements_nx3 = scale_factors_nx1 * np.asarray([[move_x, move_y, move_z]])
     return points_normalized_nx3 + all_movements_nx3

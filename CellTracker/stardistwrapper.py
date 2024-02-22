@@ -96,7 +96,7 @@ def predict_and_save(images_path: str | dict, model: StarDist3DCustom, results_f
     elif isinstance(images_path, dict):
         file_extension = os.path.splitext(images_path["h5_file"])[1]
         with h5py.File(images_path["h5_file"], 'r+') as f_raw, h5py.File(str(_results_folder / "seg.h5"), 'a') as f_seg:
-            raw_images = f_raw[images_path["raw_path"]]
+            raw_images = f_raw[images_path["dset"]]
             _t_start = 1 if t_start is None else t_start
             num_vol = raw_images.shape[0]
             with tqdm(total=num_vol, initial=_t_start, desc="Segmenting images", ncols=50) as pbar:
