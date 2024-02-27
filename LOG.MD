@@ -1,3 +1,10 @@
+### 2024.02.27
+3DeeCellTracker v1.0.0 has been released
+
+### 2023.04.24
+3DeeCellTracker v0.5.2-alpha has been released
+- fixed a potential bug related to matplotlib
+
 ### 2023.04.24
 3DeeCellTracker v0.5.1-alpha was released with following issues fixed
 - updated versions of some packages in the requirements.txt and setup.cfg
