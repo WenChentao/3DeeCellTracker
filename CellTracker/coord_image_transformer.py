@@ -166,20 +166,20 @@ class CoordsToImageTransformer:
         self.voxel_size = np.asarray(voxel_size)
         self.results_folder = Path(results_folder)
 
-    def load_segmentation(self, manual_vol1_path: str) -> None:
+    def load_segmentation(self, manual_vol_start_path: str) -> None:
         """
         Load the proofed segmentation from a directory containing image slices.
 
         Parameters
         ----------
-        manual_vol1_path : str
+        manual_vol_start_path : str
             The path to the image slices of the manually corrected segmentation.
         """
         # Get list of paths to image slices
-        slice_paths = sorted(glob(manual_vol1_path))
+        slice_paths = sorted(glob(manual_vol_start_path))
         if len(slice_paths) == 0:
             # Raise an error if no image slices are found in the specified directory
-            raise FileNotFoundError(f"No image in {manual_vol1_path} was found")
+            raise FileNotFoundError(f"No image in {manual_vol_start_path} was found")
 
         # Load the proofed segmentation and relabel it to sequential integers
         proofed_segmentation = imread(slice_paths).transpose((1, 2, 0))
@@ -189,7 +189,7 @@ class CoordsToImageTransformer:
         print(
             f"Loaded the proofed segmentations at vol 1 with {np.count_nonzero(np.unique(proofed_segmentation))} cells")
 
-    def interpolate(self, interpolation_factor: int, smooth_sigma: float = 2.5) -> None:
+    def interpolate(self, interpolation_factor: int, smooth_sigma: float = 2.5, t_start=1) -> None:
         """
         Interpolate the images along z axis and save the results in "track_results_xxx" folder
 
@@ -252,7 +252,7 @@ class CoordsToImageTransformer:
             f"The interpolated segmentations at vol 1 contains {np.count_nonzero(np.unique(self.auto_corrected_segmentation))} cells")
 
         # Save labels in the first volume (interpolated)
-        save_tracked_labels(self.results_folder, self.auto_corrected_segmentation, t=1, use_8_bit=self.use_8_bit)
+        save_tracked_labels(self.results_folder, self.auto_corrected_segmentation, t=t_start, use_8_bit=self.use_8_bit)
 
         print("Calculating coordinates of cell centers...")
         # Calculate coordinates of cell centers at t=1
@@ -264,7 +264,7 @@ class CoordsToImageTransformer:
         self.coord_vol1 = Coordinates(np.asarray(coord_vol1), interpolation_factor, self.voxel_size, dtype="raw")
         coords_real_path = self.results_folder / TRACK_RESULTS / COORDS_REAL
         coords_real_path.mkdir(parents=True, exist_ok=True)
-        np.save(str(coords_real_path / "coords000001.npy"), self.coord_vol1.real)
+        np.save(str(coords_real_path / ("coords%06d.npy" % t_start)), self.coord_vol1.real)
 
     def move_cells_in_3d_image(self, movements_nx3: ndarray = None, cells_missed: Set[int] = None):
         """
