@@ -111,10 +111,10 @@ class TrackerLite:
 
     def predict_cell_positions_ensemble(self, skipped_volumes: List[int], t2: int, coord_t1: Coordinates,
                                         beta: float, lambda_: float, sampling_number: int = 20,
-                                        adjacent: bool = False):
+                                        adjacent: bool = False, t_start: int = 1):
         coord_prgls = []
         for t1 in get_volumes_list(current_vol=t2, skip_volumes=skipped_volumes, sampling_number=sampling_number,
-                                   adjacent=adjacent):
+                                   adjacent=adjacent, start_vol=t_start):
             loaded_coord_t1 = np.load(
                 str(self.results_dir / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(6)}.npy"))
             loaded_coord_t1_ = Coordinates(loaded_coord_t1, coord_t1.interpolation_factor, coord_t1.voxel_size,
@@ -418,21 +418,22 @@ def solve_movements_ref(initial_sigma_square, lambda_, posterior_mxn, ptrs_ref_n
     return movements_ref_3xn
 
 
-def evenly_distributed_volumes(current_vol: int, sampling_number: int) -> List[int]:
+def evenly_distributed_volumes(current_vol: int, sampling_number: int, start_vol: int = 1) -> List[int]:
     """Get evenly distributed previous volumes"""
-    interval = (current_vol - 1) // sampling_number
-    start = np.mod(current_vol - 1, sampling_number) + 1
+    interval = (current_vol - start_vol) // sampling_number
+    start = np.mod(current_vol - start_vol, sampling_number) + start_vol
     return list(range(start, current_vol - interval + 1, interval))
 
 
-def get_volumes_list(current_vol: int, skip_volumes: List[int], sampling_number: int = 20, adjacent: bool = False) -> \
-List[int]:
-    if current_vol - 1 < sampling_number:
-        vols_list = list(range(1, current_vol))
+def get_volumes_list(current_vol: int, skip_volumes: List[int], sampling_number: int = 20, adjacent: bool = False,
+                     start_vol: int = 1) -> List[int]:
+    assert current_vol > start_vol, f"current_vol (={current_vol}) should be larger than start_vol (={start_vol})"
+    if current_vol - start_vol < sampling_number:
+        vols_list = list(range(start_vol, current_vol))
     else:
         if adjacent:
             vols_list = list(range(current_vol - sampling_number, current_vol))
         else:
-            vols_list = evenly_distributed_volumes(current_vol, sampling_number)
+            vols_list = evenly_distributed_volumes(current_vol, sampling_number, start_vol=start_vol)
     vols_list = [vol for vol in vols_list if vol not in skip_volumes]
     return vols_list
