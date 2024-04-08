@@ -1,34 +1,35 @@
+from typing import Tuple
+
 import numpy as np
+from numpy import ndarray
 
 from CellTracker.fpm import initial_matching_fpm
-from CellTracker.match_ids import predict_matching_prgls
 from CellTracker.robust_match import filter_matching_outliers_global
 from CellTracker.simple_alignment import align_by_control_points, get_match_pairs, K_POINTS, greedy_match, \
     local_align_by_control_points, N_NEIGHBOR_LOCAL_ALIGNMENT
-from CellTracker.trackerlite import BETA, LAMBDA
 from CellTracker.utils import normalize_points
 from CellTracker.v1_modules.ffn import initial_matching_ffn
 
 
-def rotation_align_by_fpm(fpm_model_rot, points1, points2, similarity_threshold=0.4, threshold_mdist=3**2):
-    return _align_by_fpm(fpm_model_rot, points1, points2, "euclidean", threshold_mdist, similarity_threshold=similarity_threshold,
+BETA, LAMBDA, MAX_ITERATION = (3.0, 3.0, 2000)
+
+
+def rotation_align_by_fpm(fpm_model_rot, coords_norm_t1, coords_norm_t2, similarity_threshold=0.4, threshold_mdist=3 ** 2):
+    return _align_by_fpm(fpm_model_rot, coords_norm_t1, coords_norm_t2, "euclidean", threshold_mdist, similarity_threshold=similarity_threshold,
                          use_prgls=False)
 
 
-def affine_align_by_fpm(fpm_model, points1, points2, similarity_threshold=0.4, threshold_mdist=5 ** 2):
-    return _align_by_fpm(fpm_model, points1, points2, "affine", threshold_mdist, similarity_threshold=similarity_threshold)
+def affine_align_by_fpm(fpm_model, coords_norm_t1, coords_norm_t2, similarity_threshold=0.4, threshold_mdist=5 ** 2):
+    return _align_by_fpm(fpm_model, coords_norm_t1, coords_norm_t2, "affine", threshold_mdist, similarity_threshold=similarity_threshold)
 
 
-def local_affine_align_by_fpm(fpm_model, points1, points2, similarity_threshold=0.3, threshold_mdist=5 ** 2):
-    return _align_by_fpm(fpm_model, points1, points2, "affine", threshold_mdist, local_cal=True,
+def local_affine_align_by_fpm(fpm_model, coords_norm_t1, coords_norm_t2, similarity_threshold=0.3, threshold_mdist=5 ** 2):
+    return _align_by_fpm(fpm_model, coords_norm_t1, coords_norm_t2, "affine", threshold_mdist, local_cal=True,
                          similarity_threshold=similarity_threshold)
 
 
-def _align_by_fpm(fpm_model_rot, points1, points2, method_transform: str, threshold_mdist:float, similarity_threshold=0.4,
+def _align_by_fpm(fpm_model_rot, coords_norm_t1, coords_norm_t2, method_transform: str, threshold_mdist:float, similarity_threshold=0.4,
                   local_cal: bool=False, use_prgls=True):
-    coords_norm_t1 = normalize_points(points1)
-    coords_norm_t2 = normalize_points(points2)
-
     if use_prgls:
         pairs_px2 = match_by_fpm_prgls(fpm_model_rot, coords_norm_t1, coords_norm_t2, similarity_threshold=similarity_threshold)
     else:
@@ -36,12 +37,11 @@ def _align_by_fpm(fpm_model_rot, points1, points2, method_transform: str, thresh
 
     align_func = local_align_by_control_points if local_cal and pairs_px2.shape[0] > N_NEIGHBOR_LOCAL_ALIGNMENT else align_by_control_points
     assert not (local_cal and pairs_px2.shape[0] <= N_NEIGHBOR_LOCAL_ALIGNMENT), f"pairs_px2.shape={pairs_px2.shape}"
-    aligned_coords_t1 = align_func(coords_norm_t1, coords_norm_t2, pairs_px2, method_transform)
+    aligned_coords_t1, _ = align_func(coords_norm_t1, coords_norm_t2, pairs_px2, method_transform)
     filtered_pairs = filter_matching_outliers_global(pairs_px2, aligned_coords_t1, coords_norm_t2, threshold_mdist)
-    aligned_coords_t1_updated = align_func(coords_norm_t1, coords_norm_t2, filtered_pairs, method_transform)
+    aligned_coords_t1_updated, tform = align_func(coords_norm_t1, coords_norm_t2, filtered_pairs, method_transform)
     sorted_pairs = _sort_pairs(filtered_pairs)
-
-    return aligned_coords_t1_updated, coords_norm_t2, sorted_pairs
+    return aligned_coords_t1_updated, coords_norm_t2, sorted_pairs, tform
 
 def _sort_pairs(pairs_px2):
     sorted_indices = np.argsort(pairs_px2[:, 0])
@@ -54,12 +54,17 @@ def _align_by_fpm_simple(fpm_model, points1, points2, similarity_threshold=0.4, 
     coords_norm_t2 = normalize_points(points2)
 
     pairs_px2 = _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, 'coherence', similarity_threshold)
-    aligned_coords_t1 = align_by_control_points(coords_norm_t1, coords_norm_t2, pairs_px2, method="affine")
+    aligned_coords_t1, _ = align_by_control_points(coords_norm_t1, coords_norm_t2, pairs_px2, method="affine")
     pairs_px2 = _match_fpm(aligned_coords_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold)
     return pairs_px2, (aligned_coords_t1, coords_norm_t1, coords_norm_t2)
 
 
-def _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold):
+def _match_fpm(coords_norm_t1: ndarray, coords_norm_t2:ndarray, fpm_model, match_method: str, similarity_threshold: float):
+    if np.isnan(np.max(coords_norm_t1)):
+        raise ValueError("coords_norm_t1 contains Nan value")
+    if np.isnan(np.max(coords_norm_t2)):
+        raise ValueError("coords_norm_t2 contains Nan value")
+
     initial_matching = initial_matching_fpm(fpm_model, coords_norm_t1, coords_norm_t2,
                                             K_POINTS)
     matching_copy = initial_matching.copy()
@@ -68,7 +73,7 @@ def _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, match_method, similari
     return pairs_px2
 
 
-def match_by_fpm_prgls(fpm_model, points1, points2, similarity_threshold=0.4, similarity_threshold_final=1E-6, match_method='coherence'):
+def match_by_fpm_prgls(fpm_model, points1, points2, similarity_threshold=0.4, similarity_threshold_final=0.3, match_method='coherence'):
     pairs_px2, (aligned_coords_t1, coords_norm_t1, coords_norm_t2) = \
         _align_by_fpm_simple(fpm_model, points1, points2, similarity_threshold, match_method)
 
@@ -155,3 +160,106 @@ def accuracy(pairs_nx3: np.ndarray, pairs_gt_mx3: np.ndarray):
     pairs_gt_col_2 = pairs_gt_mx3[common_idx2, 1]
     idx = np.nonzero(pairs_col_2==pairs_gt_col_2)[0]
     return len(idx)/len(pairs_gt_mx3)
+
+
+def predict_matching_prgls(matched_pairs, confirmed_coords_norm_t1, segmented_coords_norm_t1, segmented_coords_norm_t2,
+                           similarity_scores_shape: Tuple[int, int], beta=BETA, lambda_=LAMBDA):
+    normalized_prob = cal_norm_prob(matched_pairs, similarity_scores_shape)
+    tracked_coords_norm_t2, prob_mxn = prgls_with_two_ref(normalized_prob, segmented_coords_norm_t2,
+                                                   segmented_coords_norm_t1, confirmed_coords_norm_t1,
+                                                   beta=beta, lambda_=lambda_)
+    return tracked_coords_norm_t2, prob_mxn
+
+
+def cal_norm_prob(matched_pairs, shape):
+    normalized_prob = np.full(shape, 0.1 / (shape[1] - 1))
+    for ref, tgt in matched_pairs:
+        normalized_prob[tgt, ref] = 0.9
+    return normalized_prob
+
+
+def prgls_with_two_ref(normalized_prob_mxn, ptrs_tgt_mx3: ndarray, ptrs_ref_nx3: ndarray, tracked_ref_lx3: ndarray,
+                       beta: float, lambda_: float, max_iteration: int = MAX_ITERATION) \
+        -> Tuple[ndarray, ndarray]:
+    """
+    Similar with prgls_quick, but use another ptrs_ref_nx3 to calculate the basis movements, and applied the movements
+    to the tracked_ref_lx3
+    """
+
+    # Initiate parameters
+    ratio_outliers = 0.05  # This is the gamma
+    distance_weights_nxn = gaussian_kernel(ptrs_ref_nx3, ptrs_ref_nx3, beta ** 2)  # This is the Gram matrix
+    distance_weights_nxl = gaussian_kernel(tracked_ref_lx3, ptrs_ref_nx3, beta ** 2)
+    sigma_square = dist_squares(ptrs_ref_nx3, ptrs_tgt_mx3).mean() / 3  # This is the sigma^2
+    predicted_coord_ref_nx3 = ptrs_ref_nx3.copy()  # This is the T(X)
+    predicted_coord_ref_lx3 = tracked_ref_lx3.copy()
+
+    ############################################################################
+    # iteratively update predicted_ref_n1x3, ratio_outliers, sigma_square, and posterior_mxn. Plot and save results
+    ############################################################################
+    for iteration in range(1, max_iteration):
+        # E-step: update posterior probability P_mxn
+        posterior_mxn = estimate_posterior(normalized_prob_mxn, sigma_square, predicted_coord_ref_nx3, ptrs_tgt_mx3,
+                                           ratio_outliers)
+
+        # M-step: update predicted positions of reference set
+        # movements_basis_3xn is the parameter C
+        movements_basis_3xn = solve_movements_ref(sigma_square, lambda_, posterior_mxn, predicted_coord_ref_nx3,
+                                                  ptrs_tgt_mx3, distance_weights_nxn)
+        movements_ref_nx3 = np.dot(movements_basis_3xn, distance_weights_nxn).T
+        movements_tracked_lx3 = np.dot(movements_basis_3xn, distance_weights_nxl).T
+        if iteration > 1:
+            predicted_coord_ref_nx3 += movements_ref_nx3  # The first estimation is not reliable thus is discarded
+            predicted_coord_ref_lx3 += movements_tracked_lx3
+        sum_posterior = np.sum(posterior_mxn)
+        ratio_outliers = 1 - sum_posterior / ptrs_tgt_mx3.shape[0]
+
+        # Sometimes this value could become minus due to the inaccurate float representation in computer.
+        # Here I fixed this bug.
+        if ratio_outliers < 1E-4:
+            ratio_outliers = 1E-4
+
+        sigma_square = np.sum(dist_squares(predicted_coord_ref_nx3, ptrs_tgt_mx3) * posterior_mxn) / (3 * sum_posterior)
+
+        # Test convergence:
+        dist_sqrt = np.sqrt(np.sum(np.square(movements_ref_nx3)))
+        if dist_sqrt < 1E-3:
+            # print(f"Converged at iteration = {iteration}")
+            break
+
+    return predicted_coord_ref_lx3, posterior_mxn
+
+
+def dist_squares(ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray) -> ndarray:
+    ptrs_ref_mxnx3 = np.tile(ptrs_ref_nx3, (ptrs_tgt_mx3.shape[0], 1, 1))
+    ptrs_tgt_mxnx3 = np.tile(ptrs_tgt_mx3, (ptrs_ref_nx3.shape[0], 1, 1)).transpose((1, 0, 2))
+    dist2_mxn = np.sum(np.square(ptrs_ref_mxnx3 - ptrs_tgt_mxnx3), axis=2)
+    return dist2_mxn
+
+
+def gaussian_kernel(ptrs_ref_nx3, ptrs_tgt_mx3, sigma_square: float) -> ndarray:
+    ptrs_ref_mxnx3 = np.tile(ptrs_ref_nx3, (ptrs_tgt_mx3.shape[0], 1, 1))
+    ptrs_tgt_mxnx3 = np.tile(ptrs_tgt_mx3, (ptrs_ref_nx3.shape[0], 1, 1)).transpose((1, 0, 2))
+    dist_square_sum_mxn = np.sum(np.square(ptrs_ref_mxnx3 - ptrs_tgt_mxnx3), axis=2)
+    return np.exp(-dist_square_sum_mxn / (2 * sigma_square))
+
+
+def estimate_posterior(prior_p_mxn: ndarray, initial_sigma_square: float, predicted_ref_nx3: ndarray,
+                       ptrs_tgt_mx3: ndarray, ratio_outliers: float, vol: float = 1) -> ndarray:
+    p_pos_j_when_j_match_i_mxn = gaussian_kernel(predicted_ref_nx3, ptrs_tgt_mx3, initial_sigma_square)
+    p_pos_j_and_j_match_i_mxn = (1 - ratio_outliers) * prior_p_mxn * p_pos_j_when_j_match_i_mxn / (
+            2 * np.pi * initial_sigma_square) ** 1.5
+    posterior_sum_m = np.sum(p_pos_j_and_j_match_i_mxn, axis=1) + ratio_outliers / vol
+    posterior_mxn = p_pos_j_and_j_match_i_mxn / posterior_sum_m[:, None]
+    return posterior_mxn
+
+
+def solve_movements_ref(initial_sigma_square, lambda_, posterior_mxn, ptrs_ref_nx3, ptrs_tgt_mx3,
+                        scaling_factors_nxn):
+    n = ptrs_ref_nx3.shape[0]
+    posterior_sum_diag_nxn = np.diag(np.sum(posterior_mxn, axis=0))
+    coefficient_nxn = np.dot(scaling_factors_nxn,
+                             posterior_sum_diag_nxn) + lambda_ * initial_sigma_square * np.identity(n)
+    dependent_3xn = np.dot(ptrs_tgt_mx3.T, posterior_mxn) - np.dot(ptrs_ref_nx3.T, posterior_sum_diag_nxn)
+    movements_ref_3xn = np.linalg.solve(coefficient_nxn.T, dependent_3xn.T).T
+    return movements_ref_3xn

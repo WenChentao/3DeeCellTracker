@@ -141,14 +141,10 @@ def add_or_remove_points(predicted_coords_t1_to_t2: ndarray, predicted_coords_t2
     unmatched_indice_t1 = np.setdiff1d(np.arange(n), pairs[:, 0])
     unmatched_indice_t2 = np.setdiff1d(np.arange(m), pairs[:, 1])
 
-    # inliers_t1 = add_inliers_within_k_neighbors(k_neighbors, predicted_coords_t1_to_t2, segmented_coords_norm_t2, unmatched_indice_t2,
-    #                          unmatched_indice_t1)
-    # inliers_t2 = add_inliers_within_k_neighbors(k_neighbors, predicted_coords_t2_to_t1, segmented_coords_norm_t1, unmatched_indice_t1,
-    #                          unmatched_indice_t2)
-    inliers_t1 = add_inliers_within_a_radius(predicted_coords_t1_to_t2, segmented_coords_norm_t2,
-                                             unmatched_indice_t1)
-    inliers_t2 = add_inliers_within_a_radius(predicted_coords_t2_to_t1, segmented_coords_norm_t1,
-                                             unmatched_indice_t2)
+    inliers_t1 = add_inliers_of_neighbor_points(predicted_coords_t1_to_t2, segmented_coords_norm_t2,
+                                                unmatched_indice_t1)
+    inliers_t2 = add_inliers_of_neighbor_points(predicted_coords_t2_to_t1, segmented_coords_norm_t1,
+                                                unmatched_indice_t2)
 
     all_inliers_t1 = np.concatenate((pairs[:, 0], inliers_t1)).astype(np.int_)
     all_inliers_t2 = np.concatenate((pairs[:, 1], inliers_t2)).astype(np.int_)
@@ -167,26 +163,16 @@ def update_inliers_points(match_seg_t1_seg_t2: ndarray, predicted_coords_t1_to_t
     return predicted_coords_t1_to_t2[all_inliers_t1], segmented_coords_norm_t2[all_inliers_t2], inliers
 
 
-def add_inliers_within_a_radius(predicted_coords_t1_to_t2, segmented_coords_norm_t2,
-                                unmatched_indice_t1):
+def add_inliers_of_neighbor_points(predicted_coords_t1_to_t2, segmented_coords_norm_t2,
+                                   unmatched_indice_t1):
     """
-    Add some points previously in the unmatched set to the inlier set using a dynamic radius criterion.
-
-    Notes
-    -----
-    Suppose there is an unmatched point A at t2 and its prediction B at t1.
-    Calculate the distance dist_A between A and its nearest neighbor at t2
-    If B has its nearest neighbor point C within 1.2 * dist_A at t1, then A is added to the inlier set.
-    Else, A is not added to the inlier set.
+    Add neighboring points of predicted coordinates at t2 to inliers points.
     """
     if unmatched_indice_t1.size == 0:
         return []
     knn_t1 = NearestNeighbors(n_neighbors=2).fit(predicted_coords_t1_to_t2)
     _, ids = knn_t1.kneighbors(segmented_coords_norm_t2)
     inliers_t2 = np.intersect1d(ids, unmatched_indice_t1)
-    #print(inliers_t2+1)
-    # for i in range(len(segmented_coords_norm_t2)):
-    #     print(i+1, ids[i]+1)
 
     return np.asarray(inliers_t2)
 

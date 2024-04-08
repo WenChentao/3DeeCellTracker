@@ -45,17 +45,12 @@ def get_transform(coords_t1: ndarray, coords_t2: ndarray, match_model: Model, pr
     return estimate_transform(ttype, src, dst)
 
 
-def align_by_control_points(coords_norm_t1: ndarray, coords_norm_t2: ndarray, initial_matched_pairs: ndarray, method="euclidean",
-                            return_tform=False):
+def align_by_control_points(coords_norm_t1: ndarray, coords_norm_t2: ndarray, initial_matched_pairs: ndarray, method="euclidean"):
     src = coords_norm_t1[initial_matched_pairs[:, 0]]
     dst = coords_norm_t2[initial_matched_pairs[:, 1]]
     tform = estimate_transform(method, src, dst)
     aligned_coords_t1 = tform(coords_norm_t1)
-
-    if return_tform:
-        return aligned_coords_t1, tform
-
-    return aligned_coords_t1
+    return aligned_coords_t1, tform
 
 
 def local_align_by_control_points(coords_norm_t1: ndarray, coords_norm_t2: ndarray, initial_matched_pairs: ndarray,
@@ -72,7 +67,7 @@ def local_align_by_control_points(coords_norm_t1: ndarray, coords_norm_t2: ndarr
         _dst = dst[inds, :]
         tform = estimate_transform(method, _src, _dst)
         aligned_coords_t1[i, :] = tform(coords_norm_t1[i:i+1,:])[0, :]
-    return aligned_coords_t1
+    return aligned_coords_t1, None
 
 
 def coherence_match(updated_match_matrix: ndarray, segmented_coords_norm_t1, segmented_coords_norm_t2, threshold):

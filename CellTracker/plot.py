@@ -1,14 +1,27 @@
 from __future__ import division, absolute_import, print_function, unicode_literals, annotations
 
+from typing import List
+
 import numpy as np
 from matplotlib import pyplot as plt
+from matplotlib.colors import ListedColormap
 from matplotlib.patches import ConnectionPatch
 from numpy import ndarray
 from plotly import graph_objects as go
 
 
-def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, fig_width_px=1800,
-                          dpi=96, ids_ref=None, ids_tgt=None, show_3d: bool = False):
+def custom_tab20_cmap(map_index_to_tab20: List[int]):
+    n = len(map_index_to_tab20)
+    x = np.linspace(0, 1, 20)
+    x = np.concatenate((x[0:20:2], x[1:20:2]))
+    tab20_colors = plt.cm.tab20(x)
+    custom_colors = [(0, 0, 0)] + [tab20_colors[map_index_to_tab20[i]] for i in range(n)]
+    return ListedColormap(custom_colors)
+
+
+def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, ref_ptrs_confirmed: ndarray=None,
+                          fig_width_px=1800, dpi=96, ids_ref=None, ids_tgt=None, show_3d: bool = False, display_fig=True, top_down=True,
+                          show_ids=True):
     """Draws the initial matching between two sets of 3D points and their matching relationships.
 
     Args:
@@ -25,7 +38,8 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
         fig = plot_matching_with_arrows_3d_plotly(ref_ptrs, tgt_ptrs, pairs_px2, ids_ref, ids_tgt)
         return fig
     # Plot the scatters of the ref_points and tgt_points
-    ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1, t2, ids_ref, ids_tgt)
+    ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1, t2, ids_ref, ids_tgt,
+                                               top_down=top_down, show_ids=show_ids)
 
     # Plot the matching relationships between the two sets of points
     for ref_index, tgt_index in pairs_px2:
@@ -37,10 +51,35 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
         con = ConnectionPatch(xyA=pt2, xyB=pt1, coordsA="data", coordsB="data",
                               axesA=ax2, axesB=ax1, color="C1")
         ax2.add_artist(con)
-    # ax1.axis('equal')
-    # ax2.axis('equal')
-    #set_unique_xlim(ax1, ax2)
-    plt.pause(0.1)
+    if ref_ptrs_confirmed is not None:
+        ax1.scatter(ref_ptrs_confirmed[:, 1], ref_ptrs_confirmed[:, 0], facecolors='r', edgecolors='r', label='Confirmed cells')
+    if display_fig:
+        plt.pause(0.1)
+    return fig
+
+
+def plot_pairs_and_movements(ref_ptrs: ndarray, tgt_ptrs: ndarray, t1: int, t2: int, ref_ptrs_confirmed: ndarray,
+                             ref_ptrs_tracked: ndarray, fig_width_px=1800, dpi=96, ids_ref=None, ids_tgt=None, display_fig=True,
+                             top_down=True, show_ids=True):
+    # Plot the scatters of the ref_points and tgt_points
+    ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1, t2, ids_ref, ids_tgt,
+                                               top_down=top_down, show_ids=show_ids)
+
+    # Plot the predicted pairs and movements
+    n = ref_ptrs_confirmed.shape[0]
+    for i in range(n):
+        # Get the coordinates of the matched points in the two point sets
+        pt1 = ref_ptrs_confirmed[i, [1, 0]]
+        pt2 = ref_ptrs_tracked[i, [1, 0]]
+
+        # Draw a connection between the matched points in the two subplots using the `ConnectionPatch` class
+        con = ConnectionPatch(xyA=pt2, xyB=pt1, coordsA="data", coordsB="data",
+                              axesA=ax2, axesB=ax1, color="C1")
+        ax2.add_artist(con)
+    if ref_ptrs_confirmed is not None:
+        ax1.scatter(ref_ptrs_confirmed[:, 1], ref_ptrs_confirmed[:, 0], facecolors='r', edgecolors='r', label='Confirmed cells')
+    if display_fig:
+        plt.pause(0.1)
     return fig
 
 
@@ -383,7 +422,7 @@ def plot_predicted_movements_one_panel(ref_ptrs: ndarray, tgt_ptrs: ndarray, pre
 
 
 def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarray, tgt_ptrs: ndarray, t1: int, t2: int,
-                               ids_ref: list = None, ids_tgt: list = None):
+                               ids_ref: list = None, ids_tgt: list = None, top_down=True, show_ids=True):
     """
     Creates a figure with two subplots showing two sets of 3D points.
 
@@ -417,31 +456,32 @@ def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarra
     """
     # Calculate the figure size based on the input width and dpi
     fig_width_in = fig_width_px / dpi  # convert to inches assuming the given dpi
-    fig_height_in = fig_width_in / 1.618  # set height to golden ratio
+    fig_height_in = fig_width_in / 2.2  # set height to golden ratio
     # Determine whether to use a top-down or left-right layout based on the aspect ratio of the point sets
     ref_range_y, ref_range_x, _ = np.max(ref_ptrs, axis=0) - np.min(ref_ptrs, axis=0)
     tgt_range_y, tgt_range_x, _ = np.max(tgt_ptrs, axis=0) - np.min(tgt_ptrs, axis=0)
-    top_down = ref_range_x + tgt_range_x >= ref_range_y + tgt_range_y
+    # top_down = ref_range_x + tgt_range_x >= ref_range_y + tgt_range_y
 
     ids_ref = range(1, ref_ptrs.shape[0]+1) if ids_ref is None else ids_ref
     ids_tgt = range(1, tgt_ptrs.shape[0]+1) if ids_tgt is None else ids_tgt
 
+
     # Create the figure and subplots
     if top_down:
         # print("Using top-down layout")
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(fig_width_in, fig_height_in))
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(fig_height_in, fig_width_in))
     else:
         # print("Using left-right layout")
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(fig_width_in, fig_height_in))
 
     # Plot the point sets on the respective subplots
     ax1.scatter(ref_ptrs[:, 1], ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')
-    for i, txt in enumerate(ids_ref):
-        ax1.annotate(txt, (ref_ptrs[i, 1], ref_ptrs[i, 0]))
-
     ax2.scatter(tgt_ptrs[:, 1], tgt_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 2')
-    for i, txt in enumerate(ids_tgt):
-        ax2.annotate(txt, (tgt_ptrs[i, 1], tgt_ptrs[i, 0]))
+    if show_ids:
+        for i, txt in enumerate(ids_ref):
+            ax1.annotate(txt, (ref_ptrs[i, 1], ref_ptrs[i, 0]))
+        for i, txt in enumerate(ids_tgt):
+            ax2.annotate(txt, (tgt_ptrs[i, 1], tgt_ptrs[i, 0]))
 
     unify_xy_lims(ax1, ax2)
 
@@ -471,6 +511,14 @@ def unify_xy_lims(ax1, ax2):
     # Determine the shared x_lim and y_lim
     x_lim = [min(ax1.get_xlim()[0], ax2.get_xlim()[0]), max(ax1.get_xlim()[1], ax2.get_xlim()[1])]
     y_lim = [min(ax1.get_ylim()[1], ax2.get_ylim()[1]), max(ax1.get_ylim()[0], ax2.get_ylim()[0])]
+    range_x = x_lim[1] - x_lim[0]
+    range_y = y_lim[1] - y_lim[0]
+    if range_y > range_x:
+        x_mean = (x_lim[1] + x_lim[0]) / 2
+        x_lim = [x_mean - range_y / 2, x_mean + range_y / 2]
+    else:
+        y_mean = (y_lim[1] + y_lim[0]) / 2
+        y_lim = [y_mean - range_x / 2, y_mean + range_x / 2]
 
     # Set the same x_lim and y_lim on both axes
     ax1.set_xlim(x_lim[0], x_lim[1])

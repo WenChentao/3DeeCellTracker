@@ -7,25 +7,27 @@ from numpy import ndarray
 from scipy.spatial.distance import cdist
 from sklearn.manifold import MDS
 
-from CellTracker.simple_alignment import align_by_control_points
 from CellTracker.test_matching_models import rotation_align_by_fpm, affine_align_by_fpm, local_affine_align_by_fpm, \
     match_by_fpm_prgls
 from CellTracker.utils import simple_progress_bar
 
 
-def match_initial_x_volumes(coords_initialx: List[ndarray], path_pairwise_match_initialx_h5: str, x=20):
+def ensemble_match_initial_x_volumes(cell_num_list: List[int], path_pairwise_match_initialx_h5: str, x=20):
+    assert len(cell_num_list) == x, f"cell_num_list should contains {x} values"
     f_matches = h5py.File(path_pairwise_match_initialx_h5, "r")
-
     updated_matches = np.zeros((x), dtype=object)
 
     for iteration in range(5):
         no_update = True
         for target_vol in range(x, 1, -1):
             print(f"{iteration}-{target_vol}", end="\r")
-            matches_matrix = np.zeros((coords_initialx[0].shape[0], coords_initialx[target_vol - 1].shape[0]), dtype=int)
+            matches_matrix = np.zeros((cell_num_list[0], cell_num_list[target_vol - 1]), dtype=int)
+
+            # Set a large value (=2) for connections found between vol#1 and other target volumes
             for ref, tgt in f_matches[f"1_{target_vol}"][:]:
                 matches_matrix[ref, tgt] = 2
 
+            # Link each cell pair from vol#1 to vol#tgt through a middle volume
             for mid_vol in range(2, x+1):
                 if mid_vol == target_vol:
                     continue
@@ -40,17 +42,19 @@ def match_initial_x_volumes(coords_initialx: List[ndarray], path_pairwise_match_
                     pos2 = np.where(pairs_mid_tgt[:, 0] == value)[0][0]
                     matches_matrix[pairs_1_mid[pos1, 0], pairs_mid_tgt[pos2, 1]] += 1
 
+            # update cell pairs between vol#1 and vol#tgt using the cumulated match matrix and greedy algorithm
             updated_pairs = []
             matches_matrix_copy = matches_matrix.copy()
-            for i in range(coords_initialx[0].shape[0]):
+            for i in range(cell_num_list[0]):
                 ref, tgt = np.unravel_index(np.argmax(matches_matrix_copy, axis=None), matches_matrix_copy.shape)
-                if matches_matrix_copy[ref, tgt] < 2:
+                if matches_matrix_copy[ref, tgt] < int(np.ceil(x * 0.75)):
                     break
                 updated_pairs.append((ref, tgt))
                 matches_matrix_copy[ref, :] = 0
                 matches_matrix_copy[:, tgt] = 0
             updated_pairs = np.asarray(updated_pairs)
 
+            #
             if iteration==0:
                 sorted_original_pairs = sort_array_2d(f_matches[f"1_{target_vol}"][:])
             else:
@@ -62,6 +66,8 @@ def match_initial_x_volumes(coords_initialx: List[ndarray], path_pairwise_match_
                 no_update = np.allclose(sorted_updated_pairs, sorted_original_pairs)
 
             updated_matches[target_vol-1] = sorted_updated_pairs
+
+        # Stop loop if there is no update in this iteration
         if no_update:
             print(f"Quit loop when iteration={iteration}")
             break
@@ -74,58 +80,18 @@ def sort_array_2d(pairs_nx2):
     sorted_indices = np.argsort(pairs_nx2[:, 0])
     return pairs_nx2[sorted_indices]
 
-def initial_match(coords_tgt_nx3: ndarray, fpm_model, tgt_vol = 1, coords_h5_file: h5py.File = None, coords_npy_files: List[str] = None,
-                  fpm_model_rot = None, path_result: str = "./initial_match.h5"):
-    if coords_h5_file is None and coords_npy_files is None:
-        raise ValueError("Either coords_h5_file or coords_npy_files should be provided")
 
-    if coords_h5_file is not None:
-        t = coords_npy_files["seg"].shape[0]
-    else:
-        t = len(coords_npy_files)
-
-    rigid_aligned_coords_txnx3 = np.full((t, *coords_tgt_nx3.shape), np.nan)
-    tform_tx3x4 = np.zeros((t, 3, 4))
-    tform_inv_tx3x4 = np.zeros((t, 3, 4))
-    points_tgt = coords_tgt_nx3.copy()
-    for i in range(t):
-        if coords_h5_file is not None:
-            points_ref = coords_h5_file[f'coords_{str(i + 1).zfill(6)}'][:]
-        else:
-            points_ref = np.load(coords_npy_files[i])[:, :3]
-
-        if i+1 == tgt_vol:
-            rigid_aligned_coords_txnx3[i,...] = points_tgt.copy()
-            tform_tx3x4[i, :,:3] = np.eye(3)
-            tform_inv_tx3x4[i, :,:3] = np.eye(3)
-            continue
-        else:
-            pairs_3 = _match_fpm_prgls(fpm_model, fpm_model_rot, points_ref, points_tgt)
-            rigid_aligned_coords_mx3, tform = align_by_control_points(points_ref, points_tgt, pairs_3, method="euclidean", return_tform=True)
-            for id_ref, id_tgt in pairs_3:
-                rigid_aligned_coords_txnx3[i, id_tgt, :] = rigid_aligned_coords_mx3[id_ref, :]
-            tform_tx3x4[i, ...] = tform.params[:3, :]
-            tform_inv_tx3x4[i, ...] = np.linalg.inv(tform.params)[:3, :]
-        simple_progress_bar(i+1, t)
-
-    with h5py.File(path_result, "w") as f:
-        f.create_dataset("rigid_aligned_coords", data=rigid_aligned_coords_txnx3)
-        f.create_dataset("tform", data=tform_tx3x4)
-        f.create_dataset("tform_inv", data=tform_inv_tx3x4)
-        print(f"Saved initial match results in {path_result}")
-
-
-def _match_fpm_prgls(fpm_model, fpm_model_rot, points_ref, points_tgt):
+def _match_fpm_prgls(fpm_model, fpm_model_rot, coords_norm_t1, coords_norm_t2):
     if fpm_model_rot is None:
-        aligned_t1_rot = points_ref
+        aligned_t1_rot = coords_norm_t1
     else:
-        aligned_t1_rot, _, pairs_rot = rotation_align_by_fpm(fpm_model_rot, points1=points_ref,
-                                                             points2=points_tgt)
-    aligned_t1_1, _, pairs_1 = affine_align_by_fpm(fpm_model, points1=aligned_t1_rot,
-                                                   points2=points_tgt)
-    aligned_t1_2, _, pairs_2 = local_affine_align_by_fpm(fpm_model, points1=aligned_t1_1,
-                                                         points2=points_tgt)
-    pairs_3 = match_by_fpm_prgls(fpm_model, aligned_t1_2, points_tgt, match_method="coherence")
+        aligned_t1_rot, _, pairs_rot, tform = rotation_align_by_fpm(fpm_model_rot, coords_norm_t1=coords_norm_t1,
+                                                             coords_norm_t2=coords_norm_t2)
+    aligned_t1_1, _, pairs_1, _ = affine_align_by_fpm(fpm_model, coords_norm_t1=aligned_t1_rot,
+                                                   coords_norm_t2=coords_norm_t2)
+    aligned_t1_2, _, pairs_2, _ = local_affine_align_by_fpm(fpm_model, coords_norm_t1=aligned_t1_1,
+                                                         coords_norm_t2=coords_norm_t2)
+    pairs_3 = match_by_fpm_prgls(fpm_model, aligned_t1_2, coords_norm_t2, match_method="coherence")
     return pairs_3
 
 
@@ -156,7 +122,8 @@ def pairwise_pointsets_distances(corresponding_coords_txnx3: ndarray):
     return pairwise_dist_txt
 
 
-def get_reference_target_vols_list(distances_txt: ndarray, initial_ref: int, max_num_refs: int = 20):
+def get_reference_target_vols_list(distances_txt: ndarray, initial_ref: int, max_num_refs: int = 20, ratio=1):
+    assert 0.5 <= ratio <= 1
     t = distances_txt.shape[0]
     reference_taget_vols_list = []
     current_ref_pool = [initial_ref]
@@ -164,7 +131,8 @@ def get_reference_target_vols_list(distances_txt: ndarray, initial_ref: int, max
     for i in range(t-1):
         current_refs = np.asarray(current_ref_pool)
         potential_tgts = np.setdiff1d(entire_timings, current_refs)
-        ref0_midpoint_tgts_dists_cxp = distances_txt[np.ix_(current_refs - 1, potential_tgts - 1)] + distances_txt[current_refs - 1, initial_ref - 1][:, None]
+        ref0_midpoint_tgts_dists_cxp = (distances_txt[np.ix_(current_refs - 1, potential_tgts - 1)] * ratio
+                                        + distances_txt[current_refs - 1, initial_ref - 1][:, None] * (1 - ratio))
         ref0_midpoint_tgts_dists_nxp = find_bottom_n_per_column(ref0_midpoint_tgts_dists_cxp, n=max_num_refs)
         sum_ref0_tgts_dists_p = np.sum(ref0_midpoint_tgts_dists_nxp, axis=0)
         next_tgt_local = np.argmin(sum_ref0_tgts_dists_p)
@@ -219,9 +187,10 @@ def rigid_transform(tform_3x4: ndarray, coords_nx3: ndarray):
     return np.dot(coords_nx3, tform_3x4[:, :3].T) + tform_3x4[:, 3]
 
 
-def visualize_pairwise_distances(points_tx2: ndarray):
+def visualize_pairwise_distances(points_tx2: ndarray, center_point: int):
     plt.figure(figsize=(30, 30))
     plt.scatter(points_tx2[:, 0], points_tx2[:, 1])
+    plt.scatter(points_tx2[center_point-1, 0], points_tx2[center_point-1, 1], c="r")
     plt.title('2D Visualization of Points Based on Distance Matrix')
     plt.xlabel('Dimension 1')
     plt.ylabel('Dimension 2')

@@ -6,39 +6,44 @@ from typing import List, Tuple
 import h5py
 import numpy as np
 from numpy import ndarray
+from scipy import ndimage
 from scipy.interpolate import RBFInterpolator
+from scipy.spatial.distance import cdist
 from scipy.stats import trim_mean
+from sklearn.decomposition import PCA
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 
 from CellTracker.coord_image_transformer import Coordinates, CoordsToImageTransformer, gaussian_interpolation_3d, \
-    move_cells
+    move_cells, save_tracked_labels
+from CellTracker.global_match import _match_fpm_prgls, pairwise_pointsets_distances, rigid_transform
 from CellTracker.plot import plot_initial_matching, plot_initial_matching_one_panel, plot_predicted_movements, \
-    plot_predicted_movements_one_panel
-from CellTracker.simple_alignment import get_transform, get_match_pairs, K_POINTS
-from CellTracker.v1_modules.ffn import initial_matching_ffn, FFN
-from CellTracker.fpm import FlexiblePointMatcherOriginal, initial_matching_fpm
-from CellTracker.robust_match import add_or_remove_points, \
-    get_full_cell_candidates
+    plot_predicted_movements_one_panel, plot_pairs_and_movements
+from CellTracker.simple_alignment import get_match_pairs, K_POINTS, align_by_control_points, greedy_match
+from CellTracker.test_matching_models import cal_norm_prob, prgls_with_two_ref, affine_align_by_fpm, predict_matching_prgls
+from CellTracker.v1_modules.ffn import initial_matching_ffn
+from CellTracker.fpm import initial_matching_fpm
+from CellTracker.robust_match import add_or_remove_points, get_full_cell_candidates
 from CellTracker.stardist3dcustom import StarDist3DCustom
-from CellTracker.utils import load_2d_slices_at_time, normalize_points
-from CellTracker.v1_modules.track import initial_matching
+from CellTracker.utils import load_2d_slices_at_time, normalize_points, simple_progress_bar
+from CellTracker.test_matching_models import BETA, LAMBDA
+
 
 FIGURE = "figure"
 COORDS_REAL = "coords_real"
 LABELS = "labels"
 TRACK_RESULTS = "track_results"
 SEG = "seg"
-BETA, LAMBDA, MAX_ITERATION = (3.0, 1.0, 2000)
 
 
 class TrackerLite:
     """
     A class that tracks cells in 3D time-lapse images using a trained FFN model.
     """
-
-    def __init__(self, results_dir: str, match_model_name: str,
-                 coords2image: CoordsToImageTransformer, stardist_model: StarDist3DCustom,
-                 similarity_threshold=0.3, match_method: str = "coherence", miss_frame: List[int] = None,
-                 basedir: str = "ffn_models", model_type: str = "ffn"):
+    def __init__(self, results_dir: str, match_model,
+                 coords2image: CoordsToImageTransformer, stardist_model: StarDist3DCustom, model_type: str,
+                 similarity_threshold=0.3, match_method: str = "coherence",  miss_frame: List[int] = None):
         """
         Initialize a new instance of the TrackerLite class.
 
@@ -46,10 +51,8 @@ class TrackerLite:
         ----------
         results_dir:
             The path to the directory containing the results.
-        match_model_name:
-            The filename without extension to the model file.
-        proofed_coords_vol1:
-            The confirmed cell positions at time step t1.
+        match_model:
+            The model for matching.
         coords2image:
             The CoordsToImageTransformer instance.
         stardist_model:
@@ -60,70 +63,423 @@ class TrackerLite:
             The method for matching cells. "coherence", "greedy" or "hungarian".
         miss_frame:
             A list of missing frames.
-        basedir:
-            The base directory of the match model.
         model_type:
             The type of the match model. "ffn" or "fpm".
         """
+        self.common_ids_in_coords = None
+        self.common_ids_in_proof = None
+        self.scale_vol1 = None
+        self.mean_vol1 = None
+        self.rotation_matrix = None
         if miss_frame is not None and not isinstance(miss_frame, List):
             raise TypeError(f"miss_frame should be a list or None, but got {type(miss_frame)}")
 
-        proofed_coords_vol1 = coords2image.coord_vol1
+        self.inv_tform_tx3x4 = None
+        self.tform_tx3x4 = None
+        self.corresponding_coords_txnx3 = None
+
         self.coords2image = coords2image
         self.stardist_model = stardist_model
 
         self.results_dir = Path(results_dir)
-        (self.results_dir / TRACK_RESULTS / FIGURE).mkdir(parents=True, exist_ok=True)
-        (self.results_dir / TRACK_RESULTS / COORDS_REAL).mkdir(parents=True, exist_ok=True)
-        (self.results_dir / TRACK_RESULTS / LABELS).mkdir(parents=True, exist_ok=True)
 
         self.match_method = match_method
         self.similarity_threshold = similarity_threshold
 
-        self.match_model_path = Path(basedir) / (match_model_name + ".h5")
+        self.match_model = match_model
         if model_type == "ffn":
-            self.match_model = FFN()
-            dummy_input = np.random.random((1, 122))
             self.get_similarity = initial_matching_ffn
         elif model_type == "fpm":
-            self.match_model = FlexiblePointMatcherOriginal()
-            dummy_input = np.random.random((1, 22, 4, 2))
             self.get_similarity = initial_matching_fpm
         else:
             raise ValueError(f"Unknown model type: {model_type}")
 
-        try:
-            _ = self.match_model(dummy_input)
-            self.match_model.load_weights(str(self.match_model_path))
-        except (OSError, ValueError) as e:
-            raise ValueError(f"Failed to load the match model from {self.match_model_path}: {e}") from e
-
-        self.proofed_coords_vol1 = proofed_coords_vol1
         self.miss_frame = [] if miss_frame is None else miss_frame
 
-    def pre_alignment(self, ref_vol: int = 1):
-        with h5py.File(str(self.results_dir / "seg.h5"), "r") as seg_file:
-            self.num_vol = seg_file["prob"].shape[0]
-        segmented_pos_ref, subset_ref = self._get_segmented_pos(ref_vol)
-        affine_matrix = np.zeros((self.num_vol, 3, 3))
-        for t in range(1, self.num_vol+1):
-            if t == ref_vol:
-                affine_matrix[t - 1, ...] = np.eye(3,3)
+    def get_cell_num_initial_x_vols(self, reference_target_vols_list: list, x=20):
+        tgt_list = [reference_target_vols_list[0][0][0]] + [tgt for _, tgt in reference_target_vols_list[:20 - 1]]
+
+        cell_num_list = []
+        for i in tqdm(range(x)):
+            t = tgt_list[i]
+            pos_ref0, _ = self._get_segmented_pos(t)
+            cell_num_list.append(len(pos_ref0.real))
+        return cell_num_list
+
+    def match_manual_ref0(self):
+        """Remove cells whose centers are not included in the stardist predictions (including the weak cells)"""
+        pos_ref0, inliers = self._get_segmented_pos(self.coords2image.proofed_coords_vol)
+        dist_pxr = cdist(self.coords2image.coord_proof.real, pos_ref0.real)
+        dist_rxr = cdist(pos_ref0.real, pos_ref0.real)
+        np.fill_diagonal(dist_rxr, np.inf)
+        threshold = dist_rxr.min()
+        matched_ind = []
+        matched_ind_in_proof = []
+        for pair_number in range(dist_pxr.shape[0]):
+            min_dist = dist_pxr.min()
+            if min_dist > threshold:
+                break
+            proof_index, ref0_index = np.unravel_index(dist_pxr.argmin(), dist_pxr.shape)
+            matched_ind.append(ref0_index)
+            matched_ind_in_proof.append(proof_index)
+
+            dist_pxr[proof_index, :] = np.inf
+            dist_pxr[:, ref0_index] = np.inf
+        return np.asarray(matched_ind), np.asarray(matched_ind_in_proof)
+
+    def filter_proofed_cells(self, initial_timing: int, threshold: int, vol_num=20):
+        """Remove cells that were not detected by stardist or the ones not exist in most of the other intial_x_volumes"""
+        segmented_pos_t1, inliers_t1 = self._get_segmented_pos(initial_timing)
+        cum_match_counts=np.zeros((segmented_pos_t1.real.shape[0]), dtype=int)
+        for i in tqdm(range(1, vol_num)):
+            with h5py.File(str(Path(self.results_dir) / "matches_1_to_20.h5"), "r") as f:
+                pairs = f[f"1_{i+1}"][:]
+            for ref, _ in pairs:
+                cum_match_counts[ref] += 1
+        self.common_ids_in_coords, self.common_ids_in_proof = self.get_common_ids(cum_match_counts, threshold)
+        print(f"Choose {len(self.common_ids_in_coords)} cells from {segmented_pos_t1.real.shape[0]} proofed cells, "
+              f"with matches in {threshold * 100 // vol_num}% volumes of initial {vol_num} volumes")
+        np.save(str(Path(self.results_dir) / "common_ids_vol_initial.npy"), self.common_ids_in_coords)
+
+    def draw_matching_common_cells(self, t_target: int, reference_target_vols_list: list):
+        assert t_target < len(reference_target_vols_list)
+        t_reference = reference_target_vols_list[0][0][0]
+        coords_subset_norm_t1, segmented_coords_norm_t1, segmented_pos_t1, subset_t1 = self.load_rotated_normalized_coords(t_reference)
+        t2 = reference_target_vols_list[t_target - 1][1]
+        coords_subset_norm_t2, segmented_coords_norm_t2, segmented_pos_t2, subset_t2 = self.load_rotated_normalized_coords(t2)
+        _, pairs = self.predict_cell_positions(t_reference, t2)
+        ref_ptrs_confirmed = segmented_coords_norm_t1[self.common_ids_in_coords]
+        segmented_coords_norm_t1, segmented_coords_norm_t2, ref_ptrs_confirmed = rotate_for_visualization(self.rotation_matrix,
+                        (segmented_coords_norm_t1, segmented_coords_norm_t2, ref_ptrs_confirmed))
+        fig = plot_initial_matching(segmented_coords_norm_t1, segmented_coords_norm_t2, pairs, t_reference, t2,
+                                    ref_ptrs_confirmed=ref_ptrs_confirmed)
+
+    def get_common_ids(self, cum_match_counts, threshold: int):
+        matched_ind_in_ref, matched_ind_in_proof = self.match_manual_ref0()
+        top_indices = np.nonzero(cum_match_counts>=threshold)
+        _, ind_ref, _ = np.intersect1d(matched_ind_in_ref, top_indices, return_indices=True)
+        return matched_ind_in_ref[ind_ref], matched_ind_in_proof[ind_ref]
+
+    def rigid_alignment(self, fpm_model_rot=None, t_ref_start=2, arrangement="vertical"):
+        """
+        Calculate the parameters for rigid alignment between vol#1 and all other volumes, and the aligned coordinates.
+        Store the results into a h5 file
+
+        Notes
+        -----
+        The parameters and the aligned coordinates are of "real" scale, not the normalized scale.
+        """
+        t_tgt = 1
+
+        alignment_folder = Path(self.results_dir) / "alignment"
+        alignment_folder.mkdir(exist_ok=True, parents=True)
+        pairs_folder = Path(self.results_dir) / "temp_pairs"
+        pairs_folder.mkdir(exist_ok=True, parents=True)
+
+        f_seg = h5py.File(str(Path(self.results_dir) / "seg.h5"), "r")
+        t = f_seg["prob"].shape[0]
+
+        coords_subset_norm_t1, mean_t1, scale_t1, segmented_coords_norm_t1, segmented_pos_t1, subset_t1 = self.load_normalized_coords(
+            t_tgt)
+
+        rigid_aligned_coords_txnx3 = np.full((t, *coords_subset_norm_t1.shape), np.nan)
+        tform_tx3x4 = np.zeros((t, 3, 4))
+        tform_inv_tx3x4 = np.zeros((t, 3, 4))
+
+        rigid_aligned_coords_txnx3[0, ...] = coords_subset_norm_t1.copy()
+        tform_tx3x4[0, :, :3] = np.eye(3)
+        tform_inv_tx3x4[0, :, :3] = np.eye(3)
+
+        path_result = str(Path(self.results_dir) / "rotation_alignment.h5")
+        if not Path(path_result).exists():
+            with h5py.File(path_result, "w") as f:
+                f.create_dataset("rigid_aligned_coords", data=rigid_aligned_coords_txnx3)
+                f.create_dataset("tform", data=tform_tx3x4)
+                f.create_dataset("tform_inv", data=tform_inv_tx3x4)
+                print(f"Initial rotation alignment results was saved in {path_result}")
+
+        plt.ioff()
+
+        for t_ref in tqdm(range(t_ref_start, t+1)):
+            coords_subset_norm_t2_pre, _, _, segmented_coords_norm_t2_pre, segmented_pos_t2_pre, subset_t2_pre = self.load_normalized_coords(
+                t_ref - 1, mean=mean_t1, scale=scale_t1)
+            coords_subset_norm_t2, _, _, segmented_coords_norm_t2, segmented_pos_t2, subset_t2 = self.load_normalized_coords(
+                t_ref, mean=mean_t1, scale=scale_t1)
+            matched_pairs_t2_t2pre = _match_fpm_prgls(self.match_model, fpm_model_rot, coords_subset_norm_t2, coords_subset_norm_t2_pre)
+            if t_ref == 2:
+                updated_pairs_t2_t1 = matched_pairs_t2_t2pre.copy()
             else:
-                segmented_pos_t, subset_t = self._get_segmented_pos(t)
-                tform = get_transform(segmented_pos_t.real[subset_t], segmented_pos_ref.real[subset_ref], predict_method=self.get_similarity,
-                                                           match_model=self.match_model, match_method="coherence", similarity_threshold=0.4)
-                affine_matrix[t - 1, ...] = tform.params.T[:3,:3]
-            print(affine_matrix[t-1,...])
+                matched_pairs_t2pre_t1 = np.load(str(pairs_folder / f't_{t_ref - 1:06d}.npy'))
+                updated_pairs_t2_t1 = link_pairs(matched_pairs_t2pre_t1, matched_pairs_t2_t2pre)
 
+            rigid_aligned_ref_coords, tform = align_by_control_points(coords_subset_norm_t2, coords_subset_norm_t1,
+                                                                      updated_pairs_t2_t1,
+                                                                      method="euclidean")
+            n, m = rigid_aligned_ref_coords.shape[0], coords_subset_norm_t1.shape[0]
+            _, similarity_scores = predict_matching_prgls(updated_pairs_t2_t1,
+                                                          rigid_aligned_ref_coords,
+                                                          rigid_aligned_ref_coords,
+                                                          coords_subset_norm_t1,
+                                                          (m, n), beta=BETA, lambda_=LAMBDA)
+            updated_pairs_t2_t1 = greedy_match(similarity_scores, threshold=0.4)
+            rigid_aligned_ref_coords, tform = align_by_control_points(coords_subset_norm_t2, coords_subset_norm_t1,
+                                                                      updated_pairs_t2_t1,
+                                                                      method="euclidean")
+            np.save(str(pairs_folder / f't_{t_ref:06d}.npy'), updated_pairs_t2_t1)
 
+            for id_ref, id_tgt in updated_pairs_t2_t1:
+                rigid_aligned_coords_txnx3[t_ref - 1, id_tgt, :] = rigid_aligned_ref_coords[id_ref, :]
+            tform_tx3x4[t_ref - 1, ...] = tform.params[:3, :]
+            tform_inv_tx3x4[t_ref - 1, ...] = np.linalg.inv(tform.params)[:3, :]
 
-    def predict_cell_positions(self, t1: int, t2: int, confirmed_coord_t1: Coordinates = None,
-                               match_confirmed_t1_and_seg_t1=None,
-                               beta: float = BETA, lambda_: float = LAMBDA, smoothing=0,
-                               post_processing: str = "prgls", filter_points: bool = True, verbosity: int = 0,
-                               with_shift: bool = True, learning_rate: float = 0.5,
-                               show_raw=False) -> Tuple[Coordinates, ndarray]:
+            fig1 = self._plot_matching(f"Matching", coords_subset_norm_t1, coords_subset_norm_t2,
+                                scale_t1, mean_t1,  updated_pairs_t2_t1[:, [1, 0]], t_tgt, t_ref, plot_initial_matching,display=False)
+            fig1.savefig('./figure1.png', dpi=90, facecolor='white')
+            plt.close(fig1)
+            fig2 = self._plot_matching(f"Matching rotated", coords_subset_norm_t1, rigid_aligned_ref_coords,
+                                scale_t1, mean_t1,  updated_pairs_t2_t1[:, [1, 0]], t_tgt, t_ref, plot_initial_matching, display=False)
+            fig2.savefig('./figure2.png', dpi=90, facecolor='white')
+            plt.close(fig2)
+            combine_two_png(t=t_ref, alignment_folder=alignment_folder, arrangement=arrangement)
+
+            with h5py.File(path_result, "a") as f:
+                f["rigid_aligned_coords"][t_ref - 1, :, :] = rigid_aligned_coords_txnx3[t_ref - 1]
+                f["tform"][t_ref - 1, :, :] = tform.params[:3, :]
+                f["tform_inv"][t_ref - 1, :, :] = np.linalg.inv(tform.params)[:3, :]
+
+    def match_first_20_volumes(self, reference_target_vols_list):
+        num = 20
+        tgt_list = [reference_target_vols_list[0][0][0]] + [tgt for _, tgt in reference_target_vols_list[:num-1]]
+        with h5py.File(str(Path(self.results_dir) / f"matches_1_to_{num}.h5"), "w") as f:
+            for i in tqdm(range(num)):
+                t1 = tgt_list[i]
+                for j in range(num):
+                    if i == j:
+                        continue
+                    t2 = tgt_list[j]
+                    _, pairs = self.predict_cell_positions(t1, t2)
+                    f.create_dataset(f"{i + 1}_{j + 1}", data=pairs)
+
+    def save_optimized_matches_in_first_20_volumes(self, reference_target_vols_list: list, pairs_lists_20: list, path_raw_images: dict):
+        """Predict the cell positions, and then save the predicted positions and pairs"""
+        t1 = reference_target_vols_list[0][0][0] # initial volume of the confirmed segmentation
+        result_path  = Path(self.results_dir) / "matchings"
+        result_path.mkdir(exist_ok=True, parents=True)
+        plt.ioff()
+        for t_target in tqdm(range(1, len(pairs_lists_20))):
+            t2 = reference_target_vols_list[t_target - 1][1]
+            coords_subset_norm_t1, segmented_coords_norm_t1, segmented_pos_t1, subset_t1 = self.load_rotated_normalized_coords(t1)
+            coords_subset_norm_t2, segmented_coords_norm_t2, segmented_pos_t2, subset_t2 = self.load_rotated_normalized_coords(t2)
+            pairs = pairs_lists_20[t_target]
+
+            ref_ptrs_confirmed, ref_ptrs_tracked_t2 = self.predict_pos_all_cells(pairs, segmented_coords_norm_t1,
+                                                                                 segmented_coords_norm_t2)
+
+            confirmed_coord, corrected_labels_image = self.finetune_positions_in_image(ref_ptrs_tracked_t2, t2)
+
+            segmented_coords_norm_t1, segmented_coords_norm_t2, ref_ptrs_confirmed, _ref_ptrs_tracked_t2 = (
+                rotate_for_visualization(self.rotation_matrix,
+                            (segmented_coords_norm_t1, segmented_coords_norm_t2, ref_ptrs_confirmed, ref_ptrs_tracked_t2)))
+            fig = plot_pairs_and_movements(segmented_coords_norm_t1, segmented_coords_norm_t2, t1, t2,
+                                        ref_ptrs_confirmed, _ref_ptrs_tracked_t2, display_fig=False, show_ids=False)
+            self.save_tracking_results(confirmed_coord, corrected_labels_image, t=t2, images_path=path_raw_images)
+            fig.savefig(str(result_path/ f"matching_t{t2:06d}.png"), dpi=90, facecolor='white')
+            plt.close(fig)
+
+        plt.ion()
+
+    def finetune_positions_in_image(self, ref_ptrs_tracked_t2, t2):
+        tracked_coords_t2 = rigid_transform(self.inv_tform_tx3x4[t2 - 1, ...],
+                                            ref_ptrs_tracked_t2) * self.scale_vol1 + self.mean_vol1
+        tracked_coords_t2_pred = Coordinates(tracked_coords_t2,
+                                             interpolation_factor=self.coords2image.image_pars["scale_z"],
+                                             voxel_size=self.coords2image.image_pars["voxel_size"], dtype="real")
+        confirmed_coord, corrected_labels_image = self.coords2image.accurate_correction(t2,
+                                                                                        self.stardist_model.config.grid,
+                                                                                        tracked_coords_t2_pred,
+                                                                                        ensemble=True, max_repetition=2)
+        return confirmed_coord, corrected_labels_image
+
+    def predict_pos_all_cells(self, pairs, segmented_coords_norm_t1, segmented_coords_norm_t2):
+        # Find these cells that were not matched in previous procedures
+        missed_cells = np.setdiff1d(self.common_ids_in_coords, pairs[:, 0], assume_unique=True)
+        missed_cells, common_ind_miss, pairs_ind_miss = np.intersect1d(self.common_ids_in_coords, missed_cells,
+                                                                       return_indices=True)
+        intersect_cells, common_ind_intersect, pairs_ind_intersect = np.intersect1d(self.common_ids_in_coords,
+                                                                                    pairs[:, 0], return_indices=True)
+        ref_ptrs_confirmed = segmented_coords_norm_t1[self.common_ids_in_coords]
+
+        # Assign positions for these matched cells
+        ref_ptrs_tracked_t2 = np.zeros_like(ref_ptrs_confirmed)
+        for ref, id1, id2 in zip(intersect_cells, common_ind_intersect, pairs_ind_intersect):
+            ref_ptrs_tracked_t2[id1, :] = segmented_coords_norm_t2[pairs[id2, 1], :]
+
+        # Assign postions for the unmatched cells with KNN predictions
+        if len(missed_cells) > 0:
+            ref_ptrs_tracked_t2[common_ind_miss] = predict_new_positions_knn(pairs, segmented_coords_norm_t1,
+                                                                             segmented_coords_norm_t2,
+                                                                             segmented_coords_norm_t1[missed_cells, :])
+        return ref_ptrs_confirmed, ref_ptrs_tracked_t2
+
+    def track_vols_after20(self, reference_target_vols_list: list, pairs_lists_20: list, path_raw_images: dict, num_ensemble: int = 1,
+                           restart: int = 0):
+        with h5py.File(str(self.results_dir / "tracking_results"), "a") as f:
+            for i, pairs in enumerate(pairs_lists_20[1:]):
+                _, tgt = reference_target_vols_list[i]
+                if f"pairs_initial_to_{tgt}" in f:
+                    del f[f"pairs_initial_to_{tgt}"]
+                f.create_dataset(f"pairs_initial_to_{tgt}", data=pairs)
+
+        t0 = reference_target_vols_list[0][0][0]
+        coords_subset_norm_t0, segmented_coords_norm_t0, segmented_pos_t0, subset_t0 = self.load_rotated_normalized_coords(t0)
+        num_cells_t0 = segmented_pos_t0.real.shape[0]
+
+        plt.ioff()
+        for i in tqdm(range(19 + restart, len(reference_target_vols_list))):
+            ref_list, tgt = reference_target_vols_list[i]
+            coords_subset_norm_tgt, segmented_coords_norm_tgt, segmented_pos_tgt, subset_tgt = self.load_rotated_normalized_coords(tgt)
+            num_cells_tgt = segmented_pos_tgt.real.shape[0]
+            matches_matrix_ini_to_tgt = np.zeros((num_cells_t0, num_cells_tgt), dtype=int)
+
+            # Calculate the matching by FPM + PRGLS + Ensemble votes
+            for ref in ref_list[:num_ensemble]:
+                _, pairs_ref_tgt = self.predict_cell_positions(ref, tgt)
+                if t0 == ref:
+                    pairs_t0_ref = None
+                else:
+                    with h5py.File(str(self.results_dir / "tracking_results"), "r") as f:
+                        pairs_t0_ref = f[f"pairs_initial_to_{ref}"][:]
+                matches_matrix_ini_to_tgt = combine_links(pairs_t0_ref, pairs_ref_tgt, matches_matrix_ini_to_tgt)
+            pairs_t0_tgt = matrix2pairs(matches_matrix_ini_to_tgt, num_cells_t0, num_ensemble)
+
+            # Re-link from initial volume to target volume and save the matched pairs
+            _, similarity_scores = predict_matching_prgls(pairs_t0_tgt,
+                                                          segmented_coords_norm_t0,
+                                                          segmented_coords_norm_t0,
+                                                          segmented_coords_norm_tgt,
+                                                          (num_cells_tgt, num_cells_t0), beta=BETA, lambda_=LAMBDA)
+            updated_pairs_t0_tgt = greedy_match(similarity_scores, threshold=0.4)
+            with h5py.File(str(self.results_dir / "tracking_results"), "a") as f:
+                if f"pairs_initial_to_{tgt}" in f:
+                    del f[f"pairs_initial_to_{tgt}"]
+                f.create_dataset(f"pairs_initial_to_{tgt}", data=updated_pairs_t0_tgt)
+
+            # Predict positions of all confirmed cells
+            confirmed_cells_pos_t0, confirmed_cells_pos_tgt = self.predict_pos_all_cells(updated_pairs_t0_tgt, segmented_coords_norm_t0,
+                                                                                 segmented_coords_norm_tgt)
+            # Finetune the cell positions in the raw image
+            confirmed_cells_finetuned_pos_tgt, finetuned_labels_image = self.finetune_positions_in_image(confirmed_cells_pos_tgt, tgt)
+
+            _segmented_coords_norm_t0, _segmented_coords_norm_tgt, _confirmed_cells_pos_t0, _confirmed_cells_pos_tgt = \
+                rotate_for_visualization(self.rotation_matrix,
+                    (segmented_coords_norm_t0, segmented_coords_norm_tgt, confirmed_cells_pos_t0, confirmed_cells_pos_tgt))
+            fig = plot_pairs_and_movements(_segmented_coords_norm_t0, _segmented_coords_norm_tgt, t0, tgt,
+                                           _confirmed_cells_pos_t0, _confirmed_cells_pos_tgt, display_fig=False, show_ids=False)
+            self.save_tracking_results(confirmed_cells_finetuned_pos_tgt, finetuned_labels_image, t=tgt, images_path=path_raw_images)
+            fig.savefig(str(Path(self.results_dir) / "matchings" / f"matching_t{tgt:06d}.png"), dpi=90, facecolor='white')
+            plt.close(fig)
+        plt.ion()
+
+    def _num_all_cells(self, t):
+        with h5py.File(str(self.results_dir / 'coords.h5'), 'r') as f:
+            num_inliers_t0 = f[f'combined_coords_{str(t - 1).zfill(6)}'].shape[0]
+        return num_inliers_t0
+
+    def save_tracking_results(self, coords: Coordinates, corrected_labels_image: ndarray, t: int,
+                              images_path: dict):
+        """
+        Save the tracking results, including coordinates, corrected labels image, and the merged image + label
+
+        Parameters
+        ----------
+        coords : Coordinates
+            The corrected coordinates of cell centers.
+        corrected_labels_image : ndarray
+            The corrected labels image.
+        t : int
+            The time point of the tracked image.
+        images_path : dict
+            The path to the raw image.
+        """
+        with h5py.File(str(self.coords2image.results_folder / 'tracking_results.h5'), 'a') as f:
+            f["tracked_labels"][t - 1, :, 0, :, :] = corrected_labels_image.transpose((2, 0, 1))
+            f["tracked_coordinates"][t - 1, :, :] = coords.real
+
+        raw_img = load_2d_slices_at_time(images_path, t=t)
+        self.coords2image.save_merged_labels(corrected_labels_image, raw_img, t, self.coords2image.cmap_colors)
+
+    def pairwise_pointsets_distances(self):
+        self.corresponding_coords_txnx3, self.tform_tx3x4, self.inv_tform_tx3x4 = self.load_rotation_alignment()
+
+        self.distances_txt = pairwise_pointsets_distances(self.corresponding_coords_txnx3)
+        self.mean_coords_nx3 = np.nanmean(self.corresponding_coords_txnx3, axis=0)
+
+        t, n, _ = self.corresponding_coords_txnx3.shape
+        dist_t = np.zeros((t))
+        for i in range(n):
+            dist_i_t = cdist(self.corresponding_coords_txnx3[:, i, :], self.mean_coords_nx3[i:i+1, :], metric='euclidean')[:, 0]
+            # Replaces any NaN values in the distance matrix with the mean of the non-NaN values
+            dist_i_t[np.isnan(dist_i_t)] = np.nanmean(dist_i_t)
+            dist_t += dist_i_t
+        center_point = np.argmin(dist_t)
+        return self.distances_txt, center_point+1
+
+    def load_rotation_alignment(self):
+        with h5py.File(str(Path(self.results_dir) / "rotation_alignment.h5"), "r") as f:
+            corresponding_coords_txnx3 = f["rigid_aligned_coords"][:]
+            tform_tx3x4 = f["tform"][:]
+            inv_tform_tx3x4 = f["tform_inv"][:]
+        return corresponding_coords_txnx3, tform_tx3x4, inv_tform_tx3x4
+
+    def rigid_align(self, points_nx3: ndarray, t):
+        return rigid_transform(self.tform_tx3x4[t-1], points_nx3)
+
+    def inv_rigid_align(self, points_nx3: ndarray, t):
+        return rigid_transform(self.inv_tform_tx3x4[t-1], points_nx3)
+
+    def load_normalized_coords(self, t: int, mean: float = None, scale: float = None):
+        segmented_pos, subset = self._get_segmented_pos(t)
+        if mean is None or scale is None:
+            segmented_coords_norm, (mean, scale) = normalize_points(segmented_pos.real, return_para=True)
+        else:
+            segmented_coords_norm = (segmented_pos.real - mean) / scale
+        coords_subset_norm = segmented_coords_norm[subset]
+        return coords_subset_norm, mean, scale, segmented_coords_norm, segmented_pos, subset
+
+    def cal_rotation_matrix_xyplane(self, t_initial: int):
+        segmented_pos, subset = self._get_segmented_pos(t_initial)
+        points = segmented_pos.real[subset][:, :2]
+
+        pca = PCA(n_components=1)
+        pca.fit(points)
+        pc1 = pca.components_[0]
+
+        angle = np.arccos(pc1[0] / np.linalg.norm(pc1))
+
+        if pc1[1] < 0:
+            angle = -angle
+
+        self.rotation_matrix = np.array([[np.cos(angle), -np.sin(angle)],
+                                    [np.sin(angle), np.cos(angle)]])
+        self.rotation_matrix = self.rotation_matrix.dot(np.asarray([[0, -1], [1, 0]]))
+
+    def load_rotated_normalized_coords(self, t: int, t0: int = 1):
+        if self.corresponding_coords_txnx3 is None:
+            self.corresponding_coords_txnx3, self.tform_tx3x4, self.inv_tform_tx3x4 = self.load_rotation_alignment()
+
+        if self.mean_vol1 is None:
+            _, self.mean_vol1, self.scale_vol1, _, _, _ = self.load_normalized_coords(t0)
+
+        _, _, _, segmented_coords_norm, segmented_pos, subset = self.load_normalized_coords(
+            t, mean=self.mean_vol1, scale=self.scale_vol1)
+        segmented_coords_norm = rigid_transform(self.tform_tx3x4[t-1,...], segmented_coords_norm)
+        coords_subset_norm = segmented_coords_norm[subset]
+        return coords_subset_norm, segmented_coords_norm, segmented_pos, subset
+
+    def predict_cell_positions(self, t1: int, t2: int, confirmed_coord_t1: ndarray = None, subset_confirmed = None,
+                               beta: float = BETA, lambda_: float = LAMBDA,
+                               filter_points: bool = True, verbosity: int = 0,
+                               with_shift: bool = True, learning_rate: float = 0.5) -> Tuple[Coordinates, ndarray]:
         """
         Predicts the positions of cells in a 3D image at time step t2, based on their positions at time step t1.
 
@@ -141,10 +497,6 @@ class TrackerLite:
             The beta parameter for the prgls model.
         lambda_:
             The lambda parameter for the prgls model.
-        smoothing:
-            The smoothing parameter for the tps model.
-        post_processing:
-            The post-processing method. "prgls" or "tps".
         filter_points:
             Whether to filter out the outliers points that do not have corresponding points.
         verbosity:
@@ -155,120 +507,115 @@ class TrackerLite:
         learning_rate:
             The learning rate for updating the predicted points, between 0 and 1.
 
-        Returns:
+        Returns
         --------
         tracked_coords_t2_pred: Coordinates
             The predicted cell positions of confirmed cells at time step t2.
-        match_confirmed_t1_and_seg_t2: ndarray, shape (n, 2)
-            The matching between the confirmed cell positions at time step t1 and the segmentation at time step t2.
+        pairs_seg_t1_seg_t2: ndarray, shape (n, 2)
+            The matching between the segmentation at time step t1 and the segmentation at time step t2, including these "weak" cells
         """
-        def _plot_matching(title: str, zy_view: bool = False):
-            s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
-            title = title + ", zy-view" if zy_view else title
-            fig = plot_matching(ref_ptrs=(coords_subset_t1 * scale_t1 + mean_t1)[s_],
-                                tgt_ptrs=(coords_subset_t2 * scale_t1 + mean_t1)[s_],
-                                pairs_px=_matched_pairs_subset,
-                                t1=t1, t2=t2)
-            fig.suptitle(title, fontsize=20, y=0.9)
-
-        def _plot_move_seg(title: str, zy_view: bool = False):
-            s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
-            title = title + ", zy-view" if zy_view else title
-            fig, _ = plot_move(ref_ptrs=moved_coords_t1[s_],
-                            tgt_ptrs=segmented_coords_norm_t2[s_],
-                            predicted_ref_ptrs=predicted_coords_t1_to_t2[s_],
-                            t1=t1, t2=t2)
-            fig.suptitle(title, fontsize=20, y=0.9)
-
-        def _plot_move_final(title: str, zy_view: bool = False):
-            s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
-            title = title + ", zy-view" if zy_view else title
-            fig, _ = plot_move(
-                ref_ptrs=confirmed_coord_t1.real[s_],
-                tgt_ptrs=segmented_pos_t2.real[subset[1]][s_],
-                predicted_ref_ptrs=tracked_coords_t2[s_],
-                t1=t1, t2=t2
-            )
-            fig.suptitle(title, fontsize=20, y=0.9)
+        post_processing = "prgls"
+        smoothing = 0  # not used in "prgls"
 
         assert t2 not in self.miss_frame
         plot_matching = plot_initial_matching if with_shift else plot_initial_matching_one_panel
         plot_move = plot_predicted_movements if with_shift else plot_predicted_movements_one_panel
 
-        # Load coordinates at t1 and t2
-        segmented_pos_t1, subset_t1 = self._get_segmented_pos(t1)
-        if confirmed_coord_t1 is None:
-            confirmed_coord_t1 = segmented_pos_t1
-        segmented_pos_t2, subset_t2 = self._get_segmented_pos(t2)
+        # Load normalized coordinates at t1 and t2: segmented_pos is un-rotated, while other coords are rotated
+        coords_subset_norm_t1, segmented_coords_norm_t1, segmented_pos_t1, subset_t1 = self.load_rotated_normalized_coords(t1)
+        coords_subset_norm_t2, segmented_coords_norm_t2, segmented_pos_t2, subset_t2 = self.load_rotated_normalized_coords(t2)
         subset = (subset_t1, subset_t2)
 
-        # Normalize coordinates
-        confirmed_coords_norm_t1, (mean_t1, scale_t1) = normalize_points(confirmed_coord_t1.real, return_para=True)
-        segmented_coords_norm_t2 = (segmented_pos_t2.real - mean_t1) / scale_t1
-        segmented_coords_norm_t1 = (segmented_pos_t1.real - mean_t1) / scale_t1
+        if confirmed_coord_t1 is None:
+            confirmed_coords_norm_t1 = coords_subset_norm_t1.copy()
+            subset_confirmed = subset_t1
+        else:
+            confirmed_coords_norm_t1 = (confirmed_coord_t1 - self.mean_vol1) / self.scale_vol1
 
-        # Initialize the subset of the points for initial matching
-        coords_subset_t1 = segmented_coords_norm_t1[subset[0]]
-        coords_subset_t2 = segmented_coords_norm_t2[subset[1]]
-        moved_coords_t1 = segmented_coords_norm_t1.copy()
         n, m = segmented_coords_norm_t1.shape[0], segmented_coords_norm_t2.shape[0]
-        match_confirmed_t1_and_seg_t1 = np.arange(confirmed_coord_t1.real.shape[0]).repeat(2).reshape(-1, 2)
+        aligned_coords_subset_norm_t1, coords_subset_norm_t2, _, affine_tform = affine_align_by_fpm(self.match_model,
+                                                                          coords_norm_t1=coords_subset_norm_t1,
+                                                                          coords_norm_t2=coords_subset_norm_t2)
+        aligned_segmented_coords_norm_t1 = affine_tform(segmented_coords_norm_t1)
+        aligned_confirmed_coords_norm_t1 = affine_tform(confirmed_coords_norm_t1)
+        moved_seg_coords_t1 = aligned_segmented_coords_norm_t1.copy()
 
-        iter = 4
+        iter = 3
         for i in range(iter):
-            _matched_pairs_subset = self.initial_matching(coords_subset_t1, coords_subset_t2,
-                                                  verbosity, _plot_matching, i)
+            _matched_pairs_subset = self.initial_matching(aligned_coords_subset_norm_t1, coords_subset_norm_t2,
+                                                          self.mean_vol1, self.scale_vol1, t1, t2, plot_matching,
+                                                          verbosity, i)
             matched_pairs = np.column_stack(
                 (subset[0][_matched_pairs_subset[:, 0]], subset[1][_matched_pairs_subset[:, 1]]))
 
-            # Predict the corresponding positions in t2 of all the segmented cells in t1
-            predicted_coords_t1_to_t2 = predict_new_positions(
-                matched_pairs, confirmed_coords_norm_t1, moved_coords_t1, segmented_coords_norm_t2,
-                post_processing, smoothing, (m, n), beta, lambda_)
-
             if i == iter - 1:
-                tracked_coords_norm_t2 = predicted_coords_t1_to_t2.copy()
-                common_elements_seg_t1 = np.intersect1d(match_confirmed_t1_and_seg_t1[:, 1], matched_pairs[:, 0])
-                index_pairs = np.asarray([(np.where(match_confirmed_t1_and_seg_t1[:, 1] == element)[0][0],
-                                np.where(matched_pairs[:, 0] == element)[0][0]) for element in
-                               common_elements_seg_t1])
-                match_confirmed_t1_and_seg_t2 = np.concatenate((match_confirmed_t1_and_seg_t1[index_pairs[:,0], 0:1],
-                                                                matched_pairs[index_pairs[:,1], 1:2]), axis=1)
-                tracked_coords_norm_t2[match_confirmed_t1_and_seg_t2[:, 0], :] = segmented_coords_norm_t2[match_confirmed_t1_and_seg_t2[:, 1], :]
+                tracked_coords_t1_to_t2, posterior_mxn = predict_new_positions(
+                    matched_pairs, aligned_confirmed_coords_norm_t1, aligned_segmented_coords_norm_t1,
+                    segmented_coords_norm_t2,
+                    post_processing, smoothing, (m, n), beta, lambda_)
+
+                tracked_coords_norm_t2 = tracked_coords_t1_to_t2.copy()
+                pairs_seg_t1_seg_t2 = greedy_match(posterior_mxn, threshold=0.5)
+                pairs_in_confirmed_subset = np.asarray(
+                    [(np.nonzero(subset_confirmed==i)[0][0], j) for i, j in pairs_seg_t1_seg_t2 if i in subset_confirmed])
+                tracked_coords_norm_t2[pairs_in_confirmed_subset[:, 0], :] = segmented_coords_norm_t2[pairs_in_confirmed_subset[:, 1], :]
             else:
+                # Predict the corresponding positions in t2 of all the segmented cells in t1
+                predicted_coords_t1_to_t2, posterior_mxn = predict_new_positions(
+                    matched_pairs, aligned_segmented_coords_norm_t1, aligned_segmented_coords_norm_t1,
+                    segmented_coords_norm_t2,
+                    post_processing, smoothing, (m, n), beta, lambda_)
+
+                moved_seg_coords_t1_rot, segmented_coords_norm_t2_rot, predicted_coords_t1_to_t2_rot = rotate_for_visualization(
+                    self.rotation_matrix, (moved_seg_coords_t1, segmented_coords_norm_t2 , predicted_coords_t1_to_t2))
                 if verbosity >= 3:
-                    _plot_move_seg(f"Predict movements after {i} iteration")
+                    self._plot_move_seg(f"Predict movements after {i} iteration", moved_seg_coords_t1_rot,
+                                        segmented_coords_norm_t2_rot,
+                                        predicted_coords_t1_to_t2_rot, self.scale_vol1, self.mean_vol1, t1, t2, plot_move)
                 if verbosity >= 4:
-                    _plot_move_seg(f"Predict movements after {i} iteration", zy_view=True)
+                    self._plot_move_seg(f"Predict movements after {i} iteration", moved_seg_coords_t1_rot,
+                                        segmented_coords_norm_t2_rot,
+                                        predicted_coords_t1_to_t2_rot, self.scale_vol1, self.mean_vol1, t1, t2, plot_move, zy_view=True)
 
                 if filter_points:
                     # Predict the corresponding positions in t1 of all the segmented cells in t2
-                    predicted_coords_t2_to_t1 = predict_new_positions(
-                        matched_pairs[:, [1, 0]], segmented_coords_norm_t2, segmented_coords_norm_t2, moved_coords_t1,
+                    predicted_coords_t2_to_t1, _ = predict_new_positions(
+                        matched_pairs[:, [1, 0]], segmented_coords_norm_t2, segmented_coords_norm_t2, aligned_segmented_coords_norm_t1,
                         post_processing, smoothing, (n, m), beta, lambda_)
 
-                    coords_subset_t1, coords_subset_t2, subset = \
+                    aligned_coords_subset_norm_t1, coords_subset_norm_t2, subset = \
                         add_or_remove_points(
-                        predicted_coords_t1_to_t2, predicted_coords_t2_to_t1, moved_coords_t1, segmented_coords_norm_t2,
-                        matched_pairs)
+                            predicted_coords_t1_to_t2, predicted_coords_t2_to_t1,
+                            aligned_segmented_coords_norm_t1, segmented_coords_norm_t2,
+                            matched_pairs)
 
-                moved_coords_t1 += (predicted_coords_t1_to_t2 - moved_coords_t1) * learning_rate
-                coords_subset_t1 = moved_coords_t1[subset[0]]
+                moved_seg_coords_t1 += (predicted_coords_t1_to_t2 - moved_seg_coords_t1) * learning_rate
+                aligned_coords_subset_norm_t1 = moved_seg_coords_t1[subset[0]]
 
-        self.print_info(post_processing)
+        tracked_coords_t2 = tracked_coords_norm_t2 * self.scale_vol1 + self.mean_vol1
 
-        tracked_coords_t2 = tracked_coords_norm_t2 * scale_t1 + mean_t1
+        segmented_coords_norm_t1_rotated, segmented_coords_norm_t2_rot = rotate_for_visualization(self.rotation_matrix,
+                        (segmented_coords_norm_t1, segmented_coords_norm_t2))
         if verbosity >= 1:
-            _plot_move_final(f"Final prediction")
+            self.print_info(post_processing)
+            self._plot_matching_final(f"Matching iter={i}",
+                                      segmented_coords_norm_t1_rotated * self.scale_vol1 + self.mean_vol1,
+                                      segmented_coords_norm_t2_rot * self.scale_vol1 + self.mean_vol1, pairs_seg_t1_seg_t2, t1, t2,
+                                      plot_matching)
+            self._plot_matching_final(f"Matching iter={i}",
+                                segmented_pos_t1.real, segmented_pos_t2.real, pairs_seg_t1_seg_t2, t1, t2, plot_matching)
         if verbosity >= 4:
-            _plot_move_final(f"Final prediction (x-z)", zy_view=True)
+            self._plot_matching_final(f"Matching iter={i}",
+                                      segmented_pos_t1.real, segmented_pos_t2.real, pairs_seg_t1_seg_t2, t1, t2,
+                                      plot_matching, zy_view=True)
 
-        tracked_coords_t2_pred = Coordinates(tracked_coords_t2, interpolation_factor=self.proofed_coords_vol1.interpolation_factor,
-                                  voxel_size=self.proofed_coords_vol1.voxel_size, dtype="real")
-        return tracked_coords_t2_pred, match_confirmed_t1_and_seg_t2
+        tracked_coords_t2_pred = Coordinates(tracked_coords_t2,
+                                             interpolation_factor=self.coords2image.image_pars["scale_z"],
+                                             voxel_size=self.coords2image.image_pars["voxel_size"], dtype="real")
+        return tracked_coords_t2_pred, pairs_seg_t1_seg_t2
 
-    def initial_matching(self, filtered_segmented_coords_norm_t1, filtered_segmented_coords_norm_t2, verbosity,
-                         _plot_matching, i):
+    def initial_matching(self, filtered_segmented_coords_norm_t1, filtered_segmented_coords_norm_t2,
+                         mean_t2, scale_t2, t1, t2, plot_matching, verbosity, i):
         # Generate similarity scores between the filtered segmented coords
         similarity_scores = self.get_similarity(self.match_model, filtered_segmented_coords_norm_t1,
                                                 filtered_segmented_coords_norm_t2,
@@ -277,12 +624,68 @@ class TrackerLite:
         matched_pairs = get_match_pairs(similarity_scores, filtered_segmented_coords_norm_t1,
                                         filtered_segmented_coords_norm_t2, threshold=self.similarity_threshold,
                                         method=self.match_method)
+
+        filtered_segmented_coords_norm_t1_rotated, filtered_segmented_coords_norm_t2_rotated = rotate_for_visualization(self.rotation_matrix,
+                            (filtered_segmented_coords_norm_t1, filtered_segmented_coords_norm_t2))
+
         # Generate figures showing the matching
         if (verbosity >= 2 and i == 0) or (verbosity >= 3 and i >= 1):
-            _plot_matching(f"Matching iter={i}")
+            fig = self._plot_matching(f"Matching iter={i}",
+                                filtered_segmented_coords_norm_t1_rotated, filtered_segmented_coords_norm_t2_rotated,
+                                scale_t2, mean_t2, matched_pairs, t1, t2, plot_matching)
         if verbosity >= 4:
-            _plot_matching(f"Matching iter={i}", zy_view=True)
+            fig = self._plot_matching(f"Matching iter={i}",
+                                filtered_segmented_coords_norm_t1_rotated, filtered_segmented_coords_norm_t2_rotated,
+                                scale_t2, mean_t2, matched_pairs, t1, t2, plot_matching, zy_view=True)
         return matched_pairs
+
+    @staticmethod
+    def _plot_matching(title: str, coords_subset_t1, coords_subset_t2, scale_t2, mean_t2,
+                       _matched_pairs_subset, t1, t2, plot_matching,
+                       zy_view: bool = False, display=True):
+        s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
+        title = title + ", zy-view" if zy_view else title
+        fig = plot_matching(ref_ptrs=(coords_subset_t1 * scale_t2 + mean_t2)[s_],
+                            tgt_ptrs=(coords_subset_t2 * scale_t2 + mean_t2)[s_],
+                            pairs_px2=_matched_pairs_subset,
+                            t1=t1, t2=t2, display_fig=display)
+        fig.suptitle(title, fontsize=20, y=0.9)
+        return fig
+
+    @staticmethod
+    def _plot_matching_final(title: str, coords_t1, coords_t2,
+                             _matched_pairs_subset, t1, t2, plot_matching,
+                             zy_view: bool = False):
+        s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
+        title = title + ", zy-view" if zy_view else title
+        fig = plot_matching(ref_ptrs=coords_t1[s_],
+                            tgt_ptrs=coords_t2[s_],
+                            pairs_px2=_matched_pairs_subset,
+                            t1=t1, t2=t2)
+        fig.suptitle(title, fontsize=20, y=0.9)
+
+    @staticmethod
+    def _plot_move_seg(title: str, moved_coords_t1, segmented_coords_norm_t2, predicted_coords_t1_to_t2,
+                       scale_t2, mean_t2, t1, t2, plot_move, zy_view: bool = False):
+        s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
+        title = title + ", zy-view" if zy_view else title
+        fig, _ = plot_move(ref_ptrs=moved_coords_t1[s_] * scale_t2 + mean_t2,
+                        tgt_ptrs=segmented_coords_norm_t2[s_] * scale_t2 + mean_t2,
+                        predicted_ref_ptrs=predicted_coords_t1_to_t2[s_] * scale_t2 + mean_t2,
+                        t1=t1, t2=t2)
+        fig.suptitle(title, fontsize=20, y=0.9)
+
+    @staticmethod
+    def _plot_move_final(title: str, confirmed_coord_t1, segmented_pos_t2, tracked_coords_t2, subset, t1, t2, plot_move, zy_view: bool = False):
+        s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
+        title = title + ", zy-view" if zy_view else title
+        fig, _ = plot_move(
+            ref_ptrs=confirmed_coord_t1.real[s_],
+            tgt_ptrs=segmented_pos_t2.real[subset[1]][s_],
+            predicted_ref_ptrs=tracked_coords_t2[s_],
+            t1=t1, t2=t2
+        )
+        fig.suptitle(title, fontsize=20, y=0.9)
 
     def print_info(self, post_processing):
         print(f"Matching method: {self.match_method}")
@@ -297,62 +700,99 @@ class TrackerLite:
                                    adjacent=adjacent):
             loaded_coord_t1 = np.load(
                 str(self.results_dir / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(4)}.npy"))
-            loaded_coord_t1_ = Coordinates(loaded_coord_t1, coord_t1.interpolation_factor, coord_t1.voxel_size,
+            _loaded_coord_t1 = Coordinates(loaded_coord_t1, coord_t1.interpolation_factor, coord_t1.voxel_size,
                                            dtype="real")
-            coord_prgls.append(self.predict_cell_positions(t1=t1, t2=t2, confirmed_coord_t1=loaded_coord_t1_, beta=beta,
+            coord_prgls.append(self.predict_cell_positions(t1=t1, t2=t2, confirmed_coord_t1=_loaded_coord_t1.real, beta=beta,
                                                            lambda_=lambda_, post_processing=post_processing,
                                                            verbosity=verbosity).real)
         return Coordinates(trim_mean(coord_prgls, 0.1, axis=0),
-                           interpolation_factor=self.proofed_coords_vol1.interpolation_factor,
-                           voxel_size=self.proofed_coords_vol1.voxel_size, dtype="real")
+                           interpolation_factor=self.coords2image.image_pars["scale_z"],
+                           voxel_size=self.coords2image.image_pars["voxel_size"], dtype="real")
 
-    def match_by_ffn(self, t1: int, t2: int, confirmed_coord_t1: Coordinates = None):
-        print(f"Matching method: {self.match_method}")
+    def match_by_nn(self, t1: int, t2: int, match_model=None, match_method=None, top_down=True):
+        if match_method is None:
+            print(f"Matching method: {self.match_method}")
+        else:
+            print(f"Matching method: {match_method}")
         print(f"Threshold for similarity: {self.similarity_threshold}")
         assert t2 not in self.miss_frame
         segmented_pos_t1, inliers_t1 = self._get_segmented_pos(t1)
         segmented_pos_t2, inliers_t2 = self._get_segmented_pos(t2)
 
-        if confirmed_coord_t1 is None:
-            confirmed_coord_t1 = segmented_pos_t1
+        coords_subset_t1 = segmented_pos_t1.real[inliers_t1]
+        coords_subset_t2 = segmented_pos_t2.real[inliers_t2]
 
-        pairs_px2 = self.match_two_point_sets(confirmed_coord_t1, segmented_pos_t2)
-        fig = plot_initial_matching(confirmed_coord_t1.real, segmented_pos_t2.real, pairs_px2, t1, t2)
+        pairs_px2 = self.match_two_point_sets(coords_subset_t1, coords_subset_t2, match_model=match_model, match_method=match_method)
 
-    def match_two_point_sets(self, confirmed_coord_t1, segmented_pos_t2):
+        fig = plot_initial_matching(coords_subset_t1, coords_subset_t2, pairs_px2, t1, t2, top_down=top_down)
+        return pairs_px2
+
+    def match_two_point_sets(self, confirmed_coord_t1, segmented_pos_t2, match_model=None, match_method=None):
         confirmed_coords_norm_t1, (mean_t1, scale_t1) = normalize_points(confirmed_coord_t1.real, return_para=True)
         segmented_coords_norm_t2 = (segmented_pos_t2.real - mean_t1) / scale_t1
-        initial_matching = self.get_similarity(self.match_model, confirmed_coords_norm_t1, segmented_coords_norm_t2,
+        if match_model is None:
+            match_model = self.match_model
+        if match_method is None:
+            match_method = self.match_method
+        initial_matching = self.get_similarity(match_model, confirmed_coords_norm_t1, segmented_coords_norm_t2,
                                                K_POINTS)
         updated_matching = initial_matching.copy()
         pairs_px2 = get_match_pairs(updated_matching, confirmed_coords_norm_t1, segmented_coords_norm_t2,
-                                    threshold=self.similarity_threshold, method=self.match_method)
+                                    threshold=self.similarity_threshold, method=match_method)
         return pairs_px2
 
     def _get_segmented_pos(self, t: int) -> Tuple[Coordinates, ndarray]:
         """Get segmented positions and extra positions from stardist model"""
-        interp_factor = self.proofed_coords_vol1.interpolation_factor
-        voxel_size = self.proofed_coords_vol1.voxel_size
+        interp_factor = self.coords2image.image_pars["scale_z"]
+        voxel_size = self.coords2image.voxel_size
+        image_size_xyz = self.coords2image.image_pars["image_size_xyz"]
 
-        with h5py.File(str(self.results_dir / "seg.h5"), "r") as seg_file:
-            coordinates_stardist = seg_file[f'coords_{str(t-1).zfill(6)}'][:]
-            prob_map = self.coords2image.load_prob_map(self.stardist_model.config.grid, t-1, seg_file)
-        extra_coordinates = get_full_cell_candidates(coordinates_stardist, prob_map)
-        combined_coordinates = np.concatenate((coordinates_stardist, extra_coordinates), axis=0)
+        if (self.coords2image.results_folder / 'coords.h5').exists():
+            with h5py.File(str(self.coords2image.results_folder / 'coords.h5'), 'r') as f:
+                combined_coordinates = f[f'combined_coords_{str(t-1).zfill(6)}'][:]
+                num_inliers = f[f'combined_coords_{str(t-1).zfill(6)}'].attrs["num"]
+        else:
+            with h5py.File(str(self.results_dir / "seg.h5"), "r") as seg_file:
+                coordinates_stardist = seg_file[f'coords_{str(t-1).zfill(6)}'][:]
+                prob_map = self.coords2image.load_prob_map(self.stardist_model.config.grid, t - 1, seg_file, image_size_xyz)
+            extra_coordinates = get_full_cell_candidates(coordinates_stardist, prob_map)
+            if extra_coordinates.shape[0] != 0:
+                combined_coordinates = np.concatenate((coordinates_stardist, extra_coordinates), axis=0)
+            else:
+                combined_coordinates = coordinates_stardist
+            num_inliers = len(coordinates_stardist)
+
         pos = Coordinates(combined_coordinates, interpolation_factor=interp_factor, voxel_size=voxel_size, dtype="raw")
-        inliers = np.arange(len(coordinates_stardist))
+        inliers = np.arange(num_inliers)
         return pos, inliers
 
-    def activities(self, raw_path: str, discard_ratio: float = 0.1):
-        tracked_labels_path = self.results_dir / TRACK_RESULTS / LABELS
-        filenames = glob(str(tracked_labels_path / "*t*.tif"))
-        assert len(filenames) > 0, f"No labels files were found in {tracked_labels_path / '*t*.tif'}"
-        numbers = [int(re.findall(r"t(\d+)", f)[0]) for f in filenames]
-        smallest_number = min(numbers)
-        largest_number = max(numbers)
+    def combine_weak_cells(self):
+        image_size_xyz = self.coords2image.image_pars["image_size_xyz"]
 
-        for t in range(smallest_number, largest_number + 1):
-            print(f"t={t}...", end="\r")
+        with h5py.File(str(self.results_dir / "seg.h5"), "r") as seg_file:
+            vol_num = seg_file["prob"].shape[0]
+            for t in tqdm(range(vol_num)):
+                coordinates_stardist = seg_file[f'coords_{str(t).zfill(6)}'][:]
+                prob_map = self.coords2image.load_prob_map(self.stardist_model.config.grid, t, seg_file, image_size_xyz)
+                extra_coordinates = get_full_cell_candidates(coordinates_stardist, prob_map)
+                if extra_coordinates.shape[0] != 0:
+                    combined_coordinates = np.concatenate((coordinates_stardist, extra_coordinates), axis=0)
+                else:
+                    combined_coordinates = coordinates_stardist
+                num = len(coordinates_stardist)
+
+                with h5py.File(str(self.coords2image.results_folder / 'coords.h5'), 'a') as f:
+                    dset = f.create_dataset(f'combined_coords_{str(t).zfill(6)}', data=combined_coordinates)
+                    dset.attrs["num"] = num
+
+
+    def activities(self, raw_path: dict, discard_ratio: float = 0.1):
+        seg_file = h5py.File(str(self.results_dir / "seg.h5"), "r")
+        track_file = h5py.File(str(self.results_dir / "tracking_results.h5"), "r")
+        vol_num = seg_file["prob"].shape[0]
+        per = (1 - discard_ratio) * 100
+
+        for t in tqdm(range(1, vol_num+1)):
             try:
                 # Load 2D slices at time t
                 raw = load_2d_slices_at_time(raw_path, t=t)
@@ -361,56 +801,128 @@ class TrackerLite:
                 print(f"Warning: Raw images at t={t - 1} cannot be loaded! Stop calculation!")
                 break
 
-            try:
-                # Load 2D slices at time t
-                labels_img = load_2d_slices_at_time(str(tracked_labels_path / "*t%06i*.tif"), t=t, do_normalize=False)
-            except FileNotFoundError:
-                # Handle missing image files
-                print(f"Warning: Label images at t={t - 1} cannot be loaded!")
-                if t == smallest_number:
-                    print("Warning: stop calculation!")
-                    break
-                else:
-                    print(f"Warning: skip volume {t - 1}!")
-                    activities[t - smallest_number, :] = np.nan
-                    continue
+            # Load 2D slices at time t
+            labels_img = track_file["tracked_labels"][t-1, :, 0, :, :]
 
-            if t == smallest_number:
+            if t == 1:
                 cell_num = np.max(labels_img)
-                activities = np.zeros((largest_number - smallest_number + 1, cell_num))
+                activities = np.zeros((vol_num, cell_num))
 
-            per = (1 - discard_ratio) * 100
+            found_bbox = ndimage.find_objects(labels_img, max_label=cell_num)
             for label in range(1, cell_num + 1):
-                intensity_label_i = raw[labels_img == label]
-                if intensity_label_i.size == 0:
-                    activities[t - smallest_number, label - 1] = np.nan
-                else:
+                bbox = found_bbox[label - 1]
+                if found_bbox[label - 1] is not None:
+                    intensity_label_i = raw[bbox][labels_img[bbox] == label]
                     threshold = np.percentile(intensity_label_i, per)
-                    activities[t - smallest_number, label - 1] = np.mean(
+                    activities[t - 1, label - 1] = np.mean(
                         intensity_label_i[intensity_label_i > threshold])
+                else:
+                    activities[t - 1, label - 1] = np.nan
         return activities
+
+    def visualize_ensemble_sampling(self, reference_target_vols_list: list, points_tx2: ndarray, center_point: int, width=1):
+        visualize_folder = Path(self.results_dir) / "ensemble_visualize"
+        visualize_folder.mkdir(exist_ok=True, parents=True)
+
+        tgt_list = np.asarray([center_point] + [id for _, id in reference_target_vols_list])
+        t = points_tx2.shape[0]
+
+        fig = plt.figure(figsize=(12 + 4 * width, 11))
+        main_gs = gridspec.GridSpec(1, 2, width_ratios=[3, width], figure=fig)
+
+        ax1 = fig.add_subplot(main_gs[0, 0])
+        right_gs = gridspec.GridSpecFromSubplotSpec(10, 2, subplot_spec=main_gs[0, 1])
+
+        ax_list = []
+        for i in range(10):
+            ax = fig.add_subplot(right_gs[i, 0])
+            ax_list.append(ax)
+
+        for i in range(10):
+            ax = fig.add_subplot(right_gs[i, 1])
+            ax_list.append(ax)
+
+        xmin = np.nanmin(self.corresponding_coords_txnx3[..., 1])
+        xmax = np.nanmax(self.corresponding_coords_txnx3[..., 1])
+        ymin = np.nanmin(self.corresponding_coords_txnx3[..., 0])
+        ymax = np.nanmax(self.corresponding_coords_txnx3[..., 0])
+
+        if (xmax - xmin) > 2 * (ymax - ymin):
+            y_mid = (ymax + ymin) / 2
+            ymax = y_mid + (xmax - xmin) / 4
+            ymin = y_mid - (xmax - xmin) / 4
+        else:
+            x_mid = (xmax + xmin) / 2
+            xmax = x_mid + (ymax - ymin)
+            xmin = x_mid - (ymax - ymin)
+
+        for frame in tqdm(range(t - 1)):
+            refs, tgt = reference_target_vols_list[frame]
+
+            ax_list[0].set_title(f'refs vs tgt points')
+            ax_list[10].set_title(f'tgt = {tgt}', c="r")
+
+            ax1.scatter(points_tx2[:, 0], points_tx2[:, 1], c="grey")
+            ax1.scatter(points_tx2[tgt_list[:frame + 1] - 1, 0], points_tx2[tgt_list[:frame + 1] - 1, 1], c="orange")
+            ax1.scatter(points_tx2[refs - 1, 0], points_tx2[refs - 1, 1], c="b")
+            ax1.scatter(points_tx2[tgt - 1, 0], points_tx2[tgt - 1, 1], c="r")
+            ax1.set_title('MDS visualization of the point sets')
+
+            for i in range(20):
+                if i + 1 > len(refs):
+                    ax_list[i].set_xticklabels([])
+                    ax_list[i].set_yticklabels([])
+                    continue
+                pts = self.corresponding_coords_txnx3[refs[i] - 1, ...]
+                pts_2 = self.corresponding_coords_txnx3[tgt - 1, ...]
+                ax_list[i].scatter(pts[:, 1], pts[:, 0], c="b", s=5)
+                ax_list[i].scatter(pts_2[:, 1], pts_2[:, 0], c="r", s=5)
+                ax_list[i].set_ylim(ymin, ymax)
+                ax_list[i].set_xlim(xmin, xmax)
+                ax_list[i].invert_yaxis()
+                ax_list[i].set_xticklabels([])
+                ax_list[i].set_yticklabels([])
+                ax_list[i].text(1, 1, f'{refs[i]}', transform=ax_list[i].transAxes, ha='right', va='top', c="b")
+
+            plt.tight_layout()
+            fig.savefig(str(visualize_folder / f'{frame:06d}.png'), dpi=90, facecolor='white')
+            ax1.cla()
+            for ax in ax_list:
+                ax.cla()
+        plt.close(fig)
 
 
 def predict_new_positions(matched_pairs, confirmed_coords_norm_t1, segmented_coords_norm_t1, segmented_coords_norm_t2,
                           post_processing, smoothing: float, similarity_scores_shape: Tuple[int, int], beta=BETA, lambda_=LAMBDA):
+    posterior_mxn = None
     if post_processing == "tps":
         tracked_coords_norm_t2 = tps_with_two_ref(matched_pairs, segmented_coords_norm_t2,
                                                   segmented_coords_norm_t1, confirmed_coords_norm_t1, smoothing)
     elif post_processing == "prgls":
         normalized_prob = cal_norm_prob(matched_pairs, similarity_scores_shape)
-        tracked_coords_norm_t2, _ = prgls_with_two_ref(normalized_prob, segmented_coords_norm_t2,
+        tracked_coords_norm_t2, posterior_mxn = prgls_with_two_ref(normalized_prob, segmented_coords_norm_t2,
                                                        segmented_coords_norm_t1, confirmed_coords_norm_t1,
                                                        beta=beta, lambda_=lambda_)
     else:
         raise ValueError("post_prossing should be either 'tps' or 'prgls'")
-    return tracked_coords_norm_t2
+    return tracked_coords_norm_t2, posterior_mxn
 
 
-def cal_norm_prob(matched_pairs, shape):
-    normalized_prob = np.full(shape, 0.1 / (shape[1] - 1))
-    for ref, tgt in matched_pairs:
-        normalized_prob[tgt, ref] = 0.9
-    return normalized_prob
+def predict_new_positions_knn(pairs_lx2: ndarray, coords_t1: ndarray, coords_t2: ndarray, confirmed_coords_t1: ndarray,
+                              n_neighbors: int = 5):
+    src = coords_t1[pairs_lx2[:, 0]]
+    dst = coords_t2[pairs_lx2[:, 1]]
+    tracked_coords_t1 = np.zeros_like(confirmed_coords_t1)
+    from sklearn.neighbors import NearestNeighbors
+
+    knn_model = NearestNeighbors(n_neighbors=n_neighbors).fit(src)
+    neighbors_inds = knn_model.kneighbors(confirmed_coords_t1, return_distance=False)
+    for i, inds in enumerate(neighbors_inds):
+        _src = src[inds, :]
+        _dst = dst[inds, :]
+        mean_mov = np.mean(_dst - _src, axis=0)
+        tracked_coords_t1[i, :] = confirmed_coords_t1[i, :] + mean_mov
+    return tracked_coords_t1
 
 
 def tps_with_two_ref(matched_pairs: List[Tuple[int, int]], ptrs_tgt_mx3: ndarray, ptrs_ref_nx3: ndarray,
@@ -421,93 +933,6 @@ def tps_with_two_ref(matched_pairs: List[Tuple[int, int]], ptrs_tgt_mx3: ndarray
     tps = RBFInterpolator(prts_ref_matched_n1x3, prts_tgt_matched_m1x3, kernel='thin_plate_spline', smoothing=smoothing)
     # Apply the TPS transformation to the source points
     return tps(tracked_ref_lx3)
-
-
-def prgls_with_two_ref(normalized_prob_mxn, ptrs_tgt_mx3: ndarray, ptrs_ref_nx3: ndarray, tracked_ref_lx3: ndarray,
-                       beta: float, lambda_: float, max_iteration: int = MAX_ITERATION) \
-        -> Tuple[ndarray, ndarray]:
-    """
-    Similar with prgls_quick, but use another ptrs_ref_nx3 to calculate the basis movements, and applied the movements
-    to the tracked_ref_lx3
-    """
-
-    # Initiate parameters
-    ratio_outliers = 0.05  # This is the gamma
-    distance_weights_nxn = gaussian_kernel(ptrs_ref_nx3, ptrs_ref_nx3, beta ** 2)  # This is the Gram matrix
-    distance_weights_nxl = gaussian_kernel(tracked_ref_lx3, ptrs_ref_nx3, beta ** 2)
-    sigma_square = dist_squares(ptrs_ref_nx3, ptrs_tgt_mx3).mean() / 3  # This is the sigma^2
-    predicted_coord_ref_nx3 = ptrs_ref_nx3.copy()  # This is the T(X)
-    predicted_coord_ref_lx3 = tracked_ref_lx3.copy()
-
-    ############################################################################
-    # iteratively update predicted_ref_n1x3, ratio_outliers, sigma_square, and posterior_mxn. Plot and save results
-    ############################################################################
-    for iteration in range(1, max_iteration):
-        # E-step: update posterior probability P_mxn
-        posterior_mxn = estimate_posterior(normalized_prob_mxn, sigma_square, predicted_coord_ref_nx3, ptrs_tgt_mx3,
-                                           ratio_outliers)
-
-        # M-step: update predicted positions of reference set
-        # movements_basis_3xn is the parameter C
-        movements_basis_3xn = solve_movements_ref(sigma_square, lambda_, posterior_mxn, predicted_coord_ref_nx3,
-                                                  ptrs_tgt_mx3, distance_weights_nxn)
-        movements_ref_nx3 = np.dot(movements_basis_3xn, distance_weights_nxn).T
-        movements_tracked_lx3 = np.dot(movements_basis_3xn, distance_weights_nxl).T
-        if iteration > 1:
-            predicted_coord_ref_nx3 += movements_ref_nx3  # The first estimation is not reliable thus is discarded
-            predicted_coord_ref_lx3 += movements_tracked_lx3
-        sum_posterior = np.sum(posterior_mxn)
-        ratio_outliers = 1 - sum_posterior / ptrs_tgt_mx3.shape[0]
-
-        # Sometimes this value could become minus due to the inaccurate float representation in computer.
-        # Here I fixed this bug.
-        if ratio_outliers < 1E-4:
-            ratio_outliers = 1E-4
-
-        sigma_square = np.sum(dist_squares(predicted_coord_ref_nx3, ptrs_tgt_mx3) * posterior_mxn) / (3 * sum_posterior)
-
-        # Test convergence:
-        dist_sqrt = np.sqrt(np.sum(np.square(movements_ref_nx3)))
-        if dist_sqrt < 1E-3:
-            # print(f"Converged at iteration = {iteration}")
-            break
-
-    return predicted_coord_ref_lx3, posterior_mxn
-
-
-def dist_squares(ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray) -> ndarray:
-    ptrs_ref_mxnx3 = np.tile(ptrs_ref_nx3, (ptrs_tgt_mx3.shape[0], 1, 1))
-    ptrs_tgt_mxnx3 = np.tile(ptrs_tgt_mx3, (ptrs_ref_nx3.shape[0], 1, 1)).transpose((1, 0, 2))
-    dist2_mxn = np.sum(np.square(ptrs_ref_mxnx3 - ptrs_tgt_mxnx3), axis=2)
-    return dist2_mxn
-
-
-def gaussian_kernel(ptrs_ref_nx3, ptrs_tgt_mx3, sigma_square: float) -> ndarray:
-    ptrs_ref_mxnx3 = np.tile(ptrs_ref_nx3, (ptrs_tgt_mx3.shape[0], 1, 1))
-    ptrs_tgt_mxnx3 = np.tile(ptrs_tgt_mx3, (ptrs_ref_nx3.shape[0], 1, 1)).transpose((1, 0, 2))
-    dist_square_sum_mxn = np.sum(np.square(ptrs_ref_mxnx3 - ptrs_tgt_mxnx3), axis=2)
-    return np.exp(-dist_square_sum_mxn / (2 * sigma_square))
-
-
-def estimate_posterior(prior_p_mxn: ndarray, initial_sigma_square: float, predicted_ref_nx3: ndarray,
-                       ptrs_tgt_mx3: ndarray, ratio_outliers: float, vol: float = 1) -> ndarray:
-    p_pos_j_when_j_match_i_mxn = gaussian_kernel(predicted_ref_nx3, ptrs_tgt_mx3, initial_sigma_square)
-    p_pos_j_and_j_match_i_mxn = (1 - ratio_outliers) * prior_p_mxn * p_pos_j_when_j_match_i_mxn / (
-            2 * np.pi * initial_sigma_square) ** 1.5
-    posterior_sum_m = np.sum(p_pos_j_and_j_match_i_mxn, axis=1) + ratio_outliers / vol
-    posterior_mxn = p_pos_j_and_j_match_i_mxn / posterior_sum_m[:, None]
-    return posterior_mxn
-
-
-def solve_movements_ref(initial_sigma_square, lambda_, posterior_mxn, ptrs_ref_nx3, ptrs_tgt_mx3,
-                        scaling_factors_nxn):
-    n = ptrs_ref_nx3.shape[0]
-    posterior_sum_diag_nxn = np.diag(np.sum(posterior_mxn, axis=0))
-    coefficient_nxn = np.dot(scaling_factors_nxn,
-                             posterior_sum_diag_nxn) + lambda_ * initial_sigma_square * np.identity(n)
-    dependent_3xn = np.dot(ptrs_tgt_mx3.T, posterior_mxn) - np.dot(ptrs_ref_nx3.T, posterior_sum_diag_nxn)
-    movements_ref_3xn = np.linalg.solve(coefficient_nxn.T, dependent_3xn.T).T
-    return movements_ref_3xn
 
 
 def evenly_distributed_volumes(current_vol: int, sampling_number: int) -> List[int]:
@@ -547,3 +972,103 @@ def move_cells_from_scratch(stardist_model, path_raw_images, t1, t2, interpolati
         cells_missed
     )
     return labels_t1, moved_labels_img, raw_t1, raw_t2
+
+
+def initial_match_npy_files(coords_tgt_nx3: ndarray, fpm_model, tgt_vol = 1, coords_npy_files: List[str] = None,
+                  fpm_model_rot = None, path_result: str = "./initial_match.h5"):
+    t = len(coords_npy_files)
+
+    rigid_aligned_coords_txnx3 = np.full((t, *coords_tgt_nx3.shape), np.nan)
+    tform_tx3x4 = np.zeros((t, 3, 4))
+    tform_inv_tx3x4 = np.zeros((t, 3, 4))
+    points_tgt = coords_tgt_nx3.copy()
+    for i in range(t):
+        points_ref = np.load(coords_npy_files[i])[:, :3]
+        if i+1 == tgt_vol:
+            rigid_aligned_coords_txnx3[i,...] = points_tgt.copy()
+            tform_tx3x4[i, :,:3] = np.eye(3)
+            tform_inv_tx3x4[i, :,:3] = np.eye(3)
+            continue
+        else:
+            pairs_3 = _match_fpm_prgls(fpm_model, fpm_model_rot, points_ref, points_tgt)
+            rigid_aligned_coords_mx3, tform = align_by_control_points(points_ref, points_tgt, pairs_3, method="euclidean")
+            for id_ref, id_tgt in pairs_3:
+                rigid_aligned_coords_txnx3[i, id_tgt, :] = rigid_aligned_coords_mx3[id_ref, :]
+            tform_tx3x4[i, ...] = tform.params[:3, :]
+            tform_inv_tx3x4[i, ...] = np.linalg.inv(tform.params)[:3, :]
+        simple_progress_bar(i+1, t)
+
+    with h5py.File(path_result, "w") as f:
+        f.create_dataset("rigid_aligned_coords", data=rigid_aligned_coords_txnx3)
+        f.create_dataset("tform", data=tform_tx3x4)
+        f.create_dataset("tform_inv", data=tform_inv_tx3x4)
+        print(f"Saved initial match results in {path_result}")
+
+
+def link_pairs(matched_pairs_t2pre_t1, matched_pairs_t2_t2pre):
+    pairs_t2_t1 = []
+    for mid, ref in matched_pairs_t2pre_t1:
+        if mid in matched_pairs_t2_t2pre[:, 1]:
+            index = np.nonzero(matched_pairs_t2_t2pre[:, 1]==mid)[0][0]
+            pairs_t2_t1.append((matched_pairs_t2_t2pre[index, 0], ref))
+    return np.asarray(pairs_t2_t1)
+
+
+def rotate_for_visualization(rotation_matrix, coords_norm: Tuple[ndarray]):
+    coords_norm_rotated = [coords_i.copy() for coords_i in coords_norm]
+    if rotation_matrix is not None:
+        for i in range(len(coords_norm_rotated)):
+            coords_norm_rotated[i][:, :2] = coords_norm_rotated[i][:, :2].dot(rotation_matrix)
+    return coords_norm_rotated
+
+
+def combine_two_png(t: int, alignment_folder: Path, arrangement="vertical"):
+    from PIL import Image
+
+    image1 = Image.open('./figure1.png')
+    image2 = Image.open('./figure2.png')
+
+    if arrangement=="vertical":
+        width = max(image1.width, image2.width)
+        height = image1.height + image2.height
+
+        new_image = Image.new('RGB', (width, height))
+
+        new_image.paste(image1, (0, 0))
+        new_image.paste(image2, (0, image1.height))
+    else:
+        width = image1.width + image2.width
+        height = max(image1.height, image2.height)
+
+        new_image = Image.new('RGB', (width, height))
+
+        new_image.paste(image1, (0, 0))
+        new_image.paste(image2, (image1.width, 0))
+
+    new_image.save(str(alignment_folder / f't_{t:06d}.png'))
+
+
+def combine_links(pairs_t0_ref: ndarray, pairs_ref_tgt: ndarray, matches_matrix_ini_to_tgt: ndarray):
+    if pairs_t0_ref is None:
+        for ref, tgt in pairs_ref_tgt:
+            matches_matrix_ini_to_tgt[ref, tgt] += 1
+        return matches_matrix_ini_to_tgt
+
+    common_mid_values, pos1, pos2 = np.intersect1d(pairs_t0_ref[:, 1], pairs_ref_tgt[:, 0], return_indices=True)
+    for value, p1, p2 in zip(common_mid_values, pos1, pos2):
+        matches_matrix_ini_to_tgt[pairs_t0_ref[p1, 0], pairs_ref_tgt[p2, 1]] += 1
+    return matches_matrix_ini_to_tgt
+
+
+def matrix2pairs(matches_matrix_ini_to_tgt, num_cells_t0, num_ensemble):
+    pairs_t0_tgt = []
+    for i in range(num_cells_t0):
+        ref, tgt = np.unravel_index(np.argmax(matches_matrix_ini_to_tgt, axis=None),
+                                    matches_matrix_ini_to_tgt.shape)
+        if matches_matrix_ini_to_tgt[ref, tgt] < int(np.ceil(num_ensemble * 0.75)):
+            break
+        pairs_t0_tgt.append((ref, tgt))
+        matches_matrix_ini_to_tgt[ref, :] = 0
+        matches_matrix_ini_to_tgt[:, tgt] = 0
+    pairs_t0_tgt = np.asarray(pairs_t0_tgt)
+    return pairs_t0_tgt

@@ -13,7 +13,7 @@ from skimage.segmentation import relabel_sequential
 from tifffile import imread
 
 from CellTracker.plot import plot_predicted_movements
-from CellTracker.stardistwrapper import lbl_cmap
+from CellTracker.stardistwrapper import lbl_cmap, create_cmap
 from CellTracker.utils import load_2d_slices_at_time, recalculate_cell_boundaries
 
 PAD_WIDTH = 3
@@ -141,17 +141,20 @@ class Coordinates:
         return self._raw.shape[0]
 
 
-def mix_img_labels(corrected_labels_image: ndarray, raw_img: ndarray, interpolation_factor: int, alpha: float):
-    labels_rgb = lbl_cmap.colors[corrected_labels_image.max(axis=2)]
+def mix_img_labels(corrected_labels_image: ndarray, raw_img: ndarray, interpolation_factor: int, alpha: float, cmap_colors, cutoff=(70, 99.5)):
+    labels_rgb = cmap_colors[corrected_labels_image.max(axis=2)]
     labels_rgb = Image.fromarray((labels_rgb * 255).astype(np.uint8))
-    labels_rgb_xz = lbl_cmap.colors[corrected_labels_image.max(axis=0)].transpose(1, 0, 2)
+    labels_rgb_xz = cmap_colors[corrected_labels_image.max(axis=0)].transpose(1, 0, 2)
     labels_rgb_xz = np.repeat(labels_rgb_xz, interpolation_factor, axis=0)
     labels_rgb_xz = Image.fromarray((labels_rgb_xz * 255).astype(np.uint8))
     raw_img_xy = np.max(raw_img, axis=0)
-    raw_rgb = Image.fromarray((raw_img_xy * 255 / raw_img_xy.max()).astype(np.uint8)).convert('RGB')
+    p_bottom, p_top = np.percentile(raw_img_xy, cutoff[0]), np.percentile(raw_img_xy, cutoff[1])
+    normalized_raw_xy = (np.clip(raw_img_xy, p_bottom, p_top) * 255 / p_top).astype(np.uint8)
+    raw_rgb = Image.fromarray(normalized_raw_xy).convert('RGB')
     raw_img_xz = np.max(raw_img, axis=1)
     raw_img_xz = np.repeat(raw_img_xz, interpolation_factor, axis=0)
-    raw_rgb_xz = Image.fromarray((raw_img_xz * 255 / raw_img_xz.max()).astype(np.uint8)).convert('RGB')
+    normalized_raw_xz = (np.clip(raw_img_xz, p_bottom, p_top) * 255 / p_top).astype(np.uint8)
+    raw_rgb_xz = Image.fromarray(normalized_raw_xz).convert('RGB')
     merged_labels = Image.blend(labels_rgb, raw_rgb, alpha=alpha)
     merged_labels_xz = Image.blend(labels_rgb_xz, raw_rgb_xz, alpha=alpha)
     return merged_labels, merged_labels_xz
@@ -165,10 +168,10 @@ class CoordsToImageTransformer:
     subregions: List[Tuple[Tuple[slice, slice, slice], ndarray]]
     proofed_segmentation: ndarray
     z_slice_original_labels: slice
-    coord_vol1: Coordinates
+    coord_proof: Coordinates
     use_8_bit: bool
 
-    def __init__(self, results_folder: str, voxel_size: tuple):
+    def __init__(self, results_folder: str, image_pars: dict):
         """
         Initialize the CoordsToImageTransformer with a specified results folder and voxel size.
 
@@ -179,34 +182,73 @@ class CoordsToImageTransformer:
         voxel_size : tuple
             Voxel size in the format (x, y, z).
         """
-        self.voxel_size = np.asarray(voxel_size)
+        self.voxel_size = np.asarray(image_pars["voxel_size"])
+        self.image_pars = image_pars
         self.results_folder = Path(results_folder)
 
-    def load_segmentation(self, manual_vol1_path: str) -> None:
+    def load_segmentation(self, manual_seg_path: str, proof_vol: int) -> None:
         """
         Load the proofed segmentation from a single tif file.
 
         Parameters
         ----------
-        manual_vol1_path : str
+        manual_seg_path : str
             The path to the tif file of manually corrected segmentation.
+        proof_vol: int
+            The volume number of the manually corrected segmentation
         """
         # Load the proofed segmentation and relabel it to sequential integers
-        proofed_segmentation = imread(manual_vol1_path).transpose((1, 2, 0))
+        proofed_segmentation = imread(manual_seg_path).transpose((1, 2, 0))
         self.proofed_segmentation, _, _ = relabel_sequential(proofed_segmentation)
+        self.proofed_coords_vol = proof_vol
 
         # Print a message confirming that the proofed segmentation has been loaded and its shape
         print(
-            f"Loaded the proofed segmentations at vol 1 with {np.count_nonzero(np.unique(proofed_segmentation))} cells")
+            f"Loaded the proofed segmentations with {np.count_nonzero(np.unique(proofed_segmentation))} cells")
 
-    def interpolate(self, interpolation_factor: int, smooth_sigma: float = 2.5) -> None:
+    def update_filtered_segmentation(self, filtered_ids, images_path: dict, t_initial: int) -> None:
+        """Remove cells with ids not in filtered_ids"""
+        _trans_array = np.zeros((self.auto_corrected_segmentation.max()+1), dtype=int)
+        _trans_array[filtered_ids] = np.arange(1, len(filtered_ids)+1)
+        self.proofed_segmentation =  _trans_array[self.auto_corrected_segmentation]
+        #self.proofed_segmentation, _, _ = relabel_sequential(proofed_segmentation)
+        self.interpolate(fix_errors=False)
+
+        h, w, z = self.proofed_segmentation.shape
+        with h5py.File(images_path["h5_file"], 'r+') as f_raw:
+            t = f_raw[images_path["dset"]].shape[0]
+        resolution_h, resolution_w, resolution_z = self.image_pars["voxel_size"]
+
+        dtype = np.uint8 if self.use_8_bit else np.uint16
+        if not (self.results_folder / 'tracking_results.h5').exists():
+            with h5py.File(str(self.results_folder / 'tracking_results.h5'), 'w') as f:
+                dset = f.create_dataset('tracked_labels', (t, z, 1, h, w), chunks=(1, z, 1, h, w),
+                    compression="gzip", dtype=dtype, compression_opts=1)  # "lzf" compression can cause error in Fiji
+                dset.attrs['element_size_um'] = (resolution_z, resolution_h, resolution_w)
+                dset2 = f.create_dataset('tracked_coordinates', (t, *self.coord_proof.real.shape),
+                                         compression="gzip", compression_opts=1)
+
+        with h5py.File(str(self.results_folder / 'tracking_results.h5'), 'a') as f:
+            f["tracked_labels"][t_initial - 1, :, 0, :, :] = self.auto_corrected_segmentation.transpose((2, 0, 1)).astype(dtype)
+            f["tracked_coordinates"][t_initial - 1, :, :] = self.coord_proof.real
+
+        cmap = create_cmap(self.auto_corrected_segmentation, self.image_pars, max_color=20, dist_type="2d_projection")
+        self.cmap_colors = np.zeros((len(cmap.colors), 3))
+        for i in range(1, len(cmap.colors)):
+            self.cmap_colors[i, :] = cmap.colors[i][:3]
+        raw_img = load_2d_slices_at_time(images_path, t=t_initial)
+        self.save_merged_labels(self.auto_corrected_segmentation, raw_img, t_initial, self.cmap_colors)
+
+        # Print a message confirming that the proofed segmentation has been loaded and its shape
+        print(
+            f"updated the proofed segmentations with {np.count_nonzero(np.unique(self.auto_corrected_segmentation))} cells")
+
+    def interpolate(self, smooth_sigma: float = 2.5, fix_errors=True) -> None:
         """
         Interpolate the images along z axis and save the results in "track_results_xxx" folder
 
         Parameters
         ----------
-        interpolation_factor : int
-            The factor by which to interpolate the images along the z-axis.
         smooth_sigma : float, optional
             The sigma value to use for smoothing the interpolated images, by default 2.5.
 
@@ -234,8 +276,9 @@ class CoordsToImageTransformer:
                 interpolated_labels[:, :, self.z_slice_original_labels],
                 cell_overlaps_mask[:, :, self.z_slice_original_labels],
                 sampling_xy=self.voxel_size[:2])
-            return self.subregions, auto_corrected_segmentation
+            return auto_corrected_segmentation
 
+        interpolation_factor = self.image_pars["scale_z"]
         if interpolation_factor <= 0:
             raise ValueError("Interpolation factor must be greater than zero.")
 
@@ -249,32 +292,29 @@ class CoordsToImageTransformer:
                                              interpolation_factor * self.proofed_segmentation.shape[2],
                                              interpolation_factor)
 
-        _, smoothed_labels = extract_regions(self.proofed_segmentation)
+        smoothed_labels = extract_regions(self.proofed_segmentation)
 
         # Fix segmentation errors
-        corrected_segmentation, _ = fix_labeling_errors(smoothed_labels)
+        if fix_errors:
+            corrected_segmentation, _ = fix_labeling_errors(smoothed_labels)
+        else:
+            corrected_segmentation = smoothed_labels
 
-        self.subregions, self.auto_corrected_segmentation = extract_regions(corrected_segmentation)
+        self.auto_corrected_segmentation = extract_regions(corrected_segmentation)
 
         # Check if 8-bit is needed for saving the image
         self.use_8_bit = self.auto_corrected_segmentation.max() <= 255
         print(
-            f"The interpolated segmentations at vol 1 contains {np.count_nonzero(np.unique(self.auto_corrected_segmentation))} cells")
-
-        # Save labels in the first volume (interpolated)
-        save_tracked_labels(self.results_folder, self.auto_corrected_segmentation, t=1, use_8_bit=self.use_8_bit)
+            f"The interpolated segmentations contains {np.count_nonzero(np.unique(self.auto_corrected_segmentation))} cells")
 
         print("Calculating coordinates of cell centers...")
         # Calculate coordinates of cell centers at t=1
-        coord_vol1 = ndm.center_of_mass(
+        coord_proof = ndm.center_of_mass(
             self.auto_corrected_segmentation > 0,
             self.auto_corrected_segmentation,
             range(1, self.auto_corrected_segmentation.max() + 1)
         )
-        self.coord_vol1 = Coordinates(np.asarray(coord_vol1), interpolation_factor, self.voxel_size, dtype="raw")
-        coords_real_path = self.results_folder / TRACK_RESULTS / COORDS_REAL
-        coords_real_path.mkdir(parents=True, exist_ok=True)
-        np.save(str(coords_real_path / "coords0001.npy"), self.coord_vol1.real)
+        self.coord_proof = Coordinates(np.asarray(coord_proof), interpolation_factor, self.voxel_size, dtype="raw")
 
     def move_cells_in_3d_image(self, movements_nx3: ndarray = None, cells_missed: Set[int] = None):
         """
@@ -387,7 +427,7 @@ class CoordsToImageTransformer:
             The corrected labels image.
         """
         with h5py.File(str(self.results_folder / "seg.h5"), "r") as seg_file:
-            prob_map = self.load_prob_map(grid, t, seg_file)
+            prob_map = self.load_prob_map(grid, t - 1, seg_file, self.proofed_segmentation.shape)
 
         boundary_ids = set(self.get_cells_on_boundary(coords.real, ensemble=ensemble).tolist())
 
@@ -398,14 +438,14 @@ class CoordsToImageTransformer:
             # stop the repetition if correction converged
             if np.max(delta_coords.interp) < 0.5:
                 break
-        corrected_labels_image = self.move_cells_in_3d_image((coords - self.coord_vol1).interp, boundary_ids)
+        corrected_labels_image = self.move_cells_in_3d_image((coords - self.coord_proof).interp, boundary_ids)
         return coords, corrected_labels_image
 
-    def load_prob_map(self, grid, t, h5_file):
+    def load_prob_map(self, grid: tuple, t: int, h5_file, image_size_xyz: tuple):
         prob_map = h5_file["prob"][t, ...].transpose((1,2,0))
         prob_map = np.repeat(np.repeat(np.repeat(prob_map, grid[1], axis=0), grid[2], axis=1), grid[0], axis=2)
-        if prob_map.shape != self.proofed_segmentation.shape:
-            x_lim, y_lim, z_lim = self.proofed_segmentation.shape
+        if prob_map.shape != image_size_xyz:
+            x_lim, y_lim, z_lim = image_size_xyz
             prob_map = prob_map[:x_lim, :y_lim, :z_lim]
         return prob_map
 
@@ -431,7 +471,7 @@ class CoordsToImageTransformer:
             The difference in 3D cell coordinates between the corrected and original coordinates.
         """
         # generate labels image after applying the movements
-        displacements_from_vol1 = coords - self.coord_vol1
+        displacements_from_vol1 = coords - self.coord_proof
         labels_image_interp, mask_image_interp = self.move_cells(displacements_from_vol1.interp, boundary_ids)
         labels_image = labels_image_interp[:, :, self.z_slice_original_labels]
         mask_image = mask_image_interp[:, :, self.z_slice_original_labels]
@@ -451,42 +491,7 @@ class CoordsToImageTransformer:
 
         return corrected_coords, delta_coords
 
-    def save_tracking_results(self, coords: Coordinates, corrected_labels_image: ndarray, tracker, t1: int, t2: int,
-                              images_path: str):
-        """
-        Save the tracking results, including coordinates, corrected labels image, and a visualization of the matching
-        process.
-
-        Parameters
-        ----------
-        coords : Coordinates
-            The corrected coordinates of cell centers.
-        corrected_labels_image : ndarray
-            The corrected labels image.
-        tracker : TrackerLite
-            The tracker object responsible for tracking cells.
-        t1 : int
-            The first time point.
-        t2 : int
-            The second time point.
-        images_path : str
-            The path to the directory containing the raw images.
-        """
-        np.save(str(self.results_folder / TRACK_RESULTS / COORDS_REAL / ("coords%04d.npy" % t2)), coords.real)
-        save_tracked_labels(self.results_folder, corrected_labels_image, t2, self.use_8_bit)
-
-        raw_img = load_2d_slices_at_time(images_path, t=t2)
-        self.save_merged_labels(corrected_labels_image, raw_img, t2)
-
-        confirmed_coord_t1 = np.load(
-            str(self.results_folder / TRACK_RESULTS / COORDS_REAL / f"coords{str(t1).zfill(4)}.npy"))
-        segmented_pos_t2, _ = tracker._get_segmented_pos(t2)
-        fig, _ = plot_predicted_movements(confirmed_coord_t1, segmented_pos_t2.real, coords.real, t1, t2)
-        fig.savefig(self.results_folder / TRACK_RESULTS / "figure" / f"matching_{str(t2).zfill(4)}.png",
-                    facecolor='white')
-        plt.close()
-
-    def save_merged_labels(self, corrected_labels_image: ndarray, raw_img: ndarray, t: int):
+    def save_merged_labels(self, corrected_labels_image: ndarray, raw_img: ndarray, t: int, cmap_colors):
         """
         Save the merged labels, which is an overlay of the labels and raw images.
 
@@ -500,13 +505,13 @@ class CoordsToImageTransformer:
             The time point at which the merged labels are saved.
         """
         merged_labels, merged_labels_xz = mix_img_labels(
-            corrected_labels_image, raw_img, self.interpolation_factor, alpha=0.6)
+            corrected_labels_image, raw_img, self.interpolation_factor, alpha=0.6, cmap_colors=cmap_colors)
 
-        (self.results_folder / TRACK_RESULTS / MERGED_LABELS).mkdir(parents=True, exist_ok=True)
-        (self.results_folder / TRACK_RESULTS / MERGED_LABELS_XZ).mkdir(parents=True, exist_ok=True)
-        merged_labels.save(str(self.results_folder / TRACK_RESULTS / MERGED_LABELS / ("merged_labels_t%06d.png" % t)))
+        (self.results_folder / MERGED_LABELS).mkdir(parents=True, exist_ok=True)
+        (self.results_folder / MERGED_LABELS_XZ).mkdir(parents=True, exist_ok=True)
+        merged_labels.save(str(self.results_folder / MERGED_LABELS / ("merged_labels_t%06d.png" % t)))
         merged_labels_xz.save(
-            str(self.results_folder / TRACK_RESULTS / MERGED_LABELS_XZ / ("merged_labels_xz_t%06d.png" % t)))
+            str(self.results_folder / MERGED_LABELS_XZ / ("merged_labels_xz_t%06d.png" % t)))
 
 
 def save_tracked_labels(results_folder: Path, labels_xyz: ndarray, t: int, use_8_bit: bool):
@@ -527,6 +532,7 @@ def save_tracked_labels(results_folder: Path, labels_xyz: ndarray, t: int, use_8
     tracked_labels_path = results_folder / TRACK_RESULTS / LABELS
     tracked_labels_path.mkdir(parents=True, exist_ok=True)
     dtype = np.uint8 if use_8_bit else np.uint16
+
     for z in range(1, labels_xyz.shape[2] + 1):
         img2d = labels_xyz[:, :, z - 1].astype(dtype)
         Image.fromarray(img2d).save(str(tracked_labels_path / ("track_results_t%06i_z%04i.tif" % (t, z))))

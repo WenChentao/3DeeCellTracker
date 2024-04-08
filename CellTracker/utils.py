@@ -14,16 +14,9 @@ from sklearn.decomposition import PCA
 from tifffile import imread
 
 
-def load_2d_slices_at_time(images_path: str | dict, t: int, do_normalize: bool = True):
+def load_2d_slices_at_time(images_path: dict, t: int, do_normalize: bool = True):
     """Load all 2D slices at time t and normalize the resulted 3D image"""
-    if isinstance(images_path, str):
-        file_extension = os.path.splitext(images_path)[1]
-        assert file_extension in [".tif", ".tiff"], "Currently only TIFF sequences or HDF5/NWB dataset are supported"
-        slice_paths_at_t = sorted(glob(images_path % t))
-        if len(slice_paths_at_t) == 0:
-            raise FileNotFoundError(f"No image at time {t} was found")
-        x = imread(slice_paths_at_t)
-    elif isinstance(images_path, dict):
+    if isinstance(images_path, dict):
         file_extension = os.path.splitext(images_path["h5_file"])[1]
         assert file_extension in [".h5", ".hdf5", ".nwb"], "Currently only TIFF sequences or HDF5/NWB dataset are supported"
 
@@ -138,3 +131,37 @@ def simple_progress_bar(current, total, bar_length=50):
 
     sys.stdout.write("\rProgress: [{0}] {1}%".format(arrow + spaces, int(round(percent * 100))))
     sys.stdout.flush()
+
+
+
+
+    # # 获取顶点的数量
+    # n = len(adj_matrix)
+    # # 初始化结果数组
+    # result = [1] * n
+    # # 存储可用的颜色，False表示可用，True表示不可用
+    # available = [False] * n
+    #
+    # # 为其余顶点分配颜色
+    # for u in range(1, n):
+    #     # 检查所有相邻顶点，并标记它们的颜色为不可用
+    #     for v in range(n):
+    #         if adj_matrix[u][v] == 1 and result[v] != -1:
+    #             available[result[v]] = True
+    #
+    #     # 寻找第一个未被相邻顶点使用的颜色
+    #     color = 0
+    #     while color < n:
+    #         if not available[color]:
+    #             break
+    #         color += 1
+    #
+    #     # 为顶点u分配颜色
+    #     result[u] = color
+    #
+    #     # 重置可用颜色标记，以便下次使用
+    #     for v in range(n):
+    #         if adj_matrix[u][v] == 1 and result[v] != -1:
+    #             available[result[v]] = False
+    #
+    # # return result

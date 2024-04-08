@@ -1,5 +1,3 @@
-from typing import Tuple
-
 import h5py
 import numpy as np
 from numpy import ndarray
@@ -8,8 +6,8 @@ import pandas as pd
 from CellTracker.fpm import initial_matching_fpm
 from CellTracker.simple_alignment import pre_alignment, greedy_match, get_match_pairs, K_POINTS
 from CellTracker.robust_match import update_inliers_points
-from CellTracker.trackerlite import BETA, LAMBDA, cal_norm_prob, \
-    prgls_with_two_ref
+from CellTracker.test_matching_models import predict_matching_prgls
+from CellTracker.trackerlite import BETA, LAMBDA
 from CellTracker.plot import plot_initial_matching, plot_predicted_movements
 
 
@@ -262,13 +260,3 @@ def print_initial_info(match_method, similarity_threshold, verbosity):
         print(f"Matching method: {match_method}")
         print(f"Threshold for similarity: {similarity_threshold}")
         print(f"Post processing method: prgls")
-
-
-def predict_matching_prgls(matched_pairs, confirmed_coords_norm_t1, segmented_coords_norm_t1, segmented_coords_norm_t2,
-                           similarity_scores_shape: Tuple[int, int], beta=BETA, lambda_=LAMBDA):
-    normalized_prob = cal_norm_prob(matched_pairs, similarity_scores_shape)
-    tracked_coords_norm_t2, prob_mxn = prgls_with_two_ref(normalized_prob, segmented_coords_norm_t2,
-                                                   segmented_coords_norm_t1, confirmed_coords_norm_t1,
-                                                   beta=beta, lambda_=lambda_)
-    return tracked_coords_norm_t2, prob_mxn
-

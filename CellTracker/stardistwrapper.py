@@ -17,12 +17,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 from csbdeep.utils import Path, normalize
 from numpy import ndarray
+import scipy.ndimage.measurements as ndm
+from scipy.spatial.distance import cdist
+from sklearn.neighbors import NearestNeighbors
 from stardist import Rays_GoldenSpiral, fill_label_holes, random_label_cmap, calculate_extents, gputools_available
 from stardist.models import Config3D
 from stardist.utils import _normalize_grid
 from tifffile import imread, imwrite
 from tqdm import tqdm
 
+from CellTracker.plot import custom_tab20_cmap
 from CellTracker.utils import load_2d_slices_at_time
 from CellTracker.stardist3dcustom import StarDist3DCustom
 
@@ -41,13 +45,13 @@ def load_stardist_model(model_name: str = "stardist", basedir: str = STARDIST_MO
     return model
 
 
-def predict_and_save(images_path: str | dict, model: StarDist3DCustom, results_folder: str, t_start: int = None):
+def predict_and_save(images_path: dict, model: StarDist3DCustom, results_folder: str, t_start: int = None):
     """
     Load 2D slices of a 3D image stack obtained at time t and predict instance coordinates using a trained StarDist3DCustom model.
     Save the predicted coordinates as numpy arrays in a folder.
 
     Args:
-        images_path (str): The file path of the 3D image stack with 2D slices at each time point.
+        images_path (dict): The file path of the 3D image stack with 2D slices at each time point.
         model (StarDist3DCustom): A trained StarDist3DCustom model for instance segmentation of 3D image stacks.
         results_folder (str): The folder path to save the results.
         t_start (int): When provided, skip the previous time points that have been processed.
@@ -57,43 +61,7 @@ def predict_and_save(images_path: str | dict, model: StarDist3DCustom, results_f
     _results_folder.mkdir(parents=True, exist_ok=True)
     import h5py
 
-    # Get the list of image file names
-    if isinstance(images_path, str):
-        images_path_search = Path(images_path)
-        new_filename = "*t*" + images_path_search.suffix
-        filenames = glob(str(images_path_search.parent / new_filename))
-        assert len(filenames) > 0, f"No image files were found in {images_path_search.parent / new_filename}"
-        numbers = [int(re.findall(r"t(\d+)", f)[0]) for f in filenames]
-        smallest_number = max(min(numbers), t_start)
-        largest_number = max(numbers)
-
-        # Process images and predict instance coordinates
-        with h5py.File(str(_results_folder / "seg.h5"), 'a') as f_seg:
-            num_vol = largest_number - smallest_number + 1
-            with tqdm(total=num_vol, desc="Segmenting images", ncols=50) as pbar:
-                for t in range(smallest_number, largest_number + 1):
-                    try:
-                        # Load 2D slices at time t
-                        x = load_2d_slices_at_time(images_path, t=t)
-                        x = normalize(x, 1, 99.8, axis=(0, 1, 2))
-                        if t == smallest_number:
-                            dset_prob = f_seg.create_dataset('prob', shape=(num_vol, *x.shape),
-                                                             chunks=(1, *x.shape), dtype="float16",
-                                                             compression="lzf")
-                    except FileNotFoundError:
-                        # Handle missing image files
-                        print(f"Warning: Segmentation has been stopped since images at t={t - 1} cannot be loaded!")
-                        break
-                    (labels, details), prob_map = model.predict_instances(x)
-                    # Save predicted instance coordinates as numpy arrays
-                    dset_prob[t-smallest_number,...] = prob_map
-                    f_seg.create_dataset(f'coords_{str(t-smallest_number).zfill(6)}',
-                                         data=details["points"][:, [1, 2, 0]])
-                    if t == smallest_number:
-                        save_auto_seg_vol1(labels, _results_folder)
-                    pbar.update(1)
-            print(f"All images from t={smallest_number} to t={largest_number} have been Segmented")
-    elif isinstance(images_path, dict):
+    if isinstance(images_path, dict):
         file_extension = os.path.splitext(images_path["h5_file"])[1]
         with h5py.File(images_path["h5_file"], 'r+') as f_raw, h5py.File(str(_results_folder / "seg.h5"), 'a') as f_seg:
             raw_images = f_raw[images_path["dset"]]
@@ -114,36 +82,17 @@ def predict_and_save(images_path: str | dict, model: StarDist3DCustom, results_f
                     f_seg["prob"][t - 1, ...] = prob_map
                     f_seg.create_dataset(f'coords_{str(t - 1).zfill(6)}',
                                          data=details["points"][:, [1, 2, 0]])
-                    if t == 1:
-                        save_auto_seg_vol1(labels, _results_folder)
                     pbar.update(1)
             print(f"All images from t={1} to t={num_vol} have been Segmented")
     else:
         raise ValueError("images_path should be of str or dict type")
 
 
-def save_auto_seg_vol1(labels_xyz, results_folder: Path):
+def save_auto_seg(labels_xyz, results_folder: str, vol: int):
+    _results_folder = Path(results_folder)
+    _results_folder.mkdir(parents=True, exist_ok=True)
     dtype = np.uint8 if labels_xyz.max() <= 255 else np.uint16
-    imwrite(str(results_folder / "auto_vol1.tif"), labels_xyz.astype(dtype))
-
-
-def save_arrays_to_folder(arrays, folder_path):
-    """
-    Save a series of NumPy arrays to a folder with numbered filenames.
-
-    Args:
-        arrays (list): A list of NumPy arrays to save.
-        folder_path (str): The path to the folder to save the arrays in.
-    """
-    # Check if the folder exists and create it if necessary
-    path = Path(folder_path)
-    path.mkdir(parents=True, exist_ok=True)
-
-    # Loop over the arrays and save them to the folder with numbered filenames
-    for i, arr in enumerate(arrays):
-        filename = f"coords{str(i + 1).zfill(4)}.npy"
-        filepath = path / filename
-        np.save(filepath, arr)
+    imwrite(str(_results_folder / f"auto_vol_{vol}.tif"), labels_xyz.astype(dtype))
 
 
 def load_training_images(path_train_images: str, path_train_labels: str, max_projection: bool):
@@ -279,31 +228,104 @@ def plot_img_label_center_slice(img, lbl, img_title="image (XY slice)", lbl_titl
     plt.tight_layout()
 
 
-def plot_img_label_max_projection(img, lbl, img_title="image (max projection/x-y)", lbl_title="label (max projection)",
-                                  fig_width_px=1200, dpi=96):
+def create_cmap(label_image_3d: ndarray, image_pars: dict , max_color=20, dist_type="2d_projection"):
+    """
+    Create a cmap for label_image_3d, so that the neighboring cells will have different colors
+
+    Notes
+    -----
+    Both label_image_3d and image_pars["voxel_size"] should follow the order of (height, width, depth)
+    """
+    n = label_image_3d.max()
+    assert n==len(np.unique(label_image_3d))-1
+    assert max_color <= 20
+    coords_nx3 = ndm.center_of_mass(
+        label_image_3d > 0,
+        label_image_3d,
+        range(1, n + 1)
+    )
+    coords_nx3 = coords_nx3 * np.asarray(image_pars["voxel_size"]).reshape((1,3))
+
+    if dist_type == "2d_projection":
+        dist_nxk, indices_nxk = kneighbors_2d_projections(coords_nx3, max_color)
+    else:
+        dist_nxk, indices_nxk = kneighbors_3d(coords_nx3, max_color)
+    dist_nxn = np.full((n, n), np.inf)
+    for i, indices_i in enumerate(indices_nxk):
+        dist_nxn[i, indices_i[1:]] = dist_nxk[i, 1:]
+
+    colors = np.full((n), -1, dtype=int)
+    colored_cell = []
+    available_colors = np.arange(n, dtype=int)
+    for i in range(n):
+        ref_index, tgt_index = np.unravel_index(dist_nxn.argmin(), dist_nxn.shape)
+        for ind in [ref_index, tgt_index]:
+            if colors[ind] == -1:
+                color_nbrs = colors[indices_nxk[ind]]
+                colors[ind] = np.setdiff1d(available_colors, color_nbrs)[0]
+                if len(colored_cell) >= 1:
+                    dist_nxn[ind, np.asarray(colored_cell)] = np.inf
+                    dist_nxn[np.asarray(colored_cell), ind] = np.inf
+                colored_cell.append(ind)
+        if len(colored_cell)==n:
+            break
+
+    return custom_tab20_cmap(colors.tolist())
+
+
+def kneighbors_2d_projections(coords_nx3, k):
+    dist_nxn_xy = cdist(coords_nx3[:, [0, 1]], coords_nx3[:, [0, 1]], metric='euclidean')
+    dist_nxn_xz = cdist(coords_nx3[:, [2, 1]], coords_nx3[:, [2, 1]], metric='euclidean')
+    dist_nxn = np.minimum(dist_nxn_xy, dist_nxn_xz)
+    n = coords_nx3.shape[0]
+    indices_nxk = np.zeros((n, k), dtype=int)
+    dist_nxk = np.zeros((n, k), dtype=float)
+    for i, dist_n in enumerate(dist_nxn):
+        indices = np.argpartition(dist_n, k)[:k]
+        sorted_indices = indices[np.argsort(dist_n[indices])]
+        indices_nxk[i,:] = sorted_indices
+        dist_nxk[i, :] = dist_n[sorted_indices]
+    return dist_nxk, indices_nxk
+
+
+def kneighbors_3d(coords_nx3, k):
+    nbrs = NearestNeighbors(n_neighbors=k, algorithm='auto').fit(coords_nx3)
+    dist_nxk, indices_nxk = nbrs.kneighbors(coords_nx3)
+    return dist_nxk, indices_nxk
+
+
+def plot_img_label_max_projection(img, lbl, cmap, img_title="image (max projection/x-y)", lbl_title="label (max projection)",
+                                  fig_width_px=1200, dpi=96, gamma=5):
     fig_width_in = fig_width_px / dpi  # convert to inches assuming 96 dpi
     fig_height_in = fig_width_in / 1.618  # set height to golden ratio
     # Create a new figure with the calculated size
     fig, (ai, al) = plt.subplots(1, 2, figsize=(fig_width_in, fig_height_in))
 
-    ai.imshow(img.max(axis=0), clim=(0, 1), vmin=0, vmax=1)
+    _img = (img - img.min()) ** (1 / gamma)
+    bottom = np.percentile(_img[lbl == 0], 95)
+    top = np.percentile(_img[lbl > 0], 99)
+    ai.imshow(_img.max(axis=0), clim=(bottom, top))
     ai.set_title(img_title)
-    al.imshow(lbl.max(axis=0), cmap=lbl_cmap)
+    #al.imshow(lbl.max(axis=0), cmap=lbl_cmap)
+    al.imshow(lbl.max(axis=0), cmap=cmap)
     al.set_title(lbl_title)
     plt.tight_layout()
 
 
-def plot_img_label_max_projection_xz(img, lbl, img_title="image (max projection/x-z)",
+def plot_img_label_max_projection_xz(img, lbl, cmap, img_title="image (max projection/x-z)",
                                      lbl_title="label (max projection)",
-                                     fig_width_px=1200, dpi=96, scale_z: int = 1):
+                                     fig_width_px=1200, dpi=96, scale_z: int = 1, gamma=5):
     fig_width_in = fig_width_px / dpi  # convert to inches assuming 96 dpi
     fig_height_in = fig_width_in / 1.618  # set height to golden ratio
     # Create a new figure with the calculated size
     fig, (ai, al) = plt.subplots(1, 2, figsize=(fig_width_in, fig_height_in))
 
-    ai.imshow(img.max(axis=1), clim=(0, 1), vmin=0, vmax=1, aspect=scale_z)
+    _img = (img - img.min()) ** (1 / gamma)
+    bottom = np.percentile(_img[lbl == 0], 95)
+    top = np.percentile(_img[lbl > 0], 99)
+    ai.imshow(_img.max(axis=1), clim=(bottom, top), aspect=scale_z)
     ai.set_title(img_title)
-    al.imshow(lbl.max(axis=1), cmap=lbl_cmap, aspect=scale_z)
+    al.imshow(lbl.max(axis=1), cmap=cmap, aspect=scale_z)
     al.set_title(lbl_title)
     plt.tight_layout()
 
