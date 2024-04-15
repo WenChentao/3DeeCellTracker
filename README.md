@@ -41,6 +41,8 @@ To install 3DeeCellTracker, please follow the instructions below:
 If you encounter any issues or have any questions, please refer to the project's documentation or raise an issue in the GitHub repository.
 
 ## Quick Start
+- **Important**: Please use the notebooks [here](https://github.com/WenChentao/3DeeCellTracker/tree/v1.0.0) if you installed version 1.0.0 from PyPI. If you installed from the source code available at this repository, use the notebooks provided below.
+
 To learn how to track cells using 3DeeCellTracker, please refer to the following notebooks for examples. We recommend using StarDist for segmentation, as we have optimized the StarDist-based tracking programs for more convenient and quick cell tracking. Users can also use the old way with 3D U-Net.
 1. Train a custom deep neural network for segmenting cells in new optical conditions: 
     - [**Train 3D StarDist (notebook with results)**](Examples/use_stardist/train_stardist.ipynb)
