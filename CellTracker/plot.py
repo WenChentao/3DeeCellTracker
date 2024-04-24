@@ -1,6 +1,6 @@
 from __future__ import division, absolute_import, print_function, unicode_literals, annotations
 
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -20,7 +20,7 @@ def custom_tab20_cmap(map_index_to_tab20: List[int]):
 
 
 def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, ref_ptrs_confirmed: ndarray=None,
-                          fig_width_px=1800, dpi=96, ids_ref=None, ids_tgt=None, show_3d: bool = False, display_fig=True, top_down=True,
+                          fig_height_px=1500, dpi=96, ids_ref=None, ids_tgt=None, show_3d: bool = False, display_fig=True, top_down=True,
                           show_ids=True):
     """Draws the initial matching between two sets of 3D points and their matching relationships.
 
@@ -28,7 +28,8 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
         ref_ptrs (ndarray): A 2D array of shape (n, 3) containing the reference points.
         tgt_ptrs (ndarray): A 2D array of shape (n, 3) containing the target points.
         pairs_px2 (ndarray): A 2D array of shape (m, 2) containing the pairs of matched points.
-        fig_width_px (int): The width of the output figure in pixels. Default is 1200.
+        fig_height_px (int): The width of the output figure in pixels. Default is 1200.
+        fig_size (tuple): Ignore fig_width_px if this is not None
         dpi (int): The resolution of the output figure in dots per inch. Default is 96.
 
     Raises:
@@ -37,9 +38,10 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
     if show_3d:
         fig = plot_matching_with_arrows_3d_plotly(ref_ptrs, tgt_ptrs, pairs_px2, ids_ref, ids_tgt)
         return fig
+
     # Plot the scatters of the ref_points and tgt_points
-    ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1, t2, ids_ref, ids_tgt,
-                                               top_down=top_down, show_ids=show_ids)
+    ax1, ax2, fig = plot_two_pointset_scatters(dpi, ref_ptrs, tgt_ptrs, t1, t2, ids_ref, ids_tgt, fig_height_px=fig_height_px,
+                                               show_ids=show_ids)
 
     # Plot the matching relationships between the two sets of points
     for ref_index, tgt_index in pairs_px2:
@@ -59,11 +61,11 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
 
 
 def plot_pairs_and_movements(ref_ptrs: ndarray, tgt_ptrs: ndarray, t1: int, t2: int, ref_ptrs_confirmed: ndarray,
-                             ref_ptrs_tracked: ndarray, fig_width_px=1800, dpi=96, ids_ref=None, ids_tgt=None, display_fig=True,
-                             top_down=True, show_ids=True):
+                             ref_ptrs_tracked: ndarray, fig_height_px=1500, dpi=96, ids_ref=None, ids_tgt=None, display_fig=True,
+                             show_ids=True):
     # Plot the scatters of the ref_points and tgt_points
-    ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1, t2, ids_ref, ids_tgt,
-                                               top_down=top_down, show_ids=show_ids)
+    ax1, ax2, fig = plot_two_pointset_scatters(dpi, ref_ptrs, tgt_ptrs, t1, t2, ids_ref, ids_tgt, fig_height_px=fig_height_px,
+                                               show_ids=show_ids)
 
     # Plot the predicted pairs and movements
     n = ref_ptrs_confirmed.shape[0]
@@ -388,12 +390,12 @@ def plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, ax1=None, ax2=None
 
 
 def plot_predicted_movements(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray, t1: int, t2: int,
-                             fig_width_px=1800, dpi=96):
+                             fig_height_px=1500, dpi=96):
     # Validate the inputs
     validate_inputs(ref_ptrs, tgt_ptrs, predicted_ref_ptrs)
 
     # Plot the scatters of the ref_points and tgt_points
-    ax1, ax2, fig = plot_two_pointset_scatters(dpi, fig_width_px, ref_ptrs, tgt_ptrs, t1, t2)
+    ax1, ax2, fig = plot_two_pointset_scatters(dpi, ref_ptrs, tgt_ptrs, t1, t2, fig_height_px=fig_height_px)
 
     # Plot the matching relationships between the two sets of points
     plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, ax1, ax2, single_panel=False)
@@ -421,8 +423,9 @@ def plot_predicted_movements_one_panel(ref_ptrs: ndarray, tgt_ptrs: ndarray, pre
     return fig
 
 
-def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarray, tgt_ptrs: ndarray, t1: int, t2: int,
-                               ids_ref: list = None, ids_tgt: list = None, top_down=True, show_ids=True):
+def plot_two_pointset_scatters(dpi: float, ref_ptrs: ndarray, tgt_ptrs: ndarray, t1: int, t2: int,
+                               ids_ref: list = None, ids_tgt: list = None,
+                               fig_height_px: float = 1500, fig_width_px: float = 2000, show_ids=True):
     """
     Creates a figure with two subplots showing two sets of 3D points.
 
@@ -430,8 +433,10 @@ def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarra
     ----------
     dpi : float
         The resolution of the output figure in dots per inch.
-    fig_width_px : float
-        The width of the output figure in pixels.
+    fig_height_px : float
+        The height limit of the output figure in pixels.
+    fig_width_px: float
+        The width limit of the output figure in pixels.
     ref_ptrs : ndarray
         A 2D array of shape (n, 3) containing the positions of reference points.
     tgt_ptrs : ndarray
@@ -455,24 +460,25 @@ def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarra
         The Figure object containing the two subplots.
     """
     # Calculate the figure size based on the input width and dpi
-    fig_width_in = fig_width_px / dpi  # convert to inches assuming the given dpi
-    fig_height_in = fig_width_in / 2.2  # set height to golden ratio
+    fig_height_in = fig_height_px / dpi  # convert to inches assuming the given dpi
+
     # Determine whether to use a top-down or left-right layout based on the aspect ratio of the point sets
-    ref_range_y, ref_range_x, _ = np.max(ref_ptrs, axis=0) - np.min(ref_ptrs, axis=0)
-    tgt_range_y, tgt_range_x, _ = np.max(tgt_ptrs, axis=0) - np.min(tgt_ptrs, axis=0)
-    # top_down = ref_range_x + tgt_range_x >= ref_range_y + tgt_range_y
+    ptrs_combined = np.vstack((ref_ptrs, tgt_ptrs))
+    range_y, range_x, _ = np.max(ptrs_combined, axis=0) - np.min(ptrs_combined, axis=0)
+    ratio = range_x / range_y
+
+    fig_width_in = fig_height_in * ratio / 2
+    if fig_width_in > fig_width_px / dpi:
+        fig_width_in = fig_width_px / dpi
+        fig_height_in = fig_width_in * 2 / ratio
 
     ids_ref = range(1, ref_ptrs.shape[0]+1) if ids_ref is None else ids_ref
     ids_tgt = range(1, tgt_ptrs.shape[0]+1) if ids_tgt is None else ids_tgt
 
+    fig_size = (fig_width_in, fig_height_in)
 
     # Create the figure and subplots
-    if top_down:
-        # print("Using top-down layout")
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(fig_height_in, fig_width_in))
-    else:
-        # print("Using left-right layout")
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(fig_width_in, fig_height_in))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=fig_size)
 
     # Plot the point sets on the respective subplots
     ax1.scatter(ref_ptrs[:, 1], ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')
@@ -483,15 +489,12 @@ def plot_two_pointset_scatters(dpi: float, fig_width_px: float, ref_ptrs: ndarra
         for i, txt in enumerate(ids_tgt):
             ax2.annotate(txt, (tgt_ptrs[i, 1], tgt_ptrs[i, 0]))
 
-    unify_xy_lims(ax1, ax2)
+    equal_layout(ax1, ax2)
+    plt.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
 
     # Set plot titles or y-axis labels based on the layout
-    if top_down:
-        ax1.set_ylabel(f"Point Set t={t1}")
-        ax2.set_ylabel(f"Point Set t={t2}")
-    else:
-        ax1.set_title(f"Point Set t={t1}")
-        ax2.set_title(f"Point Set t={t2}")
+    ax1.set_ylabel(f"Point Set t={t1}")
+    ax2.set_ylabel(f"Point Set t={t2}")
     return ax1, ax2, fig
 
 
@@ -519,6 +522,43 @@ def unify_xy_lims(ax1, ax2):
     else:
         y_mean = (y_lim[1] + y_lim[0]) / 2
         y_lim = [y_mean - range_x / 2, y_mean + range_x / 2]
+
+    # Set the same x_lim and y_lim on both axes
+    ax1.set_xlim(x_lim[0], x_lim[1])
+    ax1.set_ylim(y_lim[1], y_lim[0])
+    ax2.set_xlim(x_lim[0], x_lim[1])
+    ax2.set_ylim(y_lim[1], y_lim[0])
+
+
+def equal_layout(ax1, ax2):
+    """
+    Set the x and y scale of two matplotlib axes to be the same.
+
+    Parameters
+    ----------
+    ax1 : matplotlib.axes.Axes
+        The first Axes object.
+    ax2 : matplotlib.axes.Axes
+        The second Axes object.
+    """
+    ax1.invert_yaxis()
+    ax2.invert_yaxis()
+
+    ax1.axis("equal")
+    ax2.axis("equal")
+    ratio = (ax1.get_ylim()[0] - ax1.get_ylim()[1]) / (ax1.get_xlim()[1] - ax1.get_xlim()[0])
+
+    # Determine the shared x_lim and y_lim
+    x_lim = [min(ax1.get_xlim()[0], ax2.get_xlim()[0]), max(ax1.get_xlim()[1], ax2.get_xlim()[1])]
+    y_lim = [min(ax1.get_ylim()[1], ax2.get_ylim()[1]), max(ax1.get_ylim()[0], ax2.get_ylim()[0])]
+    range_x = x_lim[1] - x_lim[0]
+    range_y = y_lim[1] - y_lim[0]
+    if range_y > range_x * ratio:
+        x_mean = (x_lim[1] + x_lim[0]) / 2
+        x_lim = [x_mean - range_y / ratio / 2, x_mean + range_y / ratio / 2]
+    else:
+        y_mean = (y_lim[1] + y_lim[0]) / 2
+        y_lim = [y_mean - range_x * ratio / 2, y_mean + range_x * ratio / 2]
 
     # Set the same x_lim and y_lim on both axes
     ax1.set_xlim(x_lim[0], x_lim[1])

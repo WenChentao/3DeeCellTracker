@@ -110,49 +110,13 @@ def _read_image(frame, layer_num, path_raw, path_tracked):
     return images_label, images_raw
 
 
-def optimize_row_column(duration, n_signals, figsize):
-    """
-    Return the proper number of row, column for visualization
-
-    Parameters
-    ----------
-    duration : int
-        Number of time points for each signal.
-    n_signals : int
-        Number of signals.
-    figsize : tuple
-        size of the figure to show activities
-
-    Returns
-    -------
-    row_n : int
-        Number of row
-    column_n : int
-        Number of column
-
-    Notes
-    -----
-    The row_n and colume_n are designed to make sure the xy_ratio of each subplot propotional with duration.
-
-    Examples
-    --------
-    >>> optimize_row_column(duration=200, n_signals=100, figsize=(40, 20))
-    (14, 8)
-    """
-    width_hight_ratio = figsize[0]/figsize[1]
-    total_length = duration * n_signals
-    row_n = int((total_length / (50 * width_hight_ratio)) ** 0.5)
-    column_n = int(np.ceil(n_signals / row_n))
-    return row_n, column_n
-
-
-def draw_signals(signals, ylim_upper=None, ylim_lower=None, figsize=(20, 10)):
+def draw_signals(signals_txn, ylim_upper=None, ylim_lower=None, figsize=(20, 10), column_n=4):
     """
     Draw signals in multiple subplots
 
     Parameters
     ----------
-    signals : numpy.ndarray
+    signals_txn : numpy.ndarray
         N Signals with T time points with shape (T, N)
     ylim_upper : float
         ylim upper bound. If None, set it to the highest value.
@@ -166,22 +130,26 @@ def draw_signals(signals, ylim_upper=None, ylim_lower=None, figsize=(20, 10)):
     fig : matplotlib.figure
     axes : array of matplotlib.axes.Axes
     """
-    row_n, column_n = optimize_row_column(signals.shape[0], signals.shape[1], figsize)
+    row_n = int(np.ceil(signals_txn.shape[1] // column_n))
     fig, axes = plt.subplots(row_n, column_n, figsize=figsize)
     for row in range(row_n):
         for column in range(column_n):
             n = row * column_n + column
-            if n >= signals.shape[1]:
+            if n >= signals_txn.shape[1]:
                 break
-            axes[row, column].plot(signals[:, n], lw=2)
-            upper_sig_n, lower_sig_n = np.nanmax(signals[:, n]), np.nanmin(signals[:, n])
+            if column_n == 1:
+                ax = axes[row]
+            else:
+                ax = axes[row, column]
+            ax.plot(signals_txn[:, n], lw=2)
+            upper_sig_n, lower_sig_n = np.nanmax(signals_txn[:, n]), np.nanmin(signals_txn[:, n])
             if ylim_upper is not None:
                 upper_sig_n = ylim_upper
             if ylim_lower is not None:
                 lower_sig_n = ylim_lower
-            axes[row, column].set_ylim(lower_sig_n, upper_sig_n)
-            axes[row, column].set_title("N%d" % (n + 1), va="top")
+            ax.set_ylim(lower_sig_n, upper_sig_n)
+            ax.set_title("N%d" % (n + 1), va="top")
             if row<row_n-1:
-                axes[row, column].get_xaxis().set_visible(False)
+                ax.get_xaxis().set_visible(False)
     plt.subplots_adjust(left=0.02, bottom=0.02, right=0.98, top=0.98, wspace=0.2, hspace=0.2)
 

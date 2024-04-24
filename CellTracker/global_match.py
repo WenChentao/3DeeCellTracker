@@ -6,13 +6,14 @@ from matplotlib import pyplot as plt
 from numpy import ndarray
 from scipy.spatial.distance import cdist
 from sklearn.manifold import MDS
+from tqdm import tqdm
 
-from CellTracker.test_matching_models import rotation_align_by_fpm, affine_align_by_fpm, local_affine_align_by_fpm, \
+from CellTracker.test_matching_models import rotation_align_by_fpm, affine_align_by_fpm, \
     match_by_fpm_prgls
-from CellTracker.utils import simple_progress_bar
 
 
-def ensemble_match_initial_x_volumes(cell_num_list: List[int], path_pairwise_match_initialx_h5: str, x=20):
+def ensemble_match_initial_20_volumes(cell_num_list: List[int], path_pairwise_match_initialx_h5: str):
+    x = 20
     assert len(cell_num_list) == x, f"cell_num_list should contains {x} values"
     f_matches = h5py.File(path_pairwise_match_initialx_h5, "r")
     updated_matches = np.zeros((x), dtype=object)
@@ -89,9 +90,9 @@ def _match_fpm_prgls(fpm_model, fpm_model_rot, coords_norm_t1, coords_norm_t2):
                                                              coords_norm_t2=coords_norm_t2)
     aligned_t1_1, _, pairs_1, _ = affine_align_by_fpm(fpm_model, coords_norm_t1=aligned_t1_rot,
                                                    coords_norm_t2=coords_norm_t2)
-    aligned_t1_2, _, pairs_2, _ = local_affine_align_by_fpm(fpm_model, coords_norm_t1=aligned_t1_1,
-                                                         coords_norm_t2=coords_norm_t2)
-    pairs_3 = match_by_fpm_prgls(fpm_model, aligned_t1_2, coords_norm_t2, match_method="coherence")
+    # aligned_t1_2, _, pairs_2, _ = local_affine_align_by_fpm(fpm_model, coords_norm_t1=aligned_t1_1,
+    #                                                      coords_norm_t2=coords_norm_t2)
+    pairs_3 = match_by_fpm_prgls(fpm_model, aligned_t1_1, coords_norm_t2, match_method="coherence")
     return pairs_3
 
 
@@ -110,13 +111,12 @@ def pairwise_pointsets_distances(corresponding_coords_txnx3: ndarray):
     """
     t, n, _ = corresponding_coords_txnx3.shape
     pairwise_dist_txt = np.zeros((t, t))
-    for i in range(n):
+    for i in tqdm(range(n)):
         coords_i = corresponding_coords_txnx3[:,i,:]
         distances_txt = cdist(coords_i, coords_i, metric='euclidean')
         # Replaces any NaN values in the distance matrix with the mean of the non-NaN values
         distances_txt[np.isnan(distances_txt)] = np.nanmean(distances_txt)
         pairwise_dist_txt += distances_txt
-        simple_progress_bar(i + 1, n)
     # Fills the diagonal elements with zeros before returning the final pairwise distance matrix
     np.fill_diagonal(pairwise_dist_txt, 0)
     return pairwise_dist_txt
@@ -128,7 +128,7 @@ def get_reference_target_vols_list(distances_txt: ndarray, initial_ref: int, max
     reference_taget_vols_list = []
     current_ref_pool = [initial_ref]
     entire_timings = np.arange(1, t+1)
-    for i in range(t-1):
+    for i in tqdm(range(t-1)):
         current_refs = np.asarray(current_ref_pool)
         potential_tgts = np.setdiff1d(entire_timings, current_refs)
         ref0_midpoint_tgts_dists_cxp = (distances_txt[np.ix_(current_refs - 1, potential_tgts - 1)] * ratio
@@ -143,7 +143,6 @@ def get_reference_target_vols_list(distances_txt: ndarray, initial_ref: int, max
         else:
             refs = current_refs[np.argpartition(ref0_midpoint_tgts_dists_cxp[:, next_tgt_local], max_num_refs)[:max_num_refs]]
         reference_taget_vols_list.append((refs, next_tgt))
-        simple_progress_bar(i, t-1)
     return reference_taget_vols_list
 
 
@@ -187,7 +186,7 @@ def rigid_transform(tform_3x4: ndarray, coords_nx3: ndarray):
     return np.dot(coords_nx3, tform_3x4[:, :3].T) + tform_3x4[:, 3]
 
 
-def visualize_pairwise_distances(points_tx2: ndarray, center_point: int):
+def visualize_pairwise_distances(points_tx2: ndarray, center_point: int, show_id: bool = True):
     plt.figure(figsize=(30, 30))
     plt.scatter(points_tx2[:, 0], points_tx2[:, 1])
     plt.scatter(points_tx2[center_point-1, 0], points_tx2[center_point-1, 1], c="r")
@@ -195,11 +194,12 @@ def visualize_pairwise_distances(points_tx2: ndarray, center_point: int):
     plt.xlabel('Dimension 1')
     plt.ylabel('Dimension 2')
 
-    for i, (x, y) in enumerate(points_tx2):
-        plt.text(x, y, f'{i + 1}', fontsize=8)
+    if show_id:
+        for i, (x, y) in enumerate(points_tx2):
+            plt.text(x, y, f'{i + 1}', fontsize=8)
 
 
 def get_mds_2d_projection(distances_txt):
-    mds = MDS(n_components=2, dissimilarity='precomputed', random_state=0)
+    mds = MDS(n_components=2, dissimilarity='precomputed', random_state=0, n_jobs=-1)
     points_2d = mds.fit_transform(distances_txt)
     return points_2d

@@ -16,7 +16,7 @@ K_POINTS = 20
 
 def pre_alignment(coords_t1: ndarray, coords_t2: ndarray, match_model: Model, predict_method: Callable, match_method: str,
                   similarity_threshold: float, ttype: str = "euclidean"):
-    print("Pre-alignment by FPM + Affine Transformation")
+    print(f"Pre-alignment by FPM + {ttype} Transformation")
     coords_norm_t2, _ = normalize_points(coords_t2, return_para=True)
     coords_norm_t1, _ = normalize_points(coords_t1, return_para=True)
 
@@ -72,7 +72,7 @@ def local_align_by_control_points(coords_norm_t1: ndarray, coords_norm_t2: ndarr
 
 def coherence_match(updated_match_matrix: ndarray, segmented_coords_norm_t1, segmented_coords_norm_t2, threshold):
     matched_pairs = greedy_match(updated_match_matrix, threshold)
-    for i in range(10):
+    for i in range(3):
         distances_matrix = robust_distance(matched_pairs, segmented_coords_norm_t1, segmented_coords_norm_t2)
         # map the ranks to a probability: rank = 0 -> 1.0, rank = +inf -> 0.0
         coherence = 1 - erf(distances_matrix / 3).T

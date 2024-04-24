@@ -13,21 +13,26 @@ from sklearn.neighbors import NearestNeighbors
 outlier_detector = MinCovDet(support_fraction=0.9)
 
 
-def get_full_cell_candidates(coordinates_nx3: ndarray, prob_map_3d: ndarray, threshold: float = 0.3) -> ndarray:
+def get_extra_cell_candidates(coordinates_nx3: ndarray, prob_map_3d: ndarray, threshold: float = 0.3) -> ndarray:
     """
     This function returns the extra coordinates are the coordinates of the tiny cells in the prob_map_3d that are not
     included in the coordinates_nx3.
     """
     # Segment of the disconnected cell regions
     labels_from_prob_map = measure.label(prob_map_3d > threshold , connectivity=1)
-    # Remove the labels if they contain the coordinates_nx3
+
+    # Set these existing labels as zero
+    labels = np.arange(0, np.max(labels_from_prob_map) + 1)
     for i, j, k in coordinates_nx3:
-        if labels_from_prob_map[i, j, k] != 0:
-            labels_from_prob_map[labels_from_prob_map == labels_from_prob_map[i, j, k]] = 0
+        label = labels_from_prob_map[i, j, k]
+        if label != 0:
+            labels[label] = 0
+    labels_from_prob_map = labels[labels_from_prob_map]
+
     # Relabel the remaining labels sequentially
     labels_from_prob_map, _, _ = relabel_sequential(labels_from_prob_map)
-    coordinates_tiny = scipy.ndimage.center_of_mass(labels_from_prob_map, labels_from_prob_map, range(1, np.max(labels_from_prob_map) + 1))
-    return np.asarray(coordinates_tiny)
+    extra_coordinates = scipy.ndimage.center_of_mass(labels_from_prob_map, labels_from_prob_map, range(1, np.max(labels_from_prob_map) + 1)) # bottleneck
+    return np.asarray(extra_coordinates)
 
 
 def compute_mahalanobis(moves: ndarray) -> ndarray:
@@ -182,13 +187,13 @@ def robust_distance(pairs: List[Tuple[int, int]], coordinates_nx3_t1, coordinate
     m = coordinates_mx3_t2.shape[0]
 
     min_path_length = np.full((n, m), np.inf)
-
     for x_i, y_i in pairs:
         dist_to_xi = coordinates_nx3_t1 - coordinates_nx3_t1[x_i]
         dist_to_y_from_yi = coordinates_mx3_t2[y_i] - coordinates_mx3_t2
         path_length = np.linalg.norm(dist_to_xi[:, None, :] + dist_to_y_from_yi[None, :, :], axis=-1)
         mask = np.linalg.norm(dist_to_xi, axis=-1) != 0
         min_path_length = np.where(mask[:, np.newaxis], np.minimum(min_path_length, path_length), min_path_length)
+
     rank_path_length = convert_to_rank(min_path_length)
 
     return rank_path_length

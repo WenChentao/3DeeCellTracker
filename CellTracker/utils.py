@@ -1,17 +1,15 @@
 from __future__ import division, absolute_import, print_function, unicode_literals, annotations
 
 import os
-import sys
-from glob import glob
 from typing import Union, Tuple
 
+import h5py
 import numpy as np
 from csbdeep.utils import normalize
 from numpy import ndarray
 from scipy.ndimage import distance_transform_edt
 from skimage.segmentation import watershed
 from sklearn.decomposition import PCA
-from tifffile import imread
 
 
 def load_2d_slices_at_time(images_path: dict, t: int, do_normalize: bool = True):
@@ -20,14 +18,25 @@ def load_2d_slices_at_time(images_path: dict, t: int, do_normalize: bool = True)
         file_extension = os.path.splitext(images_path["h5_file"])[1]
         assert file_extension in [".h5", ".hdf5", ".nwb"], "Currently only TIFF sequences or HDF5/NWB dataset are supported"
 
-        import h5py
         with h5py.File(images_path["h5_file"], 'r') as f:
             if file_extension != ".nwb":
                 x = f[images_path["dset"]][t - 1, images_path["channel"], :, :, :]
             else:
                 x = f[images_path["dset"]][t - 1, :, :, :, images_path["channel"]].transpose((2,0,1))
     else:
-        raise ValueError("image_paths should be a str for TIFF sequences or dict for HDF5/NWB dataset")
+        raise ValueError("image_paths should be a dict for HDF5/NWB dataset")
+
+    if do_normalize:
+        axis_norm = (0, 1, 2)  # normalize channels independently
+        return normalize(x, axis=axis_norm)
+    return x
+
+def load_2d_slices_at_time_quick(images_path: dict, f_raw, file_extension: str, t: int, do_normalize: bool = True):
+    """Load all 2D slices at time t and normalize the resulted 3D image"""
+    if file_extension == ".nwb":
+        x = f_raw[images_path["dset"]][t - 1, :, :, :, images_path["channel"]].transpose((2, 0, 1))
+    else:
+        x = f_raw[images_path["dset"]][t - 1, images_path["channel"], :, :, :]
 
     if do_normalize:
         axis_norm = (0, 1, 2)  # normalize channels independently
@@ -124,44 +133,8 @@ def recalculate_cell_boundaries(segmentation_xyz: ndarray, cell_overlaps_mask: n
     return recalculated_labels
 
 
-def simple_progress_bar(current, total, bar_length=50):
-    percent = float(current) / total
-    arrow = '-' * int(round(percent * bar_length) - 1) + '>'
-    spaces = ' ' * (bar_length - len(arrow))
+def del_datasets(h5_file, datasets: list[str]):
+    for dset in datasets:
+        if dset in h5_file:
+            del h5_file[dset]
 
-    sys.stdout.write("\rProgress: [{0}] {1}%".format(arrow + spaces, int(round(percent * 100))))
-    sys.stdout.flush()
-
-
-
-
-    # # 获取顶点的数量
-    # n = len(adj_matrix)
-    # # 初始化结果数组
-    # result = [1] * n
-    # # 存储可用的颜色，False表示可用，True表示不可用
-    # available = [False] * n
-    #
-    # # 为其余顶点分配颜色
-    # for u in range(1, n):
-    #     # 检查所有相邻顶点，并标记它们的颜色为不可用
-    #     for v in range(n):
-    #         if adj_matrix[u][v] == 1 and result[v] != -1:
-    #             available[result[v]] = True
-    #
-    #     # 寻找第一个未被相邻顶点使用的颜色
-    #     color = 0
-    #     while color < n:
-    #         if not available[color]:
-    #             break
-    #         color += 1
-    #
-    #     # 为顶点u分配颜色
-    #     result[u] = color
-    #
-    #     # 重置可用颜色标记，以便下次使用
-    #     for v in range(n):
-    #         if adj_matrix[u][v] == 1 and result[v] != -1:
-    #             available[result[v]] = False
-    #
-    # # return result

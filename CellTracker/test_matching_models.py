@@ -69,7 +69,7 @@ def _match_fpm(coords_norm_t1: ndarray, coords_norm_t2:ndarray, fpm_model, match
                                             K_POINTS)
     matching_copy = initial_matching.copy()
     pairs_px2 = get_match_pairs(matching_copy, coords_norm_t1, coords_norm_t2,
-                                threshold=similarity_threshold, method=match_method)
+                                threshold=similarity_threshold, method=match_method) # bottleneck
     return pairs_px2
 
 
