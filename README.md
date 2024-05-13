@@ -71,11 +71,12 @@ The data and model files for demonstrating above notebooks can be downloaded her
 ## Protocols
 Here are two protocols for using 3DeeCellTracker:
 1. **Version 1.0.0**
-   
-   Wen, C. (2024). Deep Learning-Based Cell Tracking in Deforming Organs and Moving Animals. In: Wuelfing, C., Murphy, R.F. (eds) Imaging Cell Signaling. Methods in Molecular Biology, vol 2800. Humana, New York, NY. doi: 10.1007/978-1-0716-3834-7_14
+
+   Wen, C. (2024). Deep Learning-Based Cell Tracking in Deforming Organs and Moving Animals. In: Wuelfing, C., Murphy, R.F. (eds) Imaging Cell Signaling. Methods in Molecular Biology, vol 2800. Humana, New York, NY. DOI: [10.1007/978-1-0716-3834-7_14](https://doi.org/10.1007/978-1-0716-3834-7_14)
 2. **Version 0.4**
 
-   Wen, C. and Kimura, K.D. (2022). Tracking Moving Cells in 3D Time Lapse Images Using 3DeeCellTracker. Bio-protocol 12(4): e4319. DOI: 10.21769/BioProtoc.4319.
+   Wen, C. and Kimura, K.D. (2022). Tracking Moving Cells in 3D Time Lapse Images Using 3DeeCellTracker. Bio-protocol 12(4): e4319. DOI: [10.21769/BioProtoc.4319](https://doi.org/10.21769/BioProtoc.4319)
+
 
 
 ### Frequently Reported Issue and Solution (for v0.4)
