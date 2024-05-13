@@ -68,14 +68,24 @@ The data and model files for demonstrating above notebooks can be downloaded her
 - [**Data for UNet-based notebooks**](https://osf.io/dt76c/).
 
 
-## Frequently Reported Issue and Solution (for v0.4)
+## Protocols
+Here are two protocols for using 3DeeCellTracker:
+1. **Version 1.0.0**
+   
+   Wen, C. (2024). Deep Learning-Based Cell Tracking in Deforming Organs and Moving Animals. In: Wuelfing, C., Murphy, R.F. (eds) Imaging Cell Signaling. Methods in Molecular Biology, vol 2800. Humana, New York, NY. doi: 10.1007/978-1-0716-3834-7_14
+2. **Version 0.4**
+
+   Wen, C. and Kimura, K.D. (2022). Tracking Moving Cells in 3D Time Lapse Images Using 3DeeCellTracker. Bio-protocol 12(4): e4319. DOI: 10.21769/BioProtoc.4319.
+
+
+### Frequently Reported Issue and Solution (for v0.4)
 
 Multiple users have reported encountering a `ValueError` of shape mismatch when running the `tracker.match()` function. 
 After investigation, it was found that the issue resulted from an incorrect setting of `siz_xyz`, 
 which should be set to the dimensions of the 3D image as (height, width, depth). 
 
 
-## Video Tutorials (for v0.4)
+### Video Tutorials (for v0.4)
 We have made tutorials explaining how to use our software. See links below (videos in Youtube):
 
 [Tutorial 1: Install 3DeeCellTracker and train the 3D U-Net](https://www.youtube.com/watch?v=ctt6o3DY2bA)
@@ -86,8 +96,6 @@ We have made tutorials explaining how to use our software. See links below (vide
 
 [Tutorial 4: Manually correct the cell segmentation](https://www.youtube.com/watch?v=e7xWaccH63o)
 
-## A Text Tutorial (for v0.4)
-We have written a tutorial explaining how to install and use 3DeeCellTracker. See [Bio-protocol, 2022](https://bio-protocol.org/e4319)
 
 ## How it works
 We designed this pipeline for segmenting and tracking cells in 3D + T images in deforming organs. The methods have been explained in [Wen et al. bioRxiv 2018]( https://doi.org/10.1101/385567) and in [Wen et al. eLife, 2021](https://elifesciences.org/articles/59187).
