@@ -949,7 +949,7 @@ class TrackerLite:
                                                                     axis=1)
         except Exception as e:
             print(f"errors occurred: {e}")
-            with h5py.File(self.images_path["dset"], 'a') as f_raw:
+            with h5py.File(self.images_path["h5_file"], 'a') as f_raw:
                 if "max_projection_raw" in f_raw:
                     del f_raw["max_projection_raw"]
                     print(f"dataset max_projection_raw has been deleted")
