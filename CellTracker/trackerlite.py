@@ -34,7 +34,7 @@ class TrackerLite:
     A class that tracks cells in 3D time-lapse images using a trained FFN model.
     """
     def __init__(self, results_dir: str, images_path: dict, match_model,
-                 coords2image: CoordsToImageTransformer, stardist_model: StarDist3DCustom, model_type: str,
+                 coords2image: CoordsToImageTransformer, stardist_model: StarDist3DCustom, model_type: str="fpm",
                  similarity_threshold=0.3, match_method: str = "coherence",  miss_frame: List[int] = None):
         """
         Initialize a new instance of the TrackerLite class.
@@ -252,6 +252,8 @@ class TrackerLite:
                 rigid_align_file["tform"][t_ref - 1, :, :] = tform.params[:3, :]
                 rigid_align_file["tform_inv"][t_ref - 1, :, :] = np.linalg.inv(tform.params)[:3, :]
 
+        plt.ion()
+
     def match_first_20_volumes(self):
         with open(str(self.results_dir / 'reference_target_vols_list.pkl'), 'rb') as file:
             reference_target_vols_list = pickle.load(file)
@@ -304,7 +306,7 @@ class TrackerLite:
                                             ref_ptrs_tracked_t2) * self.scale_vol1 + self.mean_vol1
         tracked_coords_t2_pred = Coordinates(tracked_coords_t2,
                                              interpolation_factor=self.coords2image.interpolation_factor,
-                                             voxel_size=self.coords2image.image_pars["voxel_size"], dtype="real")
+                                             voxel_size=self.coords2image.image_pars["voxel_size_yxz"], dtype="real")
         confirmed_coord, corrected_labels_image = self.coords2image.accurate_correction(t2,
                                                                                         self.stardist_model.config.grid,
                                                                                         tracked_coords_t2_pred,
@@ -419,7 +421,7 @@ class TrackerLite:
             f["tracked_labels"][t - 1, :, 0, :, :] = corrected_labels_image.transpose((2, 0, 1))
             f["tracked_coordinates"][t - 1, :, :] = coords.real
 
-        raw_img = load_2d_slices_at_time(images_path, t=t)
+        raw_img = load_2d_slices_at_time(images_path, t=t, channel_name="channel_nuclei")
         self.coords2image.save_merged_labels(corrected_labels_image, raw_img, t, self.coords2image.cmap_colors)
 
     def pairwise_pointsets_distances(self):
@@ -625,7 +627,7 @@ class TrackerLite:
 
         tracked_coords_t2_pred = Coordinates(tracked_coords_t2,
                                              interpolation_factor=self.coords2image.interpolation_factor,
-                                             voxel_size=self.coords2image.image_pars["voxel_size"], dtype="real")
+                                             voxel_size=self.coords2image.image_pars["voxel_size_yxz"], dtype="real")
         return tracked_coords_t2_pred, pairs_seg_t1_seg_t2
 
     def initial_matching(self, filtered_segmented_coords_norm_t1, filtered_segmented_coords_norm_t2,
@@ -739,7 +741,7 @@ class TrackerLite:
         """Get segmented positions and extra positions from stardist model"""
         interp_factor = self.coords2image.interpolation_factor
         voxel_size = self.coords2image.voxel_size
-        image_size_xyz = self.coords2image.image_pars["image_size_xyz"]
+        image_size_yxz = self.coords2image.image_pars["image_size_yxz"]
 
         if (self.coords2image.results_folder / 'coords.h5').exists():
             with h5py.File(str(self.coords2image.results_folder / 'coords.h5'), 'r') as f:
@@ -748,7 +750,7 @@ class TrackerLite:
         else:
             with h5py.File(str(self.results_dir / "seg.h5"), "r") as seg_file:
                 coordinates_stardist = seg_file[f'coords_{str(t-1).zfill(6)}'][:]
-                prob_map = self.coords2image.load_prob_map(self.stardist_model.config.grid, t - 1, seg_file, image_size_xyz)
+                prob_map = self.coords2image.load_prob_map(self.stardist_model.config.grid, t - 1, seg_file, image_size_yxz)
             extra_coordinates = get_extra_cell_candidates(coordinates_stardist, prob_map)
             if extra_coordinates.shape[0] != 0:
                 combined_coordinates = np.concatenate((coordinates_stardist, extra_coordinates), axis=0)
@@ -761,14 +763,14 @@ class TrackerLite:
         return pos, inliers
 
     def combine_weak_cells(self):
-        image_size_xyz = self.coords2image.image_pars["image_size_xyz"]
+        image_size_yxz = self.coords2image.image_pars["image_size_yxz"]
 
         with h5py.File(str(self.results_dir / "seg.h5"), "r") as seg_file, \
               h5py.File(str(self.coords2image.results_folder / 'coords.h5'), 'a') as coords_file:
             vol_num = seg_file["prob"].shape[0]
             for t in tqdm(range(vol_num)):
                 coordinates_stardist = seg_file[f'coords_{str(t).zfill(6)}'][:]
-                prob_map = self.coords2image.load_prob_map(self.stardist_model.config.grid, t, seg_file, image_size_xyz)
+                prob_map = self.coords2image.load_prob_map(self.stardist_model.config.grid, t, seg_file, image_size_yxz)
                 extra_coordinates = get_extra_cell_candidates(coordinates_stardist, prob_map) # bottleneck
                 if extra_coordinates.shape[0] != 0:
                     combined_coordinates = np.concatenate((coordinates_stardist, extra_coordinates), axis=0)
@@ -779,18 +781,21 @@ class TrackerLite:
                 dset = coords_file.create_dataset(f'combined_coords_{str(t).zfill(6)}', data=combined_coordinates)
                 dset.attrs["num"] = num
 
-    def activities(self, raw_path: dict, discard_ratio: float = 0.1):
+    def activities(self, discard_ratio: float = 0.1):
         with h5py.File(str(self.results_dir / "seg.h5"), "r") as seg_file:
             vol_num = seg_file["prob"].shape[0]
-        file_extension = os.path.splitext(raw_path["h5_file"])[1]
+        file_extension = os.path.splitext(self.images_path["h5_file"])[1]
         assert file_extension in [".h5", ".hdf5", ".nwb"], "Currently only TIFF sequences or HDF5/NWB dataset are supported"
 
         per = (1 - discard_ratio) * 100
 
         with h5py.File(str(self.results_dir / "tracking_results.h5"), "a") as track_file, \
-                        h5py.File(raw_path["h5_file"], 'r') as f_raw:
+                        h5py.File(self.images_path["h5_file"], 'r') as f_raw:
             track_file.attrs["t_initial"] = self.center_point
-            track_file.attrs["voxel_size_xyz"] = self.coords2image.image_pars["voxel_size"]
+            track_file.attrs["voxel_size_yxz"] = self.coords2image.image_pars["voxel_size_yxz"]
+            track_file.attrs["raw_dset"] = self.images_path["dset"]
+            track_file.attrs["raw_channel_nuclei"] = self.images_path["channel_nuclei"]
+            track_file.attrs["raw_channel_activity"] = self.images_path["channel_activity"]
 
             cell_num = np.max(track_file["tracked_labels"][self.center_point - 1, :, 0, :, :])
             activities_txn = np.zeros((vol_num, cell_num))
@@ -798,7 +803,8 @@ class TrackerLite:
             for t in tqdm(range(1, vol_num+1)):
                 try:
                     # Load 2D slices at time t
-                    raw = load_2d_slices_at_time_quick(raw_path, f_raw, file_extension, t=t, do_normalize=False)
+                    raw = load_2d_slices_at_time_quick(self.images_path, f_raw, t=t,
+                                                       channel_name="channel_activity", do_normalize=False)
                 except FileNotFoundError:
                     # Handle missing image files
                     print(f"Warning: Raw images at t={t - 1} cannot be loaded! Stop calculation!")
@@ -922,6 +928,58 @@ class TrackerLite:
                                            slices_xyz[1].start, slices_xyz[1].stop,
                                            slices_xyz[2].start, slices_xyz[2].stop)
 
+    def cache_max_projections(self):
+        # Cache max projections of raw image
+        try:
+            with h5py.File(self.images_path["h5_file"], 'r+') as f_raw:
+                if "max_projection_raw" not in f_raw:
+                    t, z, c, y, x = f_raw[self.images_path["dset"]].shape
+                    dtype = f_raw[self.images_path["dset"]].dtype
+                    max_activity_dset = f_raw.create_dataset("max_projection_raw",
+                                                         (t, c, y + z * self.coords2image.interpolation_factor, x),
+                                                         chunks=(1, c, y + z * self.coords2image.interpolation_factor, x),
+                                                         compression="gzip", dtype=dtype, compression_opts=1)
+
+                    print("Calulating max projection of raw images...")
+                    for _t in tqdm(range(t)):
+                        raw_activity = f_raw[self.images_path["dset"]][_t, :, :, :, :].transpose((1, 2, 0, 3))
+                        max_activity_dset[_t, ...] = np.concatenate((raw_activity.max(axis=2),
+                                                                     np.repeat(raw_activity.max(axis=1),
+                                                                               self.coords2image.interpolation_factor, axis=1)),
+                                                                    axis=1)
+        except Exception as e:
+            print(f"errors occurred: {e}")
+            with h5py.File(self.images_path["dset"], 'a') as f_raw:
+                if "max_projection_raw" in f_raw:
+                    del f_raw["max_projection_raw"]
+                    print(f"dataset max_projection_raw has been deleted")
+            raise
+
+        # Cache max projections of tracked labels
+        try:
+            with h5py.File(str(self.results_dir / "tracking_results.h5"), "r+") as track_file:
+                if "max_projection_labels" not in track_file:
+                    t, z, c, y, x = track_file["tracked_labels"].shape
+                    dtype = track_file["tracked_labels"].dtype
+                    max_labels_dset = track_file.create_dataset("max_projection_labels",
+                                                         (t, y + z * self.coords2image.interpolation_factor, x),
+                                                         chunks=(1, y + z * self.coords2image.interpolation_factor, x),
+                                                         compression="gzip", dtype=dtype, compression_opts=1)
+
+                    print("Calulating max projection of tracked labels...")
+                    for _t in tqdm(range(t)):
+                        labels = track_file["tracked_labels"][_t, :, 0, :, :].transpose((1, 0, 2))
+                        max_labels_dset[_t, ...] = np.concatenate((labels.max(axis=1),
+                                                                     np.repeat(labels.max(axis=0),
+                                                                               self.coords2image.interpolation_factor, axis=0)),
+                                                                    axis=0)
+        except Exception as e:
+            print(f"errors occurred: {e}")
+            with h5py.File(str(self.results_dir / "tracking_results.h5"), "r+") as track_file:
+                if "max_projection_labels" in track_file:
+                    del track_file["max_projection_labels"]
+                    print(f"dataset max_projection_labels has been deleted")
+            raise
 
 def predict_new_positions(matched_pairs, confirmed_coords_norm_t1, segmented_coords_norm_t1, segmented_coords_norm_t2,
                           post_processing, smoothing: float, similarity_scores_shape: Tuple[int, int], beta=BETA, lambda_=LAMBDA):
