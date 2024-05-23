@@ -45,7 +45,7 @@ def load_stardist_model(model_name: str = "stardist", basedir: str = STARDIST_MO
 
 
 def predict_and_save(images_path: dict, model: StarDist3DCustom, results_folder: str, is_tczyx: bool = False, t_start: int = None,
-                     n_tiles: tuple = (1,1,1)):
+                     n_tiles: tuple = (1,1,1), prob_thresh: float = None):
     """
     Load 2D slices of a 3D image stack obtained at time t and predict instance coordinates using a trained StarDist3DCustom model.
     Save the predicted coordinates as numpy arrays in a folder.
@@ -76,7 +76,8 @@ def predict_and_save(images_path: dict, model: StarDist3DCustom, results_folder:
                     x = normalize(x, 1, 99.8, axis=(0, 1, 2))
 
                     # Save predicted instance coordinates as numpy arrays
-                    (labels, details), prob_map = model.predict_instances(x, n_tiles=n_tiles, show_tile_progress=False)
+                    (labels, details), prob_map = model.predict_instances(x, n_tiles=n_tiles, show_tile_progress=False,
+                                                                          prob_thresh=prob_thresh)
                     if t == 1:
                         f_seg.create_dataset('prob', shape=(num_vol, *prob_map.shape),
                                                          chunks=(1, *prob_map.shape), dtype="float16",
