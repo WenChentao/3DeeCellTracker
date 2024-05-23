@@ -21,7 +21,7 @@ def custom_tab20_cmap(map_index_to_tab20: List[int]):
 
 def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, ref_ptrs_confirmed: ndarray=None,
                           fig_height_px=1500, dpi=96, ids_ref=None, ids_tgt=None, show_3d: bool = False, display_fig=True, top_down=True,
-                          show_ids=True):
+                          show_ids=False):
     """Draws the initial matching between two sets of 3D points and their matching relationships.
 
     Args:
@@ -42,6 +42,7 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
     # Plot the scatters of the ref_points and tgt_points
     ax1, ax2, fig = plot_two_pointset_scatters(dpi, ref_ptrs, tgt_ptrs, t1, t2, ids_ref, ids_tgt, fig_height_px=fig_height_px,
                                                show_ids=show_ids)
+    equal_layout(ax1, ax2)
 
     # Plot the matching relationships between the two sets of points
     for ref_index, tgt_index in pairs_px2:
@@ -55,6 +56,7 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
         ax2.add_artist(con)
     if ref_ptrs_confirmed is not None:
         ax1.scatter(ref_ptrs_confirmed[:, 1], ref_ptrs_confirmed[:, 0], facecolors='r', edgecolors='r', label='Confirmed cells')
+
     if display_fig:
         plt.pause(0.1)
     return fig
@@ -490,7 +492,8 @@ def plot_two_pointset_scatters(dpi: float, ref_ptrs: ndarray, tgt_ptrs: ndarray,
             ax2.annotate(txt, (tgt_ptrs[i, 1], tgt_ptrs[i, 0]))
 
     equal_layout(ax1, ax2)
-    plt.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
+
+    plt.subplots_adjust(left=0.02, right=0.99, top=0.99, bottom=0.02)
 
     # Set plot titles or y-axis labels based on the layout
     ax1.set_ylabel(f"Point Set t={t1}")

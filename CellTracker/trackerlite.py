@@ -33,7 +33,7 @@ class TrackerLite:
     """
     A class that tracks cells in 3D time-lapse images using a trained FFN model.
     """
-    def __init__(self, results_dir: str, images_path: dict, match_model,
+    def __init__(self, match_model,
                  coords2image: CoordsToImageTransformer, stardist_model: StarDist3DCustom, model_type: str="fpm",
                  similarity_threshold=0.3, match_method: str = "coherence",  miss_frame: List[int] = None):
         """
@@ -63,7 +63,7 @@ class TrackerLite:
         self.scale_vol1 = None
         self.mean_vol1 = None
         self.rotation_matrix = None
-        self.images_path = images_path
+        self.images_path = coords2image.path_raw_images
         if miss_frame is not None and not isinstance(miss_frame, List):
             raise TypeError(f"miss_frame should be a list or None, but got {type(miss_frame)}")
 
@@ -74,7 +74,7 @@ class TrackerLite:
         self.coords2image = coords2image
         self.stardist_model = stardist_model
 
-        self.results_dir = Path(results_dir)
+        self.results_dir = coords2image.results_folder
 
         self.match_method = match_method
         self.similarity_threshold = similarity_threshold
@@ -306,7 +306,7 @@ class TrackerLite:
                                             ref_ptrs_tracked_t2) * self.scale_vol1 + self.mean_vol1
         tracked_coords_t2_pred = Coordinates(tracked_coords_t2,
                                              interpolation_factor=self.coords2image.interpolation_factor,
-                                             voxel_size=self.coords2image.image_pars["voxel_size_yxz"], dtype="real")
+                                             voxel_size=self.coords2image.voxel_size, dtype="real")
         confirmed_coord, corrected_labels_image = self.coords2image.accurate_correction(t2,
                                                                                         self.stardist_model.config.grid,
                                                                                         tracked_coords_t2_pred,
@@ -627,7 +627,7 @@ class TrackerLite:
 
         tracked_coords_t2_pred = Coordinates(tracked_coords_t2,
                                              interpolation_factor=self.coords2image.interpolation_factor,
-                                             voxel_size=self.coords2image.image_pars["voxel_size_yxz"], dtype="real")
+                                             voxel_size=self.coords2image.voxel_size, dtype="real")
         return tracked_coords_t2_pred, pairs_seg_t1_seg_t2
 
     def initial_matching(self, filtered_segmented_coords_norm_t1, filtered_segmented_coords_norm_t2,
@@ -741,7 +741,7 @@ class TrackerLite:
         """Get segmented positions and extra positions from stardist model"""
         interp_factor = self.coords2image.interpolation_factor
         voxel_size = self.coords2image.voxel_size
-        image_size_yxz = self.coords2image.image_pars["image_size_yxz"]
+        image_size_yxz = self.coords2image.image_size_yxz
 
         if (self.coords2image.results_folder / 'coords.h5').exists():
             with h5py.File(str(self.coords2image.results_folder / 'coords.h5'), 'r') as f:
@@ -763,7 +763,7 @@ class TrackerLite:
         return pos, inliers
 
     def combine_weak_cells(self):
-        image_size_yxz = self.coords2image.image_pars["image_size_yxz"]
+        image_size_yxz = self.coords2image.image_size_yxz
 
         with h5py.File(str(self.results_dir / "seg.h5"), "r") as seg_file, \
               h5py.File(str(self.coords2image.results_folder / 'coords.h5'), 'a') as coords_file:
@@ -792,7 +792,7 @@ class TrackerLite:
         with h5py.File(str(self.results_dir / "tracking_results.h5"), "a") as track_file, \
                         h5py.File(self.images_path["h5_file"], 'r') as f_raw:
             track_file.attrs["t_initial"] = self.center_point
-            track_file.attrs["voxel_size_yxz"] = self.coords2image.image_pars["voxel_size_yxz"]
+            track_file.attrs["voxel_size_yxz"] = self.coords2image.voxel_size
             track_file.attrs["raw_dset"] = self.images_path["dset"]
             track_file.attrs["raw_channel_nuclei"] = self.images_path["channel_nuclei"]
             track_file.attrs["raw_channel_activity"] = self.images_path["channel_activity"]

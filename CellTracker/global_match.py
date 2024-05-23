@@ -90,8 +90,6 @@ def _match_fpm_prgls(fpm_model, fpm_model_rot, coords_norm_t1, coords_norm_t2):
                                                              coords_norm_t2=coords_norm_t2)
     aligned_t1_1, _, pairs_1, _ = affine_align_by_fpm(fpm_model, coords_norm_t1=aligned_t1_rot,
                                                    coords_norm_t2=coords_norm_t2)
-    # aligned_t1_2, _, pairs_2, _ = local_affine_align_by_fpm(fpm_model, coords_norm_t1=aligned_t1_1,
-    #                                                      coords_norm_t2=coords_norm_t2)
     pairs_3 = match_by_fpm_prgls(fpm_model, aligned_t1_1, coords_norm_t2, match_method="coherence")
     return pairs_3
 
@@ -186,8 +184,8 @@ def rigid_transform(tform_3x4: ndarray, coords_nx3: ndarray):
     return np.dot(coords_nx3, tform_3x4[:, :3].T) + tform_3x4[:, 3]
 
 
-def visualize_pairwise_distances(points_tx2: ndarray, center_point: int, show_id: bool = True):
-    plt.figure(figsize=(30, 30))
+def visualize_pairwise_distances(points_tx2: ndarray, center_point: int, show_id: bool = True, figsize: tuple = (20, 20)):
+    plt.figure(figsize=figsize)
     plt.scatter(points_tx2[:, 0], points_tx2[:, 1])
     plt.scatter(points_tx2[center_point-1, 0], points_tx2[center_point-1, 1], c="r")
     plt.title('2D Visualization of Points Based on Distance Matrix')

@@ -169,7 +169,7 @@ class CoordsToImageTransformer:
     coord_proof: Coordinates
     use_8_bit: bool
 
-    def __init__(self, results_folder: str, image_pars: dict):
+    def __init__(self, results_folder: str, voxel_size_yxz: tuple, path_raw_images: dict):
         """
         Initialize the CoordsToImageTransformer with a specified results folder and voxel size.
 
@@ -180,16 +180,22 @@ class CoordsToImageTransformer:
         voxel_size : tuple
             Voxel size in the format (x, y, z).
         """
-        self.voxel_size = np.asarray(image_pars["voxel_size"])
-        self.image_pars = image_pars
-        self._cal_interp_factor()
+        self.voxel_size = voxel_size_yxz
+        self.interpolation_factor = self._cal_interp_factor()
+
+        x = load_2d_slices_at_time(images_path=path_raw_images, channel_name="channel_nuclei", t=1)
+        print(f"Raw image shape at vol1: {x.shape}", f"Dtype: {x.dtype}")
+        self.image_size_yxz = (*x.shape[1:], x.shape[0])
+        self.path_raw_images = path_raw_images
+
         self.results_folder = Path(results_folder)
 
     def _cal_interp_factor(self):
-        x_siz, y_siz, z_siz = self.image_pars["voxel_size_xyz"]
-        self.interpolation_factor = int(np.round(z_siz / (x_siz * y_siz) ** 0.5))
-        if self.interpolation_factor < 1:
-            self.interpolation_factor = 1
+        y_siz, x_siz, z_siz = self.voxel_size
+        interpolation_factor = int(np.round(z_siz / (y_siz * x_siz) ** 0.5))
+        if interpolation_factor < 1:
+            interpolation_factor = 1
+        return interpolation_factor
 
     def load_segmentation(self, manual_seg_path: str, proof_vol: int) -> None:
         """
@@ -221,7 +227,7 @@ class CoordsToImageTransformer:
         h, w, z = self.proofed_segmentation.shape
         with h5py.File(images_path["h5_file"], 'r+') as f_raw:
             t = f_raw[images_path["dset"]].shape[0]
-        resolution_h, resolution_w, resolution_z = self.image_pars["voxel_size"]
+        resolution_h, resolution_w, resolution_z = self.voxel_size
 
         dtype = np.uint8 if self.use_8_bit else np.uint16
 
@@ -240,11 +246,11 @@ class CoordsToImageTransformer:
             f["tracked_labels"][t_initial - 1, :, 0, :, :] = self.final_segmentation.transpose((2, 0, 1)).astype(dtype)
             f["tracked_coordinates"][t_initial - 1, :, :] = self.coord_proof.real
 
-        cmap = create_cmap(self.final_segmentation, self.image_pars, max_color=20, dist_type="2d_projection")
+        cmap = create_cmap(self.final_segmentation, self.voxel_size, max_color=20, dist_type="2d_projection")
         self.cmap_colors = np.zeros((len(cmap.colors), 3))
         for i in range(1, len(cmap.colors)):
             self.cmap_colors[i, :] = cmap.colors[i][:3]
-        raw_img = load_2d_slices_at_time(images_path, t=t_initial)
+        raw_img = load_2d_slices_at_time(images_path, t=t_initial, channel_name="channel_nuclei")
         self.save_merged_labels(self.final_segmentation, raw_img, t_initial, self.cmap_colors)
 
         # Print a message confirming that the proofed segmentation has been loaded and its shape
@@ -472,12 +478,12 @@ class CoordsToImageTransformer:
         corrected_labels_image = self.move_cells_in_3d_image((coords - self.coord_proof).interp, boundary_ids)
         return coords, corrected_labels_image
 
-    def load_prob_map(self, grid: tuple, t: int, h5_file, image_size_xyz: tuple):
+    def load_prob_map(self, grid: tuple, t: int, h5_file, image_size_yxz: tuple):
         prob_map = h5_file["prob"][t, ...].transpose((1,2,0))
         prob_map = np.repeat(np.repeat(np.repeat(prob_map, grid[1], axis=0), grid[2], axis=1), grid[0], axis=2)
-        if prob_map.shape != image_size_xyz:
-            x_lim, y_lim, z_lim = image_size_xyz
-            prob_map = prob_map[:x_lim, :y_lim, :z_lim]
+        if prob_map.shape != image_size_yxz:
+            y_lim, x_lim, z_lim = image_size_yxz
+            prob_map = prob_map[:y_lim, :x_lim, :z_lim]
         return prob_map
 
     def _correction_once(self, prob_img: ndarray, coords: Coordinates, boundary_ids: Set[int]):

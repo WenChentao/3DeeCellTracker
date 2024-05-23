@@ -7,10 +7,10 @@ Modification Description: This module is a wrapper of 3D StarDist modified accor
 from __future__ import print_function, unicode_literals, absolute_import, division, annotations
 
 import os
-import re
 import sys
 from glob import glob
 from typing import List
+import h5py
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -27,7 +27,6 @@ from tifffile import imread, imwrite
 from tqdm import tqdm
 
 from CellTracker.plot import custom_tab20_cmap
-from CellTracker.utils import load_2d_slices_at_time
 from CellTracker.stardist3dcustom import StarDist3DCustom
 
 STARDIST_MODELS = "stardist_models"
@@ -45,7 +44,8 @@ def load_stardist_model(model_name: str = "stardist", basedir: str = STARDIST_MO
     return model
 
 
-def predict_and_save(images_path: dict, model: StarDist3DCustom, results_folder: str, t_start: int = None):
+def predict_and_save(images_path: dict, model: StarDist3DCustom, results_folder: str, is_tczyx: bool = False, t_start: int = None,
+                     n_tiles: tuple = (1,1,1)):
     """
     Load 2D slices of a 3D image stack obtained at time t and predict instance coordinates using a trained StarDist3DCustom model.
     Save the predicted coordinates as numpy arrays in a folder.
@@ -59,7 +59,6 @@ def predict_and_save(images_path: dict, model: StarDist3DCustom, results_folder:
     # Check if the folder exists and create it if necessary
     _results_folder = Path(results_folder)
     _results_folder.mkdir(parents=True, exist_ok=True)
-    import h5py
 
     if isinstance(images_path, dict):
         file_extension = os.path.splitext(images_path["h5_file"])[1]
@@ -70,11 +69,14 @@ def predict_and_save(images_path: dict, model: StarDist3DCustom, results_folder:
             with tqdm(total=num_vol, initial=_t_start, desc="Segmenting images", ncols=50) as pbar:
                 for t in range(_t_start, num_vol + 1):
                     # Load 2D slices at time t. The raw_images should have the shape (time, channel, depth, height, width)
-                    x = raw_images[t - 1, images_path["channel"], :, :, :]
+                    if is_tczyx:
+                        x = raw_images[t - 1, images_path["channel_nuclei"], :, :, :]
+                    else:
+                        x = raw_images[t - 1, :, images_path["channel_nuclei"], :, :]
                     x = normalize(x, 1, 99.8, axis=(0, 1, 2))
 
                     # Save predicted instance coordinates as numpy arrays
-                    (labels, details), prob_map = model.predict_instances(x)
+                    (labels, details), prob_map = model.predict_instances(x, n_tiles=n_tiles, show_tile_progress=False)
                     if t == 1:
                         f_seg.create_dataset('prob', shape=(num_vol, *prob_map.shape),
                                                          chunks=(1, *prob_map.shape), dtype="float16",
@@ -132,10 +134,12 @@ def load_training_images(path_train_images: str, path_train_labels: str, max_pro
     img, lbl = X[i], Y[i]
     assert img.ndim in (3, 4)
     img = img if img.ndim == 3 else img[..., :3]
+
+    cmap = create_cmap(lbl, max_color=20)
     if max_projection:
-        plot_img_label_max_projection(img, lbl)
+        plot_img_label_max_projection(img, lbl, cmap)
     else:
-        plot_img_label_center_slice(img, lbl)
+        plot_img_label_center_slice(img, lbl, cmap)
 
     return X, Y, X_trn, Y_trn, X_val, Y_val, n_channel
 
@@ -228,13 +232,13 @@ def plot_img_label_center_slice(img, lbl, img_title="image (XY slice)", lbl_titl
     plt.tight_layout()
 
 
-def create_cmap(label_image_3d: ndarray, image_pars: dict , max_color=20, dist_type="2d_projection"):
+def create_cmap(label_image_3d: ndarray, voxel_size_yxz: tuple = (1,1,1), max_color=20, dist_type="2d_projection"):
     """
     Create a cmap for label_image_3d, so that the neighboring cells will have different colors
 
     Notes
     -----
-    Both label_image_3d and image_pars["voxel_size"] should follow the order of (height, width, depth)
+    Both label_image_3d and voxel_size_yxz should follow the order of (height, width, depth)
     """
     n = label_image_3d.max()
     assert n==len(np.unique(label_image_3d))-1
@@ -244,7 +248,7 @@ def create_cmap(label_image_3d: ndarray, image_pars: dict , max_color=20, dist_t
         label_image_3d,
         range(1, n + 1)
     )
-    coords_nx3 = coords_nx3 * np.asarray(image_pars["voxel_size"]).reshape((1,3))
+    coords_nx3 = coords_nx3 * np.asarray(voxel_size_yxz).reshape((1,3))
 
     if dist_type == "2d_projection":
         dist_nxk, indices_nxk = kneighbors_2d_projections(coords_nx3, max_color)

@@ -12,31 +12,32 @@ from skimage.segmentation import watershed
 from sklearn.decomposition import PCA
 
 
-def load_2d_slices_at_time(images_path: dict, t: int, do_normalize: bool = True):
+def load_2d_slices_at_time(images_path: dict, t: int, channel_name: str, is_tczyx: bool = False, do_normalize: bool = True):
     """Load all 2D slices at time t and normalize the resulted 3D image"""
     if isinstance(images_path, dict):
         file_extension = os.path.splitext(images_path["h5_file"])[1]
-        assert file_extension in [".h5", ".hdf5", ".nwb"], "Currently only TIFF sequences or HDF5/NWB dataset are supported"
+        assert file_extension in [".h5", ".hdf5"], "Currently only HDF5 dataset is supported"
 
-        with h5py.File(images_path["h5_file"], 'r') as f:
-            if file_extension != ".nwb":
-                x = f[images_path["dset"]][t - 1, images_path["channel"], :, :, :]
+        with h5py.File(images_path["h5_file"], 'r') as f_raw:
+            if is_tczyx:
+                x = f_raw[images_path["dset"]][t - 1, images_path[channel_name], :, :, :]
             else:
-                x = f[images_path["dset"]][t - 1, :, :, :, images_path["channel"]].transpose((2,0,1))
+                x = f_raw[images_path["dset"]][t - 1, :, images_path[channel_name], :, :]
     else:
-        raise ValueError("image_paths should be a dict for HDF5/NWB dataset")
+        raise ValueError("image_paths should be a dict for HDF5 dataset")
 
     if do_normalize:
         axis_norm = (0, 1, 2)  # normalize channels independently
         return normalize(x, axis=axis_norm)
     return x
 
-def load_2d_slices_at_time_quick(images_path: dict, f_raw, file_extension: str, t: int, do_normalize: bool = True):
+def load_2d_slices_at_time_quick(images_path: dict, f_raw, t: int, channel_name: str,
+                                 is_tczyx: bool = False, do_normalize: bool = True):
     """Load all 2D slices at time t and normalize the resulted 3D image"""
-    if file_extension == ".nwb":
-        x = f_raw[images_path["dset"]][t - 1, :, :, :, images_path["channel"]].transpose((2, 0, 1))
+    if is_tczyx:
+        x = f_raw[images_path["dset"]][t - 1, images_path[channel_name], :, :, :]
     else:
-        x = f_raw[images_path["dset"]][t - 1, images_path["channel"], :, :, :]
+        x = f_raw[images_path["dset"]][t - 1, :, images_path[channel_name], :, :]
 
     if do_normalize:
         axis_norm = (0, 1, 2)  # normalize channels independently
