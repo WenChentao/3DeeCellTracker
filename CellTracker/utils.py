@@ -139,3 +139,6 @@ def del_datasets(h5_file, datasets: list[str]):
         if dset in h5_file:
             del h5_file[dset]
 
+def debug_print(msg: str, do_print=False):
+    if do_print:
+        print(msg)

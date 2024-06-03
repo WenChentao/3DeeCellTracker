@@ -2,8 +2,12 @@ import os
 import pickle
 from pathlib import Path
 from typing import List, Tuple
+import gc
 
+from tensorflow.python.keras import backend as K
 import h5py
+import matplotlib.gridspec as gridspec
+import matplotlib.pyplot as plt
 import numpy as np
 from numpy import ndarray
 from scipy import ndimage
@@ -11,31 +15,27 @@ from scipy.interpolate import RBFInterpolator
 from scipy.spatial.distance import cdist
 from sklearn.decomposition import PCA
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 
 from CellTracker.coord_image_transformer import Coordinates, CoordsToImageTransformer
-from CellTracker.global_match import _match_fpm_prgls, pairwise_pointsets_distances, rigid_transform, \
+from CellTracker.fpm import FPMPart2Model
+from CellTracker.global_match import iterative_alignment, pairwise_pointsets_distances, rigid_transform, \
     ensemble_match_initial_20_volumes
-from CellTracker.plot import plot_initial_matching, plot_initial_matching_one_panel, plot_predicted_movements, \
-    plot_predicted_movements_one_panel, plot_pairs_and_movements
-from CellTracker.simple_alignment import get_match_pairs, K_POINTS, align_by_control_points, greedy_match
-from CellTracker.test_matching_models import cal_norm_prob, prgls_with_two_ref, affine_align_by_fpm, predict_matching_prgls
-from CellTracker.v1_modules.ffn import initial_matching_ffn
-from CellTracker.fpm import initial_matching_fpm
-from CellTracker.robust_match import add_or_remove_points, get_extra_cell_candidates
-from CellTracker.stardist3dcustom import StarDist3DCustom
-from CellTracker.utils import load_2d_slices_at_time, normalize_points, load_2d_slices_at_time_quick, del_datasets
+from CellTracker.plot import plot_initial_matching, plot_predicted_movements, \
+    plot_pairs_and_movements
+from CellTracker.robust_match import add_or_remove_points, get_extra_cell_candidates, filter_matching_outliers_global
+from CellTracker.simple_alignment import align_by_control_points, greedy_match
 from CellTracker.test_matching_models import BETA, LAMBDA
+from CellTracker.test_matching_models import cal_norm_prob, prgls_with_two_ref, affine_align_by_fpm, \
+    predict_matching_prgls, _match_pure_fpm
+from CellTracker.utils import load_2d_slices_at_time, normalize_points, load_2d_slices_at_time_quick, del_datasets
 
 
 class TrackerLite:
     """
     A class that tracks cells in 3D time-lapse images using a trained FFN model.
     """
-    def __init__(self, match_model,
-                 coords2image: CoordsToImageTransformer, stardist_model: StarDist3DCustom, model_type: str="fpm",
-                 similarity_threshold=0.3, match_method: str = "coherence",  miss_frame: List[int] = None):
+    def __init__(self, match_model, coords2image: CoordsToImageTransformer, grid: Tuple[int, int, int],
+                 similarity_threshold=0.3):
         """
         Initialize a new instance of the TrackerLite class.
 
@@ -58,36 +58,26 @@ class TrackerLite:
         model_type:
             The type of the match model. "ffn" or "fpm".
         """
+        self.center_point = None
         self.common_ids_in_coords = None
         self.common_ids_in_proof = None
         self.scale_vol1 = None
         self.mean_vol1 = None
         self.rotation_matrix = None
         self.images_path = coords2image.path_raw_images
-        if miss_frame is not None and not isinstance(miss_frame, List):
-            raise TypeError(f"miss_frame should be a list or None, but got {type(miss_frame)}")
 
         self.inv_tform_tx3x4 = None
         self.tform_tx3x4 = None
         self.corresponding_coords_txnx3 = None
 
         self.coords2image = coords2image
-        self.stardist_model = stardist_model
+        self.grid = grid
 
         self.results_dir = coords2image.results_folder
-
-        self.match_method = match_method
+        (self.results_dir / "temp").mkdir(parents=True, exist_ok=True)
         self.similarity_threshold = similarity_threshold
 
-        self.match_model = match_model
-        if model_type == "ffn":
-            self.get_similarity = initial_matching_ffn
-        elif model_type == "fpm":
-            self.get_similarity = initial_matching_fpm
-        else:
-            raise ValueError(f"Unknown model type: {model_type}")
-
-        self.miss_frame = [] if miss_frame is None else miss_frame
+        self.match_models = (match_model, FPMPart2Model(match_model.comparator))
 
     def get_cell_num_initial_20_vols(self):
         x = 20
@@ -107,7 +97,7 @@ class TrackerLite:
 
     def match_manual_ref0(self):
         """Remove cells whose centers are not included in the stardist predictions (including the weak cells)"""
-        pos_ref0, inliers = self._get_segmented_pos(self.coords2image.proofed_coords_vol)
+        pos_ref0, inliers = self._get_segmented_pos(self.center_point)
         dist_pxr = cdist(self.coords2image.coord_proof.real, pos_ref0.real)
         dist_rxr = cdist(pos_ref0.real, pos_ref0.real)
         np.fill_diagonal(dist_rxr, np.inf)
@@ -126,9 +116,25 @@ class TrackerLite:
             dist_pxr[:, ref0_index] = np.inf
         return np.asarray(matched_ind), np.asarray(matched_ind_in_proof)
 
+    def load_cached_data(self):
+        self.coords2image.auto_corrected_segmentation = np.load(str(self.results_dir / 'auto_corrected_segmentation.npy'))
+
+        self.coords2image.z_slice_original_labels = slice(self.coords2image.interpolation_factor // 2,
+                                             self.coords2image.interpolation_factor * self.coords2image.auto_corrected_segmentation.shape[2],
+                                             self.coords2image.interpolation_factor)
+
     def filter_proofed_cells(self, threshold: int = 15):
         """Remove cells that were not detected by stardist or the ones not exist in most of the other intial_x_volumes"""
         vol_num = 20
+        threshold_out_of_19_volumes = threshold - 1
+
+        self.load_cached_data()
+        coord_proof = np.load(str(self.coords2image.results_folder / 'coords_proof.npy'))
+        self.coords2image.coord_proof = Coordinates(coord_proof, self.coords2image.interpolation_factor,
+                                                    self.coords2image.voxel_size, dtype="raw")
+
+        self.load_center_point()
+
         segmented_pos_t1, inliers_t1 = self._get_segmented_pos(self.center_point)
         cum_match_counts=np.zeros((segmented_pos_t1.real.shape[0]), dtype=int)
         for i in tqdm(range(1, vol_num)):
@@ -136,14 +142,38 @@ class TrackerLite:
                 pairs = f[f"1_{i+1}"][:]
             for ref, _ in pairs:
                 cum_match_counts[ref] += 1
-        self.common_ids_in_coords, self.common_ids_in_proof = self.get_common_ids(cum_match_counts, threshold)
+        self.common_ids_in_coords, self.common_ids_in_proof = self.get_common_ids(cum_match_counts, threshold_out_of_19_volumes)
         print(f"Choose {len(self.common_ids_in_coords)} cells from {segmented_pos_t1.real.shape[0]} proofed cells, "
               f"with matches in {threshold * 100 // vol_num}% volumes of initial {vol_num} volumes")
         np.save(str(Path(self.results_dir) / "common_ids_vol_initial.npy"), self.common_ids_in_coords)
 
         self.coords2image.update_filtered_segmentation(self.common_ids_in_proof + 1, self.images_path, self.center_point)
+        self.save_subregions()
+
+    def load_center_point(self):
+        with open(str(self.results_dir / 'reference_target_vols_list.pkl'), 'rb') as file:
+            reference_target_vols_list = pickle.load(file)
+            if self.center_point is None:
+                self.center_point = reference_target_vols_list[0][0][0]
+            else:
+                assert self.center_point == reference_target_vols_list[0][0][0], \
+                    "self.center_point is different with the first volume in reference_target_vols_list"
+
+    def pairs_t1_to_t20_list(self):
         cell_num_list = self.get_cell_num_initial_20_vols()
-        self.pairs_t1_to_t20_list = ensemble_match_initial_20_volumes(cell_num_list, str(Path(self.results_dir) / "matches_1_to_20.h5"))
+        pairs_list_20 = ensemble_match_initial_20_volumes(cell_num_list, str(Path(self.results_dir) / "matches_1_to_20.h5"))
+
+        with open(str(self.results_dir / 'reference_target_vols_list.pkl'), 'rb') as file:
+            reference_target_vols_list = pickle.load(file)
+
+        with h5py.File(str(self.results_dir / "matching_results.h5"), "a") as f:
+            for i, pairs in enumerate(pairs_list_20[1:]):
+                _, tgt = reference_target_vols_list[i]
+                if f"pairs_initial_to_{tgt}" in f:
+                    del f[f"pairs_initial_to_{tgt}"]
+                f.create_dataset(f"pairs_initial_to_{tgt}", data=pairs)
+
+        return pairs_list_20
 
     def draw_matching_common_cells(self, t_target: int, reference_target_vols_list: list):
         assert t_target < len(reference_target_vols_list)
@@ -193,6 +223,11 @@ class TrackerLite:
 
         plt.ioff()
 
+        if fpm_model_rot is None:
+            fpm_models_rot = None
+        else:
+            fpm_models_rot = (fpm_model_rot, FPMPart2Model(fpm_model_rot.comparator))
+
         with h5py.File(path_rigid, "a") as rigid_align_file:
             del_datasets(rigid_align_file, ["rigid_aligned_coords", "tform", "tform_inv"])
             rigid_align_file.create_dataset("rigid_aligned_coords", data=rigid_aligned_coords_txnx3)
@@ -205,16 +240,20 @@ class TrackerLite:
                     t_ref - 1, mean=mean_t1, scale=scale_t1)
                 coords_subset_norm_t2, _, _, segmented_coords_norm_t2, segmented_pos_t2, subset_t2 = self.load_normalized_coords(
                     t_ref, mean=mean_t1, scale=scale_t1)
-                matched_pairs_t2_t2pre = _match_fpm_prgls(self.match_model, fpm_model_rot, coords_subset_norm_t2, coords_subset_norm_t2_pre) #bottleneck
+                matched_pairs_t2_t2pre = iterative_alignment(
+                    self.match_models, fpm_models_rot, coords_subset_norm_t2, coords_subset_norm_t2_pre) #bottleneck
                 if t_ref == 2:
                     updated_pairs_t2_t1 = matched_pairs_t2_t2pre.copy()
                 else:
                     matched_pairs_t2pre_t1 = rigid_align_file[f't_{t_ref - 1:06d}.npy'][:]
                     updated_pairs_t2_t1 = link_pairs(matched_pairs_t2pre_t1, matched_pairs_t2_t2pre)
 
+                # Apply the rigid transformation with the matchings from t=1 to t_target
                 rigid_aligned_ref_coords, tform = align_by_control_points(coords_subset_norm_t2, coords_subset_norm_t1,
                                                                           updated_pairs_t2_t1,
                                                                           method="euclidean")
+
+                # Update the matchings with prgls on the aligned points
                 n, m = rigid_aligned_ref_coords.shape[0], coords_subset_norm_t1.shape[0]
                 _, similarity_scores = predict_matching_prgls(updated_pairs_t2_t1,
                                                               rigid_aligned_ref_coords,
@@ -222,6 +261,11 @@ class TrackerLite:
                                                               coords_subset_norm_t1,
                                                               (m, n), beta=BETA, lambda_=LAMBDA)
                 updated_pairs_t2_t1 = greedy_match(similarity_scores, threshold=0.4)
+                updated_pairs_t2_t1 = filter_matching_outliers_global(updated_pairs_t2_t1, rigid_aligned_ref_coords,
+                                                              coords_subset_norm_t1,
+                                                              threshold_mdist=5 ** 2)
+
+                # Apply the rigid transformation with the updated matchings from t=1 to t_target
                 rigid_aligned_ref_coords, tform = align_by_control_points(coords_subset_norm_t2, coords_subset_norm_t1,
                                                                           updated_pairs_t2_t1,
                                                                           method="euclidean")
@@ -239,11 +283,11 @@ class TrackerLite:
                     rotation_matrix_to_t0,(coords_subset_norm_t1, coords_subset_norm_t2, rigid_aligned_ref_coords))
 
                 fig1 = self._plot_matching(f"Match (raw)", coords_subset_norm_t1_, coords_subset_norm_t2_,
-                                    scale_t1, mean_t1,  updated_pairs_t2_t1[:, [1, 0]], t_tgt, t_ref, plot_initial_matching,display=False)
+                                    scale_t1, mean_t1,  updated_pairs_t2_t1[:, [1, 0]], t_tgt, t_ref, display=False)
                 fig1.savefig('./figure1.png', dpi=90, facecolor='white')
                 plt.close(fig1)
                 fig2 = self._plot_matching(f"Matching (aligned)", coords_subset_norm_t1_, rigid_aligned_ref_coords_,
-                                    scale_t1, mean_t1,  updated_pairs_t2_t1[:, [1, 0]], t_tgt, t_ref, plot_initial_matching, display=False)
+                                    scale_t1, mean_t1,  updated_pairs_t2_t1[:, [1, 0]], t_tgt, t_ref, display=False)
                 fig2.savefig('./figure2.png', dpi=90, facecolor='white')
                 plt.close(fig2)
                 combine_two_png(t=t_ref, alignment_folder=alignment_folder, arrangement=arrangement)
@@ -268,6 +312,7 @@ class TrackerLite:
                         continue
                     t2 = tgt_list[j]
                     _, pairs = self.predict_cell_positions(t1, t2)
+                    clear_memory()
                     f.create_dataset(f"{i + 1}_{j + 1}", data=pairs)
 
     def save_optimized_matches_in_first_20_volumes(self, max_repetition=2):
@@ -279,11 +324,12 @@ class TrackerLite:
         result_path  = Path(self.results_dir) / "matchings"
         result_path.mkdir(exist_ok=True, parents=True)
         plt.ioff()
+        pairs_t1_to_t20_list = self.pairs_t1_to_t20_list()
         for t_target in tqdm(range(1, 20)):
             t2 = reference_target_vols_list[t_target - 1][1]
             coords_subset_norm_t1, segmented_coords_norm_t1, segmented_pos_t1, subset_t1 = self.load_rotated_normalized_coords(t1)
             coords_subset_norm_t2, segmented_coords_norm_t2, segmented_pos_t2, subset_t2 = self.load_rotated_normalized_coords(t2)
-            pairs = self.pairs_t1_to_t20_list[t_target]
+            pairs = pairs_t1_to_t20_list[t_target]
 
             ref_ptrs_confirmed, ref_ptrs_tracked_t2 = self.predict_pos_all_cells(pairs, segmented_coords_norm_t1,
                                                                                  segmented_coords_norm_t2)
@@ -295,7 +341,7 @@ class TrackerLite:
                             (segmented_coords_norm_t1, segmented_coords_norm_t2, ref_ptrs_confirmed, ref_ptrs_tracked_t2)))
             fig = plot_pairs_and_movements(segmented_coords_norm_t1, segmented_coords_norm_t2, t1, t2,
                                         ref_ptrs_confirmed, _ref_ptrs_tracked_t2, display_fig=False, show_ids=False)
-            self.save_tracking_results(confirmed_coord, corrected_labels_image, t=t2, images_path=self.images_path)
+            self.save_tracking_results(confirmed_coord, corrected_labels_image, t=t2, images_path=self.images_path, step=t_target+1)
             fig.savefig(str(result_path/ f"matching_t{t2:06d}.png"), dpi=90, facecolor='white')
             plt.close(fig)
 
@@ -308,13 +354,14 @@ class TrackerLite:
                                              interpolation_factor=self.coords2image.interpolation_factor,
                                              voxel_size=self.coords2image.voxel_size, dtype="real")
         confirmed_coord, corrected_labels_image = self.coords2image.accurate_correction(t2,
-                                                                                        self.stardist_model.config.grid,
+                                                                                        self.grid,
                                                                                         tracked_coords_t2_pred,
                                                                                         ensemble=True, max_repetition=max_repetition)
         return confirmed_coord, corrected_labels_image
 
     def predict_pos_all_cells(self, pairs, segmented_coords_norm_t1, segmented_coords_norm_t2):
         # Find these cells that were not matched in previous procedures
+        self.common_ids_in_coords = np.load(str(Path(self.results_dir) / "common_ids_vol_initial.npy"))
         missed_cells = np.setdiff1d(self.common_ids_in_coords, pairs[:, 0], assume_unique=True)
         missed_cells, common_ind_miss, pairs_ind_miss = np.intersect1d(self.common_ids_in_coords, missed_cells,
                                                                        return_indices=True)
@@ -334,23 +381,43 @@ class TrackerLite:
                                                                              segmented_coords_norm_t1[missed_cells, :])
         return ref_ptrs_confirmed, ref_ptrs_tracked_t2
 
-    def track_vols_after20(self, num_ensemble: int = 1, restart: int = 0, max_repetition=2):
+    def track_vols_after20(self, restart_from_breakpoint: bool = True, num_ensemble: int = None, max_repetition=2):
         with open(str(self.results_dir / 'reference_target_vols_list.pkl'), 'rb') as file:
             reference_target_vols_list = pickle.load(file)
 
-        with h5py.File(str(self.results_dir / "matching_results.h5"), "a") as f:
-            for i, pairs in enumerate(self.pairs_t1_to_t20_list[1:]):
-                _, tgt = reference_target_vols_list[i]
-                if f"pairs_initial_to_{tgt}" in f:
-                    del f[f"pairs_initial_to_{tgt}"]
-                f.create_dataset(f"pairs_initial_to_{tgt}", data=pairs)
+        # Determine the number of reference volumes
+        if num_ensemble is None:
+            num_ensemble = len(reference_target_vols_list[19][0])
+            print(f"num_ensemble = {num_ensemble}")
+        else:
+            assert num_ensemble <= len(reference_target_vols_list[19][0]), f"num_ensemble should be <= {len(reference_target_vols_list[19][0])}"
+
+        # Restart from breakpoint in last running
+        if restart_from_breakpoint:
+            with h5py.File(str(self.coords2image.results_folder / 'tracking_results.h5'), 'r') as f:
+                step = f.attrs["last_step"]
+            restart_timing = step - 20
+            assert restart_timing >= 0, "You need to track the 1-20 volumes first!"
+            print(f"restart from step={step + 1}")
+        else:
+            restart_timing = 0
+
+        # Reuse the required data that have been calculated and stored in hard disk
+        self.load_cached_data()
+        coord_proof_filtered = np.load(str(self.coords2image.results_folder / 'coords_proof_filtered.npy'))
+        self.coords2image.coord_proof_filtered = Coordinates(coord_proof_filtered, self.coords2image.interpolation_factor,
+                                                    self.coords2image.voxel_size, dtype="raw")
+        self.coords2image.updated_proofed_segmentation = np.load(str(self.results_dir / "temp" / 'updated_proofed_segmentation.npy'))
+        self.coords2image.updated_subregions = self.load_filtered_subregions()
+        self.coords2image.cmap_colors = np.load(str(self.results_dir / "temp" / 'cmap.npy'))
 
         t0 = reference_target_vols_list[0][0][0]
         coords_subset_norm_t0, segmented_coords_norm_t0, segmented_pos_t0, subset_t0 = self.load_rotated_normalized_coords(t0)
         num_cells_t0 = segmented_pos_t0.real.shape[0]
 
         plt.ioff()
-        for i in tqdm(range(19 + restart, len(reference_target_vols_list))):
+
+        for i in tqdm(range(19 + restart_timing, len(reference_target_vols_list))):
             ref_list, tgt = reference_target_vols_list[i]
             coords_subset_norm_tgt, segmented_coords_norm_tgt, segmented_pos_tgt, subset_tgt = self.load_rotated_normalized_coords(tgt)
             num_cells_tgt = segmented_pos_tgt.real.shape[0]
@@ -359,6 +426,7 @@ class TrackerLite:
             # Calculate the matching by FPM + PRGLS + Ensemble votes
             for ref in ref_list[:num_ensemble]:
                 _, pairs_ref_tgt = self.predict_cell_positions(ref, tgt)
+                clear_memory()
                 if t0 == ref:
                     pairs_t0_ref = None
                 else:
@@ -391,9 +459,9 @@ class TrackerLite:
                     (segmented_coords_norm_t0, segmented_coords_norm_tgt, confirmed_cells_pos_t0, confirmed_cells_pos_tgt))
             fig = plot_pairs_and_movements(_segmented_coords_norm_t0, _segmented_coords_norm_tgt, t0, tgt,
                                            _confirmed_cells_pos_t0, _confirmed_cells_pos_tgt, display_fig=False, show_ids=False)
-            self.save_tracking_results(confirmed_cells_finetuned_pos_tgt, finetuned_labels_image, t=tgt, images_path=self.images_path)
             fig.savefig(str(Path(self.results_dir) / "matchings" / f"matching_t{tgt:06d}.png"), dpi=90, facecolor='white')
             plt.close(fig)
+            self.save_tracking_results(confirmed_cells_finetuned_pos_tgt, finetuned_labels_image, t=tgt, images_path=self.images_path, step=i+2)
         plt.ion()
 
     def _num_all_cells(self, t):
@@ -402,7 +470,7 @@ class TrackerLite:
         return num_inliers_t0
 
     def save_tracking_results(self, coords: Coordinates, corrected_labels_image: ndarray, t: int,
-                              images_path: dict):
+                              images_path: dict, step: int):
         """
         Save the tracking results, including coordinates, corrected labels image, and the merged image + label
 
@@ -417,12 +485,13 @@ class TrackerLite:
         images_path : dict
             The path to the raw image.
         """
+        raw_img = load_2d_slices_at_time(images_path, t=t, channel_name="channel_nuclei")
+        self.coords2image.save_merged_labels(corrected_labels_image, raw_img, t, self.coords2image.cmap_colors)
+
         with h5py.File(str(self.coords2image.results_folder / 'tracking_results.h5'), 'a') as f:
             f["tracked_labels"][t - 1, :, 0, :, :] = corrected_labels_image.transpose((2, 0, 1))
             f["tracked_coordinates"][t - 1, :, :] = coords.real
-
-        raw_img = load_2d_slices_at_time(images_path, t=t, channel_name="channel_nuclei")
-        self.coords2image.save_merged_labels(corrected_labels_image, raw_img, t, self.coords2image.cmap_colors)
+            f.attrs["last_step"] = step
 
     def pairwise_pointsets_distances(self):
         self.corresponding_coords_txnx3, self.tform_tx3x4, self.inv_tform_tx3x4 = self.load_rotation_alignment()
@@ -494,8 +563,8 @@ class TrackerLite:
         return coords_subset_norm, segmented_coords_norm, segmented_pos, subset
 
     def predict_cell_positions(self, t1: int, t2: int, confirmed_coord_t1: ndarray = None, subset_confirmed = None,
-                               beta: float = BETA, lambda_: float = LAMBDA, filter_points: bool = True, verbosity: int = 0,
-                               with_shift: bool = True, learning_rate: float = 0.5) -> Tuple[Coordinates, ndarray]:
+                               beta: float = BETA, lambda_: float = LAMBDA, verbosity: int = 0,
+                               learning_rate: float = 0.5) -> Tuple[Coordinates, ndarray]:
         """
         Predicts the positions of cells in a 3D image at time step t2, based on their positions at time step t1.
 
@@ -513,13 +582,9 @@ class TrackerLite:
             The beta parameter for the prgls model.
         lambda_:
             The lambda parameter for the prgls model.
-        filter_points:
-            Whether to filter out the outliers points that do not have corresponding points.
         verbosity:
             The verbosity level. 0-4. 0: no figure, 1: only final matching figure, 2: initial and final matching figures,
             3: all figures during iterations only in y-x view, 4: all figures during iterations with additional z-x view.
-        with_shift:
-            Whether to show the t1 and t2 points in a shift way.
         learning_rate:
             The learning rate for updating the predicted points, between 0 and 1.
 
@@ -530,13 +595,6 @@ class TrackerLite:
         pairs_seg_t1_seg_t2: ndarray, shape (n, 2)
             The matching between the segmentation at time step t1 and the segmentation at time step t2, including these "weak" cells
         """
-        post_processing = "prgls"
-        smoothing = 0  # not used in "prgls"
-
-        assert t2 not in self.miss_frame
-        plot_matching = plot_initial_matching if with_shift else plot_initial_matching_one_panel
-        plot_move = plot_predicted_movements if with_shift else plot_predicted_movements_one_panel
-
         # Load normalized coordinates at t1 and t2: segmented_pos is un-rotated, while other coords are rotated
         coords_subset_norm_t1, segmented_coords_norm_t1, segmented_pos_t1, subset_t1 = self.load_rotated_normalized_coords(t1)
         coords_subset_norm_t2, segmented_coords_norm_t2, segmented_pos_t2, subset_t2 = self.load_rotated_normalized_coords(t2)
@@ -549,117 +607,137 @@ class TrackerLite:
             confirmed_coords_norm_t1 = (confirmed_coord_t1 - self.mean_vol1) / self.scale_vol1
 
         n, m = segmented_coords_norm_t1.shape[0], segmented_coords_norm_t2.shape[0]
-        aligned_coords_subset_norm_t1, coords_subset_norm_t2, _, affine_tform = affine_align_by_fpm(self.match_model,
-                                                                          coords_norm_t1=coords_subset_norm_t1,
-                                                                          coords_norm_t2=coords_subset_norm_t2)
+        aligned_coords_subset_norm_t1, coords_subset_norm_t2, _, affine_tform = affine_align_by_fpm(self.match_models,
+                                                                                                    coords_norm_t1=coords_subset_norm_t1,
+                                                                                                    coords_norm_t2=coords_subset_norm_t2)
         aligned_segmented_coords_norm_t1 = affine_tform(segmented_coords_norm_t1)
         aligned_confirmed_coords_norm_t1 = affine_tform(confirmed_coords_norm_t1)
         moved_seg_coords_t1 = aligned_segmented_coords_norm_t1.copy()
 
+        if verbosity > 0:
+            self.rotation_matrix_t1 = self.cal_rotation_matrix_xyplane(t_initial=t1)
+
+        similarity_subset = None
+
         iter = 3
+        # Iterative matching by FPM + PRGLS
         for i in range(iter):
-            _matched_pairs_subset = self.initial_matching(aligned_coords_subset_norm_t1, coords_subset_norm_t2,
-                                                          self.mean_vol1, self.scale_vol1, t1, t2, plot_matching,
-                                                          verbosity, i)
-            matched_pairs = np.column_stack(
-                (subset[0][_matched_pairs_subset[:, 0]], subset[1][_matched_pairs_subset[:, 1]]))
+            _matched_pairs_subset = _match_pure_fpm(aligned_coords_subset_norm_t1, coords_subset_norm_t2, self.match_models,
+                                                    similarity_threshold=0.4, prob_mxn_initial=similarity_subset)
+            self.display_initial_matching(_matched_pairs_subset, aligned_coords_subset_norm_t1, coords_subset_norm_t2,
+                                          self.mean_vol1, self.scale_vol1, t1, t2, verbosity, i)
+
+            matched_pairs = np.column_stack((subset[0][_matched_pairs_subset[:, 0]], subset[1][_matched_pairs_subset[:, 1]]))
 
             if i == iter - 1:
-                tracked_coords_t1_to_t2, posterior_mxn = predict_new_positions(
-                    matched_pairs, aligned_confirmed_coords_norm_t1, aligned_segmented_coords_norm_t1,
-                    segmented_coords_norm_t2,
-                    post_processing, smoothing, (m, n), beta, lambda_)
+                break
 
-                tracked_coords_norm_t2 = tracked_coords_t1_to_t2.copy()
-                pairs_seg_t1_seg_t2 = greedy_match(posterior_mxn, threshold=0.5)
-                pairs_in_confirmed_subset = np.asarray(
-                    [(np.nonzero(subset_confirmed==i)[0][0], j) for i, j in pairs_seg_t1_seg_t2 if i in subset_confirmed])
-                tracked_coords_norm_t2[pairs_in_confirmed_subset[:, 0], :] = segmented_coords_norm_t2[pairs_in_confirmed_subset[:, 1], :]
-            else:
-                # Predict the corresponding positions in t2 of all the segmented cells in t1
-                predicted_coords_t1_to_t2, posterior_mxn = predict_new_positions(
-                    matched_pairs, aligned_segmented_coords_norm_t1, aligned_segmented_coords_norm_t1,
-                    segmented_coords_norm_t2,
-                    post_processing, smoothing, (m, n), beta, lambda_)
+            # Predict the corresponding positions in t2 of all the segmented cells in t1
+            predicted_coords_t1_to_t2, similarity_mxn = predict_by_prgls(
+                matched_pairs, aligned_segmented_coords_norm_t1, aligned_segmented_coords_norm_t1, segmented_coords_norm_t2,
+                (m, n), beta, lambda_)
 
-                moved_seg_coords_t1_rot, segmented_coords_norm_t2_rot, predicted_coords_t1_to_t2_rot = rotate_for_visualization(
-                    self.rotation_matrix, (moved_seg_coords_t1, segmented_coords_norm_t2 , predicted_coords_t1_to_t2))
-                if verbosity >= 3:
-                    self._plot_move_seg(f"Predict movements after {i} iteration", moved_seg_coords_t1_rot,
-                                        segmented_coords_norm_t2_rot,
-                                        predicted_coords_t1_to_t2_rot, self.scale_vol1, self.mean_vol1, t1, t2, plot_move)
-                if verbosity >= 4:
-                    self._plot_move_seg(f"Predict movements after {i} iteration", moved_seg_coords_t1_rot,
-                                        segmented_coords_norm_t2_rot,
-                                        predicted_coords_t1_to_t2_rot, self.scale_vol1, self.mean_vol1, t1, t2, plot_move, zy_view=True)
+            self.display_predicted_movements(moved_seg_coords_t1, predicted_coords_t1_to_t2, segmented_coords_norm_t2,
+                                             t1, t2, verbosity, i)
 
-                if filter_points:
-                    # Predict the corresponding positions in t1 of all the segmented cells in t2
-                    predicted_coords_t2_to_t1, _ = predict_new_positions(
-                        matched_pairs[:, [1, 0]], segmented_coords_norm_t2, segmented_coords_norm_t2, aligned_segmented_coords_norm_t1,
-                        post_processing, smoothing, (n, m), beta, lambda_)
+            # Predict the corresponding positions in t1 of all the segmented cells in t2
+            predicted_coords_t2_to_t1, _ = predict_by_prgls(
+                matched_pairs[:, [1, 0]], segmented_coords_norm_t2, segmented_coords_norm_t2, aligned_segmented_coords_norm_t1,
+                (n, m), beta, lambda_)
 
-                    aligned_coords_subset_norm_t1, coords_subset_norm_t2, subset = \
-                        add_or_remove_points(
-                            predicted_coords_t1_to_t2, predicted_coords_t2_to_t1,
-                            aligned_segmented_coords_norm_t1, segmented_coords_norm_t2,
-                            matched_pairs)
+            aligned_coords_subset_norm_t1, coords_subset_norm_t2, subset = \
+                add_or_remove_points(
+                    predicted_coords_t1_to_t2, predicted_coords_t2_to_t1,
+                    aligned_segmented_coords_norm_t1, segmented_coords_norm_t2,
+                    matched_pairs)
 
-                moved_seg_coords_t1 += (predicted_coords_t1_to_t2 - moved_seg_coords_t1) * learning_rate
-                aligned_coords_subset_norm_t1 = moved_seg_coords_t1[subset[0]]
+            moved_seg_coords_t1 += (predicted_coords_t1_to_t2 - moved_seg_coords_t1) * learning_rate
+            aligned_coords_subset_norm_t1 = moved_seg_coords_t1[subset[0]]
+            similarity_subset = similarity_mxn[np.ix_(subset[1], subset[0])]
+
+        # Final prediction of cell positions by PRGLS
+        tracked_coords_norm_t2, similarity_mxn = predict_by_prgls(
+            matched_pairs, aligned_confirmed_coords_norm_t1, aligned_segmented_coords_norm_t1, segmented_coords_norm_t2,
+            (m, n), beta, lambda_)
+
+        pairs_seg_t1_seg_t2 = greedy_match(similarity_mxn, threshold=0.5)
+        pairs_in_confirmed_subset = np.asarray([(np.nonzero(subset_confirmed == i)[0][0], j) for
+                                                i, j in pairs_seg_t1_seg_t2 if i in subset_confirmed])
+        tracked_coords_norm_t2[pairs_in_confirmed_subset[:, 0], :] = segmented_coords_norm_t2[
+                                                                     pairs_in_confirmed_subset[:, 1], :]
 
         tracked_coords_t2 = tracked_coords_norm_t2 * self.scale_vol1 + self.mean_vol1
 
-        segmented_coords_norm_t1_rotated, segmented_coords_norm_t2_rot = rotate_for_visualization(self.rotation_matrix,
-                        (segmented_coords_norm_t1, segmented_coords_norm_t2))
-        if verbosity >= 1:
-            self.print_info(post_processing)
-            self._plot_matching_final(f"Matching iter={i}",
-                                      segmented_coords_norm_t1_rotated * self.scale_vol1 + self.mean_vol1,
-                                      segmented_coords_norm_t2_rot * self.scale_vol1 + self.mean_vol1, pairs_seg_t1_seg_t2, t1, t2,
-                                      plot_matching)
-            self._plot_matching_final(f"Matching iter={i}",
-                                segmented_pos_t1.real, segmented_pos_t2.real, pairs_seg_t1_seg_t2, t1, t2, plot_matching)
-        if verbosity >= 4:
-            self._plot_matching_final(f"Matching iter={i}",
-                                      segmented_pos_t1.real, segmented_pos_t2.real, pairs_seg_t1_seg_t2, t1, t2,
-                                      plot_matching, zy_view=True)
+        self.display_final_matching(pairs_seg_t1_seg_t2, segmented_coords_norm_t1, segmented_coords_norm_t2,
+                                    segmented_pos_t1, segmented_pos_t2, t1, t2, verbosity, i)
 
         tracked_coords_t2_pred = Coordinates(tracked_coords_t2,
                                              interpolation_factor=self.coords2image.interpolation_factor,
                                              voxel_size=self.coords2image.voxel_size, dtype="real")
         return tracked_coords_t2_pred, pairs_seg_t1_seg_t2
 
-    def initial_matching(self, filtered_segmented_coords_norm_t1, filtered_segmented_coords_norm_t2,
-                         mean_t2, scale_t2, t1, t2, plot_matching, verbosity, i):
-        # Generate similarity scores between the filtered segmented coords
-        similarity_scores = self.get_similarity(self.match_model, filtered_segmented_coords_norm_t1,
-                                                filtered_segmented_coords_norm_t2, K_POINTS)
-        # Generate matched_pairs, which is the indices of the matched pairs in the filtered segmented coords
-        matched_pairs = get_match_pairs(similarity_scores, filtered_segmented_coords_norm_t1,
-                                        filtered_segmented_coords_norm_t2, threshold=self.similarity_threshold,
-                                        method=self.match_method)
+    def display_final_matching(self, pairs_seg_t1_seg_t2, segmented_coords_norm_t1, segmented_coords_norm_t2,
+                               segmented_pos_t1, segmented_pos_t2, t1, t2, verbosity, i):
+        if verbosity < 1:
+            return
+        segmented_coords_norm_t1_rotated, segmented_coords_norm_t2_rot = rotate_for_visualization(self.rotation_matrix_t1,
+                                                                                                  (
+                                                                                                  segmented_coords_norm_t1,
+                                                                                                  segmented_coords_norm_t2))
+        if verbosity >= 1:
+            print(f"Threshold for similarity: {self.similarity_threshold}")
+            self._plot_matching_final(f"Matching iter={i}",
+                                      segmented_coords_norm_t1_rotated * self.scale_vol1 + self.mean_vol1,
+                                      segmented_coords_norm_t2_rot * self.scale_vol1 + self.mean_vol1,
+                                      pairs_seg_t1_seg_t2, t1, t2,
+                                      plot_initial_matching)
+            self._plot_matching_final(f"Matching iter={i}",
+                                      segmented_pos_t1.real, segmented_pos_t2.real, pairs_seg_t1_seg_t2, t1, t2,
+                                      plot_initial_matching)
+        if verbosity >= 4:
+            self._plot_matching_final(f"Matching iter={i}",
+                                      segmented_pos_t1.real, segmented_pos_t2.real, pairs_seg_t1_seg_t2, t1, t2,
+                                      plot_initial_matching, zy_view=True)
 
+    def display_predicted_movements(self, moved_seg_coords_t1, predicted_coords_t1_to_t2, segmented_coords_norm_t2, t1,
+                                    t2, verbosity, i):
+        if verbosity < 1:
+            return
+        moved_seg_coords_t1_rot, segmented_coords_norm_t2_rot, predicted_coords_t1_to_t2_rot = rotate_for_visualization(
+            self.rotation_matrix_t1, (moved_seg_coords_t1, segmented_coords_norm_t2, predicted_coords_t1_to_t2))
+        if verbosity >= 3:
+            self._plot_move_seg(f"Predict movements after {i} iteration", moved_seg_coords_t1_rot,
+                                segmented_coords_norm_t2_rot,
+                                predicted_coords_t1_to_t2_rot, self.scale_vol1, self.mean_vol1, t1, t2)
+        if verbosity >= 4:
+            self._plot_move_seg(f"Predict movements after {i} iteration", moved_seg_coords_t1_rot,
+                                segmented_coords_norm_t2_rot,
+                                predicted_coords_t1_to_t2_rot, self.scale_vol1, self.mean_vol1, t1, t2,
+                                zy_view=True)
+
+    def display_initial_matching(self, matched_pairs, filtered_segmented_coords_norm_t1, filtered_segmented_coords_norm_t2,
+                                 mean_t2, scale_t2, t1, t2, verbosity, i):
+        if verbosity < 1:
+            return
         filtered_segmented_coords_norm_t1_rotated, filtered_segmented_coords_norm_t2_rotated = rotate_for_visualization(
-            self.rotation_matrix,(filtered_segmented_coords_norm_t1, filtered_segmented_coords_norm_t2))
+            self.rotation_matrix_t1,(filtered_segmented_coords_norm_t1, filtered_segmented_coords_norm_t2))
 
         # Generate figures showing the matching
         if (verbosity >= 2 and i == 0) or (verbosity >= 3 and i >= 1):
             fig = self._plot_matching(f"Matching iter={i}", filtered_segmented_coords_norm_t1_rotated,
-                                      filtered_segmented_coords_norm_t2_rotated, scale_t2, mean_t2, matched_pairs, t1, t2, plot_matching)
+                                      filtered_segmented_coords_norm_t2_rotated, scale_t2, mean_t2, matched_pairs, t1, t2)
         if verbosity >= 4:
             fig = self._plot_matching(f"Matching iter={i}", filtered_segmented_coords_norm_t1_rotated,
-                                      filtered_segmented_coords_norm_t2_rotated, scale_t2, mean_t2, matched_pairs, t1, t2, plot_matching,
+                                      filtered_segmented_coords_norm_t2_rotated, scale_t2, mean_t2, matched_pairs, t1, t2,
                                       zy_view=True)
-        return matched_pairs
+        return
 
     @staticmethod
     def _plot_matching(title: str, coords_subset_t1, coords_subset_t2, scale_t2, mean_t2,
-                       _matched_pairs_subset, t1, t2, plot_matching,
-                       zy_view: bool = False, display=True):
+                       _matched_pairs_subset, t1, t2, zy_view: bool = False, display=True):
         s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
         title = title + ", zy-view" if zy_view else title
-        fig = plot_matching(ref_ptrs=(coords_subset_t1 * scale_t2 + mean_t2)[s_],
+        fig = plot_initial_matching(ref_ptrs=(coords_subset_t1 * scale_t2 + mean_t2)[s_],
                             tgt_ptrs=(coords_subset_t2 * scale_t2 + mean_t2)[s_],
                             pairs_px2=_matched_pairs_subset, t1=t1, t2=t2, display_fig=display)
         fig.suptitle(title, fontsize=20, y=0.99)
@@ -679,10 +757,10 @@ class TrackerLite:
 
     @staticmethod
     def _plot_move_seg(title: str, moved_coords_t1, segmented_coords_norm_t2, predicted_coords_t1_to_t2,
-                       scale_t2, mean_t2, t1, t2, plot_move, zy_view: bool = False):
+                       scale_t2, mean_t2, t1, t2, zy_view: bool = False):
         s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
         title = title + ", zy-view" if zy_view else title
-        fig, _ = plot_move(ref_ptrs=moved_coords_t1[s_] * scale_t2 + mean_t2,
+        fig, _ = plot_predicted_movements(ref_ptrs=moved_coords_t1[s_] * scale_t2 + mean_t2,
                         tgt_ptrs=segmented_coords_norm_t2[s_] * scale_t2 + mean_t2,
                         predicted_ref_ptrs=predicted_coords_t1_to_t2[s_] * scale_t2 + mean_t2,
                         t1=t1, t2=t2)
@@ -700,42 +778,8 @@ class TrackerLite:
         )
         fig.suptitle(title, fontsize=20, y=0.9)
 
-    def print_info(self, post_processing):
-        print(f"Matching method: {self.match_method}")
+    def print_info(self):
         print(f"Threshold for similarity: {self.similarity_threshold}")
-        print(f"Post processing method: {post_processing}")
-
-    def match_by_nn(self, t1: int, t2: int, match_model=None, match_method=None, top_down=True):
-        if match_method is None:
-            print(f"Matching method: {self.match_method}")
-        else:
-            print(f"Matching method: {match_method}")
-        print(f"Threshold for similarity: {self.similarity_threshold}")
-        assert t2 not in self.miss_frame
-        segmented_pos_t1, inliers_t1 = self._get_segmented_pos(t1)
-        segmented_pos_t2, inliers_t2 = self._get_segmented_pos(t2)
-
-        coords_subset_t1 = segmented_pos_t1.real[inliers_t1]
-        coords_subset_t2 = segmented_pos_t2.real[inliers_t2]
-
-        pairs_px2 = self.match_two_point_sets(coords_subset_t1, coords_subset_t2, match_model=match_model, match_method=match_method)
-
-        fig = plot_initial_matching(coords_subset_t1, coords_subset_t2, pairs_px2, t1, t2, top_down=top_down)
-        return pairs_px2
-
-    def match_two_point_sets(self, confirmed_coord_t1, segmented_pos_t2, match_model=None, match_method=None):
-        confirmed_coords_norm_t1, (mean_t1, scale_t1) = normalize_points(confirmed_coord_t1.real, return_para=True)
-        segmented_coords_norm_t2 = (segmented_pos_t2.real - mean_t1) / scale_t1
-        if match_model is None:
-            match_model = self.match_model
-        if match_method is None:
-            match_method = self.match_method
-        initial_matching = self.get_similarity(match_model, confirmed_coords_norm_t1, segmented_coords_norm_t2,
-                                               K_POINTS)
-        updated_matching = initial_matching.copy()
-        pairs_px2 = get_match_pairs(updated_matching, confirmed_coords_norm_t1, segmented_coords_norm_t2,
-                                    threshold=self.similarity_threshold, method=match_method)
-        return pairs_px2
 
     def _get_segmented_pos(self, t: int) -> Tuple[Coordinates, ndarray]:
         """Get segmented positions and extra positions from stardist model"""
@@ -750,7 +794,7 @@ class TrackerLite:
         else:
             with h5py.File(str(self.results_dir / "seg.h5"), "r") as seg_file:
                 coordinates_stardist = seg_file[f'coords_{str(t-1).zfill(6)}'][:]
-                prob_map = self.coords2image.load_prob_map(self.stardist_model.config.grid, t - 1, seg_file, image_size_yxz)
+                prob_map = self.coords2image.load_prob_map(self.grid, t - 1, seg_file, image_size_yxz)
             extra_coordinates = get_extra_cell_candidates(coordinates_stardist, prob_map)
             if extra_coordinates.shape[0] != 0:
                 combined_coordinates = np.concatenate((coordinates_stardist, extra_coordinates), axis=0)
@@ -770,7 +814,7 @@ class TrackerLite:
             vol_num = seg_file["prob"].shape[0]
             for t in tqdm(range(vol_num)):
                 coordinates_stardist = seg_file[f'coords_{str(t).zfill(6)}'][:]
-                prob_map = self.coords2image.load_prob_map(self.stardist_model.config.grid, t, seg_file, image_size_yxz)
+                prob_map = self.coords2image.load_prob_map(self.grid, t, seg_file, image_size_yxz)
                 extra_coordinates = get_extra_cell_candidates(coordinates_stardist, prob_map) # bottleneck
                 if extra_coordinates.shape[0] != 0:
                     combined_coordinates = np.concatenate((coordinates_stardist, extra_coordinates), axis=0)
@@ -782,6 +826,7 @@ class TrackerLite:
                 dset.attrs["num"] = num
 
     def activities(self, discard_ratio: float = 0.1):
+        self.load_center_point()
         with h5py.File(str(self.results_dir / "seg.h5"), "r") as seg_file:
             vol_num = seg_file["prob"].shape[0]
         file_extension = os.path.splitext(self.images_path["h5_file"])[1]
@@ -839,8 +884,8 @@ class TrackerLite:
         visualize_folder.mkdir(exist_ok=True, parents=True)
 
         self.corresponding_coords_txnx3, self.tform_tx3x4, self.inv_tform_tx3x4 = self.load_rotation_alignment()
-        self.rotation_matrix = self.cal_rotation_matrix_xyplane(t_initial=self.center_point)
-        self.aligned_corresponding_coords_txnx3 = np.matmul(self.corresponding_coords_txnx3[:, :, :2], self.rotation_matrix)
+        rotation_matrix = self.cal_rotation_matrix_xyplane(t_initial=1)
+        self.aligned_corresponding_coords_txnx3 = np.matmul(self.corresponding_coords_txnx3[:, :, :2], rotation_matrix)
 
         tgt_list = np.asarray([self.center_point] + [id for _, id in reference_target_vols_list])
         t = points_tx2.shape[0]
@@ -917,6 +962,8 @@ class TrackerLite:
     def save_subregions(self):
         with h5py.File(str(self.results_dir / "tracking_results.h5"), "a") as track_file:
             track_file.attrs["num_cells"] = len(self.coords2image.updated_subregions)
+            if "subregions" in track_file:
+                del track_file["subregions"]
             group = track_file.create_group("subregions")
             for i, (slices_xyz, subregion) in enumerate(self.coords2image.updated_subregions):
                 if f"subregion_{i+1}" in track_file:
@@ -927,6 +974,17 @@ class TrackerLite:
                 dset.attrs["slice_xyz"] = (slices_xyz[0].start, slices_xyz[0].stop,
                                            slices_xyz[1].start, slices_xyz[1].stop,
                                            slices_xyz[2].start, slices_xyz[2].stop)
+
+    def load_filtered_subregions(self):
+        with h5py.File(str(self.results_dir / "tracking_results.h5"), "r") as track_file:
+            n_cells = track_file.attrs["num_cells"]
+            group = track_file["subregions"]
+            subregions = []
+            for i in range(n_cells):
+                cell_i = group[f"subregion_{i + 1}"]
+                x0, x1, y0, y1, z0, z1 = cell_i.attrs["slice_xyz"]
+                subregions.append(((slice(x0, x1), slice(y0, y1), slice(z0, z1)), cell_i[:]))
+        return subregions
 
     def cache_max_projections(self):
         # Cache max projections of raw image
@@ -1119,3 +1177,8 @@ def matrix2pairs(matches_matrix_ini_to_tgt, num_cells_t0, num_ensemble):
         matches_matrix_ini_to_tgt[:, tgt] = 0
     pairs_t0_tgt = np.asarray(pairs_t0_tgt)
     return pairs_t0_tgt
+
+
+def clear_memory():
+    K.clear_session()
+    gc.collect()

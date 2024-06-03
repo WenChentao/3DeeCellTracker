@@ -3,7 +3,7 @@ from typing import Tuple
 import numpy as np
 from numpy import ndarray
 
-from CellTracker.fpm import initial_matching_fpm
+from CellTracker.fpm import initial_matching_fpm, initial_matching_fpm_local_search
 from CellTracker.robust_match import filter_matching_outliers_global
 from CellTracker.simple_alignment import align_by_control_points, get_match_pairs, K_POINTS, greedy_match, \
     local_align_by_control_points, N_NEIGHBOR_LOCAL_ALIGNMENT
@@ -14,27 +14,23 @@ from CellTracker.v1_modules.ffn import initial_matching_ffn
 BETA, LAMBDA, MAX_ITERATION = (3.0, 3.0, 2000)
 
 
-def rotation_align_by_fpm(fpm_model_rot, coords_norm_t1, coords_norm_t2, similarity_threshold=0.4, threshold_mdist=3 ** 2):
-    return _align_by_fpm(fpm_model_rot, coords_norm_t1, coords_norm_t2, "euclidean", threshold_mdist, similarity_threshold=similarity_threshold,
-                         use_prgls=False)
+def rotation_align_by_fpm(fpm_models_rot, coords_norm_t1, coords_norm_t2, similarity_threshold=0.4, threshold_mdist=3 ** 2):
+    pairs_px2 = _match_pure_fpm(coords_norm_t1, coords_norm_t2, fpm_models_rot, similarity_threshold)
+    return _transform_by_control_points(coords_norm_t1, coords_norm_t2, "euclidean", threshold_mdist, pairs_px2)
 
 
-def affine_align_by_fpm(fpm_model, coords_norm_t1, coords_norm_t2, similarity_threshold=0.4, threshold_mdist=5 ** 2):
-    return _align_by_fpm(fpm_model, coords_norm_t1, coords_norm_t2, "affine", threshold_mdist, similarity_threshold=similarity_threshold)
+def affine_align_by_fpm(fpm_models, coords_norm_t1, coords_norm_t2, similarity_threshold=0.4, threshold_mdist=5 ** 2):
+    pairs_px2, similarity_scores = match_by_fpm_prgls(fpm_models, coords_norm_t1, coords_norm_t2, similarity_threshold=similarity_threshold)
+    return _transform_by_control_points(coords_norm_t1, coords_norm_t2, "affine", threshold_mdist, pairs_px2)
 
 
-def local_affine_align_by_fpm(fpm_model, coords_norm_t1, coords_norm_t2, similarity_threshold=0.3, threshold_mdist=5 ** 2):
-    return _align_by_fpm(fpm_model, coords_norm_t1, coords_norm_t2, "affine", threshold_mdist, local_cal=True,
-                         similarity_threshold=similarity_threshold)
+# def local_affine_align_by_fpm(fpm_model, coords_norm_t1, coords_norm_t2, similarity_threshold=0.3, threshold_mdist=5 ** 2):
+#     pairs_px2 = match_by_fpm_prgls(fpm_model, coords_norm_t1, coords_norm_t2, similarity_threshold=similarity_threshold)
+#     return _transform_by_control_points(coords_norm_t1, coords_norm_t2, "affine", threshold_mdist, pairs_px2, local_cal=True)
 
 
-def _align_by_fpm(fpm_model_rot, coords_norm_t1, coords_norm_t2, method_transform: str, threshold_mdist:float, similarity_threshold=0.4,
-                  local_cal: bool=False, use_prgls=True):
-    if use_prgls:
-        pairs_px2 = match_by_fpm_prgls(fpm_model_rot, coords_norm_t1, coords_norm_t2, similarity_threshold=similarity_threshold)
-    else:
-        pairs_px2 = _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model_rot, "greedy", similarity_threshold)
-
+def _transform_by_control_points(coords_norm_t1, coords_norm_t2, method_transform: str, threshold_mdist:float, pairs_px2: ndarray,
+                                 local_cal: bool=False):
     align_func = local_align_by_control_points if local_cal and pairs_px2.shape[0] > N_NEIGHBOR_LOCAL_ALIGNMENT else align_by_control_points
     assert not (local_cal and pairs_px2.shape[0] <= N_NEIGHBOR_LOCAL_ALIGNMENT), f"pairs_px2.shape={pairs_px2.shape}"
     aligned_coords_t1, _ = align_func(coords_norm_t1, coords_norm_t2, pairs_px2, method_transform)
@@ -48,45 +44,45 @@ def _sort_pairs(pairs_px2):
     return np.column_stack((pairs_px2[sorted_indices, 0], pairs_px2[sorted_indices, 1]))
 
 
-def _align_by_fpm_simple(fpm_model, points1, points2, similarity_threshold=0.4, match_method='coherence'):
-    # Initialize the model
-    coords_norm_t1 = normalize_points(points1)
-    coords_norm_t2 = normalize_points(points2)
-
-    pairs_px2 = _match_fpm(coords_norm_t1, coords_norm_t2, fpm_model, 'coherence', similarity_threshold)
-    aligned_coords_t1, _ = align_by_control_points(coords_norm_t1, coords_norm_t2, pairs_px2, method="affine")
-    pairs_px2 = _match_fpm(aligned_coords_t1, coords_norm_t2, fpm_model, match_method, similarity_threshold)
-    return pairs_px2, (aligned_coords_t1, coords_norm_t1, coords_norm_t2)
+# def _align_by_fpm_affine(fpm_model, coords_norm_t1, coords_norm_t2, similarity_threshold=0.4):
+#     # coords_norm_t1 = normalize_points(points1)
+#     # coords_norm_t2 = normalize_points(points2)
+#
+#     pairs_px2 = _match_pure_fpm(coords_norm_t1, coords_norm_t2, fpm_model, similarity_threshold)
+#     aligned_coords_t1, _ = align_by_control_points(coords_norm_t1, coords_norm_t2, pairs_px2, method="affine")
+#     return pairs_px2, (aligned_coords_t1, coords_norm_t1, coords_norm_t2)
 
 
-def _match_fpm(coords_norm_t1: ndarray, coords_norm_t2:ndarray, fpm_model, match_method: str, similarity_threshold: float):
+def _match_pure_fpm(coords_norm_t1: ndarray, coords_norm_t2:ndarray, fpm_models, similarity_threshold: float, prob_mxn_initial: ndarray=None):
+    "Use fpm for matching and extract the pairs"
     if np.isnan(np.max(coords_norm_t1)):
         raise ValueError("coords_norm_t1 contains Nan value")
     if np.isnan(np.max(coords_norm_t2)):
         raise ValueError("coords_norm_t2 contains Nan value")
 
-    initial_matching = initial_matching_fpm(fpm_model, coords_norm_t1, coords_norm_t2,
-                                            K_POINTS)
+    if prob_mxn_initial is None:
+        initial_matching = initial_matching_fpm(fpm_models, coords_norm_t1, coords_norm_t2, K_POINTS)
+    else:
+        initial_matching = initial_matching_fpm_local_search(fpm_models[0], coords_norm_t1, coords_norm_t2, K_POINTS, prob_mxn_initial)
     matching_copy = initial_matching.copy()
     pairs_px2 = get_match_pairs(matching_copy, coords_norm_t1, coords_norm_t2,
-                                threshold=similarity_threshold, method=match_method) # bottleneck
+                                threshold=similarity_threshold, method="greedy")
     return pairs_px2
 
 
-def match_by_fpm_prgls(fpm_model, points1, points2, similarity_threshold=0.4, similarity_threshold_final=0.3, match_method='coherence'):
-    pairs_px2, (aligned_coords_t1, coords_norm_t1, coords_norm_t2) = \
-        _align_by_fpm_simple(fpm_model, points1, points2, similarity_threshold, match_method)
+def match_by_fpm_prgls(fpm_models, coords_norm_t1, coords_norm_t2, similarity_threshold=0.4, similarity_threshold_final=0.3):
+    pairs_px2 = _match_pure_fpm(coords_norm_t1, coords_norm_t2, fpm_models, similarity_threshold)
 
-    n = aligned_coords_t1.shape[0]
-    m = points2.shape[0]
+    n = coords_norm_t1.shape[0]
+    m = coords_norm_t2.shape[0]
     predicted_coords_t1_to_t2, similarity_scores = predict_matching_prgls(pairs_px2,
-                                                                          aligned_coords_t1,
-                                                                          aligned_coords_t1,
+                                                                          coords_norm_t1,
+                                                                          coords_norm_t1,
                                                                           coords_norm_t2,
                                                                           (m, n), beta=BETA, lambda_=LAMBDA)
 
-    match_seg_t1_seg_t2 = greedy_match(similarity_scores, threshold=similarity_threshold_final)
-    return match_seg_t1_seg_t2
+    pairs_final = greedy_match(similarity_scores, threshold=similarity_threshold_final)
+    return pairs_final, similarity_scores
 
 
 def match_by_ffn(ffn_model, points1, points2, similarity_threshold=0.4, match_method='coherence'):
@@ -223,7 +219,7 @@ def prgls_with_two_ref(normalized_prob_mxn, ptrs_tgt_mx3: ndarray, ptrs_ref_nx3:
 
         # Test convergence:
         dist_sqrt = np.sqrt(np.sum(np.square(movements_ref_nx3)))
-        if dist_sqrt < 1E-3:
+        if dist_sqrt < 1E-2:
             # print(f"Converged at iteration = {iteration}")
             break
 

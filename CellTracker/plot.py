@@ -401,7 +401,7 @@ def plot_predicted_movements(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref
 
     # Plot the matching relationships between the two sets of points
     plot_matching_relationships(ref_ptrs, predicted_ref_ptrs, ax1, ax2, single_panel=False)
-    set_unique_xlim(ax1, ax2)
+    equal_layout(ax1, ax2)
     plt.pause(0.1)
     return fig, (ax1, ax2)
 
@@ -484,6 +484,7 @@ def plot_two_pointset_scatters(dpi: float, ref_ptrs: ndarray, tgt_ptrs: ndarray,
 
     # Plot the point sets on the respective subplots
     ax1.scatter(ref_ptrs[:, 1], ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')
+    ax1.scatter(tgt_ptrs[:, 1], tgt_ptrs[:, 0], alpha=0)
     ax2.scatter(tgt_ptrs[:, 1], tgt_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 2')
     if show_ids:
         for i, txt in enumerate(ids_ref):
@@ -547,27 +548,26 @@ def equal_layout(ax1, ax2):
     ax1.invert_yaxis()
     ax2.invert_yaxis()
 
-    ax1.axis("equal")
-    ax2.axis("equal")
-    ratio = (ax1.get_ylim()[0] - ax1.get_ylim()[1]) / (ax1.get_xlim()[1] - ax1.get_xlim()[0])
-
-    # Determine the shared x_lim and y_lim
-    x_lim = [min(ax1.get_xlim()[0], ax2.get_xlim()[0]), max(ax1.get_xlim()[1], ax2.get_xlim()[1])]
-    y_lim = [min(ax1.get_ylim()[1], ax2.get_ylim()[1]), max(ax1.get_ylim()[0], ax2.get_ylim()[0])]
-    range_x = x_lim[1] - x_lim[0]
-    range_y = y_lim[1] - y_lim[0]
-    if range_y > range_x * ratio:
-        x_mean = (x_lim[1] + x_lim[0]) / 2
-        x_lim = [x_mean - range_y / ratio / 2, x_mean + range_y / ratio / 2]
-    else:
-        y_mean = (y_lim[1] + y_lim[0]) / 2
-        y_lim = [y_mean - range_x * ratio / 2, y_mean + range_x * ratio / 2]
-
+    # ax1.axis("equal")
+    # ax2.axis("equal")
+    # ratio = (ax1.get_ylim()[0] - ax1.get_ylim()[1]) / (ax1.get_xlim()[1] - ax1.get_xlim()[0])
+    #
+    # # Determine the shared x_lim and y_lim
+    # x_lim = [min(ax1.get_xlim()[0], ax2.get_xlim()[0]), max(ax1.get_xlim()[1], ax2.get_xlim()[1])]
+    # y_lim = [min(ax1.get_ylim()[1], ax2.get_ylim()[1]), max(ax1.get_ylim()[0], ax2.get_ylim()[0])]
+    # range_x = x_lim[1] - x_lim[0]
+    # range_y = y_lim[1] - y_lim[0]
+    # if range_y > range_x * ratio:
+    #     x_mean = (x_lim[1] + x_lim[0]) / 2
+    #     x_lim = [x_mean - range_y / ratio / 2, x_mean + range_y / ratio / 2]
+    # else:
+    #     y_mean = (y_lim[1] + y_lim[0]) / 2
+    #     y_lim = [y_mean - range_x * ratio / 2, y_mean + range_x * ratio / 2]
+    x_lim = ax1.get_xlim()
+    y_lim = ax1.get_ylim()
     # Set the same x_lim and y_lim on both axes
-    ax1.set_xlim(x_lim[0], x_lim[1])
-    ax1.set_ylim(y_lim[1], y_lim[0])
     ax2.set_xlim(x_lim[0], x_lim[1])
-    ax2.set_ylim(y_lim[1], y_lim[0])
+    ax2.set_ylim(y_lim[0], y_lim[1])
 
 
 def validate_inputs(ref_ptrs: ndarray, tgt_ptrs: ndarray, predicted_ref_ptrs: ndarray):

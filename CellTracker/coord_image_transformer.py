@@ -12,7 +12,7 @@ from skimage.segmentation import relabel_sequential
 from tifffile import imread
 
 from CellTracker.stardistwrapper import create_cmap, plot_img_label_max_projection
-from CellTracker.utils import load_2d_slices_at_time, recalculate_cell_boundaries, del_datasets
+from CellTracker.utils import load_2d_slices_at_time, recalculate_cell_boundaries, del_datasets, debug_print
 
 PAD_WIDTH = 3
 
@@ -222,9 +222,10 @@ class CoordsToImageTransformer:
         _trans_array = np.zeros((self.auto_corrected_segmentation.max()+1), dtype=int)
         _trans_array[filtered_ids] = np.arange(1, len(filtered_ids)+1)
         self.updated_proofed_segmentation = _trans_array[self.auto_corrected_segmentation]
+        np.save(str(self.results_folder / "temp" / 'updated_proofed_segmentation.npy'), self.updated_proofed_segmentation)
         self.update_subregions(filtered_ids)
 
-        h, w, z = self.proofed_segmentation.shape
+        h, w, z = self.auto_corrected_segmentation.shape
         with h5py.File(images_path["h5_file"], 'r+') as f_raw:
             t = f_raw[images_path["dset"]].shape[0]
         resolution_h, resolution_w, resolution_z = self.voxel_size
@@ -235,21 +236,23 @@ class CoordsToImageTransformer:
             if 'tracked_labels' not in f:
                 f.create_dataset('tracked_labels', (t, z, 1, h, w), chunks=(1, z, 1, h, w),
                     compression="gzip", dtype=dtype, compression_opts=1)  # "lzf" compression can cause error in Fiji
+                f.attrs["last_step"] = 1
             f["tracked_labels"].attrs['element_size_um'] = (resolution_z, resolution_h, resolution_w)
             if 'tracked_coordinates' not in f:
-                f.create_dataset('tracked_coordinates', (t, *self.coord_proof.real.shape),
+                f.create_dataset('tracked_coordinates', (t, *self.coord_proof_filtered.real.shape),
                                          compression="gzip", compression_opts=1)
             assert f["tracked_labels"].shape == (t, z, 1, h, w)
-            assert f["tracked_coordinates"].shape == (t, *self.coord_proof.real.shape)
+            assert f["tracked_coordinates"].shape == (t, *self.coord_proof_filtered.real.shape)
 
         with h5py.File(str(self.results_folder / 'tracking_results.h5'), 'a') as f:
             f["tracked_labels"][t_initial - 1, :, 0, :, :] = self.final_segmentation.transpose((2, 0, 1)).astype(dtype)
-            f["tracked_coordinates"][t_initial - 1, :, :] = self.coord_proof.real
+            f["tracked_coordinates"][t_initial - 1, :, :] = self.coord_proof_filtered.real
 
         cmap = create_cmap(self.final_segmentation, self.voxel_size, max_color=20, dist_type="2d_projection")
         self.cmap_colors = np.zeros((len(cmap.colors), 3))
         for i in range(1, len(cmap.colors)):
             self.cmap_colors[i, :] = cmap.colors[i][:3]
+        np.save(str(self.results_folder / "temp" / 'cmap.npy'), self.cmap_colors)
         raw_img = load_2d_slices_at_time(images_path, t=t_initial, channel_name="channel_nuclei")
         self.save_merged_labels(self.final_segmentation, raw_img, t_initial, self.cmap_colors)
 
@@ -308,6 +311,8 @@ class CoordsToImageTransformer:
         corrected_segmentation, _ = fix_labeling_errors(smoothed_labels)
 
         self.auto_corrected_segmentation = extract_regions(corrected_segmentation)
+        np.save(str(self.results_folder / 'auto_corrected_segmentation.npy'), self.auto_corrected_segmentation)
+        self.save_unfiltered_subregions()
 
         # Check if 8-bit is needed for saving the image
         self.use_8_bit = self.auto_corrected_segmentation.max() <= 255
@@ -322,8 +327,35 @@ class CoordsToImageTransformer:
             range(1, self.auto_corrected_segmentation.max() + 1)
         )
         self.coord_proof = Coordinates(np.asarray(coord_proof), interpolation_factor, self.voxel_size, dtype="raw")
+        np.save(str(self.results_folder / 'coords_proof.npy'), np.asarray(coord_proof))
+
+    def save_unfiltered_subregions(self):
+        with h5py.File(str(self.results_folder / "temp" / "subregions_unfiltered.h5"), "a") as subregion_file:
+            subregion_file.attrs["num_cells"] = len(self.subregions)
+            group = subregion_file.create_group("subregions")
+            for i, (slices_xyz, subregion) in enumerate(self.subregions):
+                if f"subregion_{i + 1}" in subregion_file:
+                    del subregion_file[f"subregion_{i + 1}"]
+                if f"subregion_{i + 1}" in group:
+                    del group[f"subregion_{i + 1}"]
+                dset = group.create_dataset(f"subregion_{i + 1}", data=subregion)
+                dset.attrs["slice_xyz"] = (slices_xyz[0].start, slices_xyz[0].stop,
+                                           slices_xyz[1].start, slices_xyz[1].stop,
+                                           slices_xyz[2].start, slices_xyz[2].stop)
+
+    def load_unfiltered_subregions(self):
+        with h5py.File(str(self.results_folder / "temp" / "subregions_unfiltered.h5"), "r") as subregion_file:
+            n_cells = subregion_file.attrs["num_cells"]
+            group = subregion_file["subregions"]
+            subregions = []
+            for i in range(n_cells):
+                cell_i = group[f"subregion_{i + 1}"]
+                x0, x1, y0, y1, z0, z1 = cell_i.attrs["slice_xyz"]
+                subregions.append(((slice(x0, x1), slice(y0, y1), slice(z0, z1)), cell_i[:]))
+        return subregions
 
     def update_subregions(self, filtered_ids) -> None:
+        self.subregions = self.load_unfiltered_subregions()
         updated_subregions = []
         for id in filtered_ids:
             updated_subregions.append(self.subregions[id - 1])
@@ -331,6 +363,11 @@ class CoordsToImageTransformer:
 
         # Get interpolated labels image
         updated_labels, cell_overlaps_mask = self.move_cells(self.updated_subregions, self.updated_proofed_segmentation, movements_nx3=None)
+        debug_print(f"updated_labels, t0: {[s[0] for s in self.updated_subregions[:3]]}")
+
+        self.z_slice_original_labels = slice(self.interpolation_factor // 2,
+                                             self.interpolation_factor * self.auto_corrected_segmentation.shape[2],
+                                             self.interpolation_factor)
 
         # Recalculate cell boundaries
         self.final_segmentation = recalculate_cell_boundaries(
@@ -345,12 +382,13 @@ class CoordsToImageTransformer:
 
         # Calculate coordinates of cell centers at t=1
         print("Calculating coordinates of cell centers...")
-        coord_proof = ndm.center_of_mass(
+        coord_proof_filtered = ndm.center_of_mass(
             self.final_segmentation > 0,
             self.final_segmentation,
             range(1, self.final_segmentation.max() + 1)
         )
-        self.coord_proof = Coordinates(np.asarray(coord_proof), self.interpolation_factor, self.voxel_size, dtype="raw")
+        self.coord_proof_filtered = Coordinates(np.asarray(coord_proof_filtered), self.interpolation_factor, self.voxel_size, dtype="raw")
+        np.save(str(self.results_folder / 'coords_proof_filtered.npy'), np.asarray(coord_proof_filtered))
 
     def move_cells_in_3d_image(self, movements_nx3: ndarray = None, cells_missed: Set[int] = None):
         """
@@ -371,6 +409,7 @@ class CoordsToImageTransformer:
         interpolated_labels, cell_overlaps_mask = self.move_cells(self.updated_subregions, self.updated_proofed_segmentation,
                                                                   movements_nx3=movements_nx3,
                                                                   cells_missed=cells_missed)
+        debug_print(f"updated_labels: {[s[0] for s in self.updated_subregions[:3]]}")
         return recalculate_cell_boundaries(
             interpolated_labels[:, :, self.z_slice_original_labels],
             cell_overlaps_mask[:, :, self.z_slice_original_labels],
@@ -424,7 +463,7 @@ class CoordsToImageTransformer:
         if ensemble:
             boundary_xy = 0
 
-        x_siz, y_siz, z_siz = self.proofed_segmentation.shape
+        x_siz, y_siz, z_siz = self.auto_corrected_segmentation.shape
         x, y, z = coordinates_real_nx3.T
 
         near_boundary = (
@@ -463,8 +502,10 @@ class CoordsToImageTransformer:
         corrected_labels_image : ndarray
             The corrected labels image.
         """
+        self.auto_corrected_segmentation = np.load(str(self.results_folder / 'auto_corrected_segmentation.npy'))
+
         with h5py.File(str(self.results_folder / "seg.h5"), "r") as seg_file:
-            prob_map = self.load_prob_map(grid, t - 1, seg_file, self.proofed_segmentation.shape)
+            prob_map = self.load_prob_map(grid, t - 1, seg_file, self.auto_corrected_segmentation.shape)
 
         boundary_ids = set(self.get_cells_on_boundary(coords.real, ensemble=ensemble).tolist())
 
@@ -475,7 +516,7 @@ class CoordsToImageTransformer:
             # stop the repetition if correction converged
             if np.max(delta_coords.interp) < 0.5:
                 break
-        corrected_labels_image = self.move_cells_in_3d_image((coords - self.coord_proof).interp, boundary_ids)
+        corrected_labels_image = self.move_cells_in_3d_image((coords - self.coord_proof_filtered).interp, boundary_ids)
         return coords, corrected_labels_image
 
     def load_prob_map(self, grid: tuple, t: int, h5_file, image_size_yxz: tuple):
@@ -508,7 +549,7 @@ class CoordsToImageTransformer:
             The difference in 3D cell coordinates between the corrected and original coordinates.
         """
         # generate labels image after applying the movements
-        displacements_from_vol1 = coords - self.coord_proof
+        displacements_from_vol1 = coords - self.coord_proof_filtered
         labels_image_interp, mask_image_interp = self.move_cells(self.updated_subregions, self.updated_proofed_segmentation,
                                                                  displacements_from_vol1.interp, boundary_ids)
         labels_image = labels_image_interp[:, :, self.z_slice_original_labels]
@@ -517,7 +558,7 @@ class CoordsToImageTransformer:
         # remove the overlapped regions from each label (marker for watershed)
         labels_image[mask_image > 1] = 0
         positions_of_new_centers = ndm.center_of_mass(prob_img, labels_image,
-                                                      range(1, self.final_segmentation.max() + 1))
+                                                      range(1, coords.real.shape[0] + 1))
         positions_of_new_centers = np.asarray(positions_of_new_centers)
 
         lost_cells = np.isnan(positions_of_new_centers[:, 0])

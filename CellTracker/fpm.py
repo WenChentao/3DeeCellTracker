@@ -315,14 +315,14 @@ def initial_matching_fpm_(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarra
     return similarity_scores
 
 
-def initial_matching_fpm(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
+def initial_matching_fpm(fpm_models, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
     """
     This function compute initial matching between all pairs of points in reference and target points set.
 
     Parameters
     ----------
-    fpm_model :
-        The pretrained FPM model
+    fpm_models :
+        The pretrained FPM model and FPM_PART2
     ref :
         The positions of the cells in the first volume
     tgt :
@@ -335,6 +335,8 @@ def initial_matching_fpm(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray
     similarity_scores :
         The correspondence matrix between two point sets
     """
+    fpm_model, fpm_part2 = fpm_models
+
     knn_model_ref = NearestNeighbors(n_neighbors=k_neighbors + 1).fit(ptrs_ref_nx3)
     knn_model_tgt = NearestNeighbors(n_neighbors=k_neighbors + 1).fit(ptrs_tgt_mx3)
 
@@ -355,7 +357,63 @@ def initial_matching_fpm(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray
             tf.tile(tf.expand_dims(expanded_feature_tgt, axis=0), (n, 1, 1, 1)), perm=axes), (n * m, *feature_shape[1:]))
     features_ref_tgt = tf.stack((expanded_feature_ref_meshgrid, expanded_feature_tgt_meshgrid), axis=-1)
 
-    fpm_part2 = FPMPart2Model(fpm_model.comparator)
-    similarity_scores = fpm_part2.predict(features_ref_tgt, batch_size=1024).reshape((m, n))
+    similarity_scores = fpm_part2.predict(features_ref_tgt, batch_size=256).reshape((m, n))
+
+    return similarity_scores
+
+
+def initial_matching_fpm_local_search(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int,
+                                      prob_mxn_initial: ndarray, threshold: float = 1e-6) -> ndarray:
+    """
+    This function search for matches from paris that with higher probabilities.
+
+    Parameters
+    ----------
+    fpm_model :
+        The pretrained FPM model
+    ref :
+        The positions of the cells in the first volume
+    tgt :
+        The positions of the cells in the second volume
+    k_ptrs :
+        The number of neighboring points used for FPM
+    prob_mxn_initial:
+        The pre-computed probability-matrix between points in reference and target volumes
+    threshold:
+        Only the points pairs with prob_mxn_initial>threshold will be calculated by the fpm_model
+
+    Returns
+    -------
+    similarity_scores :
+        The correspondence matrix between two point sets
+    """
+    knn_model_ref = NearestNeighbors(n_neighbors=k_neighbors + 1).fit(ptrs_ref_nx3)
+    knn_model_tgt = NearestNeighbors(n_neighbors=k_neighbors + 1).fit(ptrs_tgt_mx3)
+
+    n = ptrs_ref_nx3.shape[0]
+    m = ptrs_tgt_mx3.shape[0]
+
+    features_ref_nxkp2x4 = spherical_features_of_points(ptrs_ref_nx3, ptrs_ref_nx3, k_neighbors, knn_model_ref).astype(
+        np.float32)
+    features_tgt_mxkp2x4 = spherical_features_of_points(ptrs_tgt_mx3, ptrs_tgt_mx3, k_neighbors, knn_model_tgt).astype(
+        np.float32)
+
+    ref_x_flat_batch_meshgrid = np.tile(features_ref_nxkp2x4, (m, 1, 1, 1)).reshape(
+        (n * m, k_neighbors + 2, NUM_FEATURES))
+    tgt_x_flat_batch_meshgrid = np.tile(features_tgt_mxkp2x4, (n, 1, 1, 1)).transpose((1, 0, 2, 3)).reshape(
+        (n * m, k_neighbors + 2, NUM_FEATURES))
+
+    features_ref_tgt = np.concatenate(
+        (ref_x_flat_batch_meshgrid[:, :, :, None], tgt_x_flat_batch_meshgrid[:, :, :, None]), axis=3)
+
+    # Find the pairs to calculate similarity
+    indices_cal = np.nonzero(prob_mxn_initial > threshold)
+    one_dim_indices = np.ravel_multi_index(indices_cal, prob_mxn_initial.shape)
+    similarity_scores = np.zeros((m*n))
+
+    # Calculate the similarity in selected pairs
+    features_ref_tgt_selected = features_ref_tgt[one_dim_indices]
+    similarity_scores[one_dim_indices] = fpm_model.predict(features_ref_tgt_selected, batch_size=256)[:, 0]
+    similarity_scores = similarity_scores.reshape((m, n))
 
     return similarity_scores
