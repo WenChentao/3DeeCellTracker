@@ -1,6 +1,6 @@
 # 3DeeCellTracker
 [![PyPI](https://img.shields.io/pypi/v/3DeeCellTracker)](https://pypi.org/project/3DeeCellTracker/)
-[![Downloads](https://pepy.tech/badge/3DeeCellTracker)](https://pepy.tech/badge/3DeeCellTracker)
+[![Downloads](https://pepy.tech/badge/3DeeCellTracker)](https://pepy.tech/project/3DeeCellTracker)
 [![GitHub](https://img.shields.io/github/license/WenChentao/3DeeCellTracker)](https://github.com/WenChentao/3DeeCellTracker/blob/master/LICENSE)
 [![Youtube](https://img.shields.io/badge/YouTube-Demo-red)](https://www.youtube.com/watch?v=ctt6o3DY2bA&list=PLGY0oNQomrHERP08iEj-MsluFW8xQJujP)
 
