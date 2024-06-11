@@ -150,7 +150,7 @@ class TrackerLite:
                           interpolation_factor=interp_factor, voxel_size=voxel_size, dtype="raw")
         return pos
 
-    def activities(self, raw_path: str | dict, discard_ratio: float = 0.1):
+    def activities(self, raw_path: str | dict, discard_ratio: float = 0.1, do_normalize=False):
         tracked_labels_path = self.results_dir / TRACK_RESULTS / LABELS
         filenames = glob(str(tracked_labels_path / "*t*.tif"))
         assert len(filenames) > 0, f"No labels files were found in {tracked_labels_path / '*t*.tif'}"
@@ -162,7 +162,7 @@ class TrackerLite:
             print(f"t={t}...", end="\r")
             try:
                 # Load 2D slices at time t
-                raw = load_2d_slices_at_time(raw_path, t=t)
+                raw = load_2d_slices_at_time(raw_path, t=t, do_normalize=do_normalize)
             except FileNotFoundError:
                 # Handle missing image files
                 print(f"Warning: Raw images at t={t - 1} cannot be loaded! Stop calculation!")
