@@ -866,7 +866,7 @@ class TrackerLite:
                         intensity_label_i = raw[bbox][labels_img[bbox] == label]
                         threshold = np.percentile(intensity_label_i, per)
                         activities_txn[t - 1, label - 1] = np.mean(
-                            intensity_label_i[intensity_label_i > threshold])
+                            intensity_label_i[intensity_label_i >= threshold])
                     else:
                         activities_txn[t - 1, label - 1] = np.nan
 
@@ -993,16 +993,16 @@ class TrackerLite:
                 if "max_projection_raw" not in f_raw:
                     t, z, c, y, x = f_raw[self.images_path["dset"]].shape
                     dtype = f_raw[self.images_path["dset"]].dtype
-                    max_activity_dset = f_raw.create_dataset("max_projection_raw",
+                    max_raw_dset = f_raw.create_dataset("max_projection_raw",
                                                          (t, c, y + z * self.coords2image.interpolation_factor, x),
                                                          chunks=(1, c, y + z * self.coords2image.interpolation_factor, x),
                                                          compression="gzip", dtype=dtype, compression_opts=1)
 
                     print("Calulating max projection of raw images...")
                     for _t in tqdm(range(t)):
-                        raw_activity = f_raw[self.images_path["dset"]][_t, :, :, :, :].transpose((1, 2, 0, 3))
-                        max_activity_dset[_t, ...] = np.concatenate((raw_activity.max(axis=2),
-                                                                     np.repeat(raw_activity.max(axis=1),
+                        raw_img = f_raw[self.images_path["dset"]][_t, :, :, :, :].transpose((1, 2, 0, 3))
+                        max_raw_dset[_t, ...] = np.concatenate((raw_img.max(axis=2),
+                                                                     np.repeat(raw_img.max(axis=1),
                                                                                self.coords2image.interpolation_factor, axis=1)),
                                                                     axis=1)
         except Exception as e:
@@ -1026,9 +1026,9 @@ class TrackerLite:
 
                     print("Calulating max projection of tracked labels...")
                     for _t in tqdm(range(t)):
-                        labels = track_file["tracked_labels"][_t, :, 0, :, :].transpose((1, 0, 2))
-                        max_labels_dset[_t, ...] = np.concatenate((labels.max(axis=1),
-                                                                     np.repeat(labels.max(axis=0),
+                        labels_zyx = track_file["tracked_labels"][_t, :, 0, :, :]
+                        max_labels_dset[_t, ...] = np.concatenate((labels_zyx.max(axis=0),
+                                                                     np.repeat(labels_zyx.max(axis=1),
                                                                                self.coords2image.interpolation_factor, axis=0)),
                                                                     axis=0)
         except Exception as e:

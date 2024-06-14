@@ -11,8 +11,8 @@ from numpy import ndarray
 from skimage.segmentation import relabel_sequential
 from tifffile import imread
 
-from CellTracker.stardistwrapper import create_cmap, plot_img_label_max_projection
-from CellTracker.utils import load_2d_slices_at_time, recalculate_cell_boundaries, del_datasets, debug_print
+from CellTracker.stardistwrapper import create_cmap
+from CellTracker.utils import load_2d_slices_at_time, recalculate_cell_boundaries, debug_print
 
 PAD_WIDTH = 3
 

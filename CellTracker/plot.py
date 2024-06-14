@@ -7,7 +7,6 @@ from matplotlib import pyplot as plt
 from matplotlib.colors import ListedColormap
 from matplotlib.patches import ConnectionPatch
 from numpy import ndarray
-from plotly import graph_objects as go
 
 
 def custom_tab20_cmap(map_index_to_tab20: List[int]):
@@ -342,6 +341,7 @@ def plot_matching_2d_with_plotly(neuropal_ptrs: np.ndarray, wba_ptrs: np.ndarray
         wba_ptrs (np.ndarray): A 2D array of shape (n, 3) containing the target points.
         pairs_px2 (np.ndarray): A 2D array of shape (m, 2) containing the pairs of matched points.
     """
+    from plotly import graph_objects as go
 
     # Validate the inputs
     assert isinstance(neuropal_ptrs, np.ndarray) and neuropal_ptrs.ndim == 2 and neuropal_ptrs.shape[1] == 3, \
