@@ -6,7 +6,6 @@ Modification Description: This module is a wrapper of 3D StarDist modified accor
 
 from __future__ import print_function, unicode_literals, absolute_import, division, annotations
 
-import os
 import sys
 from glob import glob
 from typing import List
@@ -28,6 +27,7 @@ from tqdm import tqdm
 
 from CellTracker.plot import custom_tab20_cmap
 from CellTracker.stardist3dcustom import StarDist3DCustom
+from CellTracker.utils import load_2d_slices_at_time
 
 STARDIST_MODELS = "stardist_models"
 
@@ -44,15 +44,73 @@ def load_stardist_model(model_name: str = "stardist", basedir: str = STARDIST_MO
     return model
 
 
-def predict_and_save(images_path: dict, model: StarDist3DCustom, results_folder: str, is_tczyx: bool = False, t_start: int = None,
-                     n_tiles: tuple = (1,1,1), prob_thresh: float = None):
+def calculate_scaling_two_channel(images_path: dict, stardist_model, n_tiles=None, prob_thresh=None, t=1):
+    img_nuclei_norm = load_2d_slices_at_time(images_path, t=t, channel_name="channel_nuclei", do_normalize= True)
+    (labels, _), _ = stardist_model.predict_instances(img_nuclei_norm, n_tiles=n_tiles, prob_thresh=prob_thresh)
+    per = np.sum(labels > 0) / labels.size
+    print(f"Percentage of nuclei pixels in the image: {per:.2f}")
+
+    img_activity = load_2d_slices_at_time(images_path, t=t, channel_name="channel_activity", do_normalize=False)
+    img_nuclei = load_2d_slices_at_time(images_path, t=t, channel_name="channel_nuclei", do_normalize=False)
+
+    threshold = np.percentile(img_nuclei, (1 - per) * 100)
+    print(f"Threshold for nuclei channel: {threshold}")
+    print(f"Minimum value of nuclei channel: {np.min(img_nuclei)}, Maximum value of nuclei channel: {np.max(img_nuclei)}")
+    regions_in_focus = img_nuclei > threshold
+
+    regions_nuclei = img_nuclei[regions_in_focus]
+    regions_activity = img_activity[regions_in_focus]
+
+    median_nuclei = np.median(regions_nuclei)
+    print(f"Median value of nuclei channel in the in-focus regions: {median_nuclei}")
+    median_activity = np.median(regions_activity)
+    print(f"Median value of activity channel in the in-focus regions: {median_activity}")
+
+    scaling_factor =  median_nuclei / median_activity
+    print(f"Scaling factor: {scaling_factor:.2f}")
+
+    return scaling_factor
+
+
+def predict_by_two_channels(images_path: dict, stardist_model, scaling_factor, n_tiles=None, prob_thresh=None, t=1):
+    img_activity = load_2d_slices_at_time(images_path, t=t, channel_name="channel_activity", do_normalize=False)
+    img_nuclei = load_2d_slices_at_time(images_path, t=t, channel_name="channel_nuclei", do_normalize=False)
+    img_combined =  img_nuclei / scaling_factor + img_activity
+    img_combined_norm = normalize(img_combined, axis = (0, 1, 2))
+    return img_combined_norm, stardist_model.predict_instances(
+        img_combined_norm, n_tiles=n_tiles, show_tile_progress=False, prob_thresh=prob_thresh)
+
+
+def predict_by_two_channels_quick(images_path: dict, raw_images, stardist_model, scaling_factor, n_tiles=None, prob_thresh=None, t=1):
+    img_nuclei = raw_images[t - 1, :, images_path["channel_nuclei"], :, :]
+    img_activity = raw_images[t - 1, :, images_path["channel_activity"], :, :]
+    img_combined =  img_nuclei / scaling_factor + img_activity
+    img_combined_norm = normalize(img_combined, axis = (0, 1, 2))
+    return stardist_model.predict_instances(
+        img_combined_norm, n_tiles=n_tiles, show_tile_progress=False, prob_thresh=prob_thresh)
+
+
+def fit_linear_model(A, B):
+    """ Fit a linear model to the arrays A and B. Return the slope and intercept. """
+    A_flat = A.flatten()
+    B_flat = B.flatten()
+
+    X = np.vstack([B_flat, np.ones_like(B_flat)]).T
+    slope, intercept = np.linalg.lstsq(X, A_flat, rcond=None)[0]
+
+    return slope, intercept
+
+
+def predict_and_save(images_path: dict, stardist_model: StarDist3DCustom, results_folder: str,
+                     t_start: int = None,n_tiles: tuple = (1,1,1), prob_thresh: float = None,
+                     use_two_channels: bool = False):
     """
     Load 2D slices of a 3D image stack obtained at time t and predict instance coordinates using a trained StarDist3DCustom model.
     Save the predicted coordinates as numpy arrays in a folder.
 
     Args:
         images_path (dict): The file path of the 3D image stack with 2D slices at each time point.
-        model (StarDist3DCustom): A trained StarDist3DCustom model for instance segmentation of 3D image stacks.
+        stardist_model (StarDist3DCustom): A trained StarDist3DCustom model for instance segmentation of 3D image stacks.
         results_folder (str): The folder path to save the results.
         t_start (int): When provided, skip the previous time points that have been processed.
     """
@@ -61,23 +119,26 @@ def predict_and_save(images_path: dict, model: StarDist3DCustom, results_folder:
     _results_folder.mkdir(parents=True, exist_ok=True)
 
     if isinstance(images_path, dict):
-        file_extension = os.path.splitext(images_path["h5_file"])[1]
+        if use_two_channels:
+            scaling_factor = calculate_scaling_two_channel(images_path, stardist_model, n_tiles = n_tiles,
+                                                           prob_thresh = prob_thresh, t = 1)
+
         with h5py.File(images_path["h5_file"], 'r+') as f_raw, h5py.File(str(_results_folder / "seg.h5"), 'a') as f_seg:
             raw_images = f_raw[images_path["dset"]]
             _t_start = 1 if t_start is None else t_start
             num_vol = raw_images.shape[0]
             with tqdm(total=num_vol, initial=_t_start, desc="Segmenting images", ncols=50) as pbar:
                 for t in range(_t_start, num_vol + 1):
-                    # Load 2D slices at time t. The raw_images should have the shape (time, channel, depth, height, width)
-                    if is_tczyx:
-                        x = raw_images[t - 1, images_path["channel_nuclei"], :, :, :]
+                    if use_two_channels:
+                        (_, details), prob_map = predict_by_two_channels_quick(
+                            images_path, raw_images,stardist_model, scaling_factor,
+                            n_tiles=n_tiles, prob_thresh=prob_thresh, t=t)
                     else:
                         x = raw_images[t - 1, :, images_path["channel_nuclei"], :, :]
-                    x = normalize(x, 1, 99.8, axis=(0, 1, 2))
+                        x = normalize(x, axis=(0, 1, 2))
+                        (_, details), prob_map = stardist_model.predict_instances(
+                            x, n_tiles=n_tiles, show_tile_progress=False, prob_thresh=prob_thresh)
 
-                    # Save predicted instance coordinates as numpy arrays
-                    (labels, details), prob_map = model.predict_instances(x, n_tiles=n_tiles, show_tile_progress=False,
-                                                                          prob_thresh=prob_thresh)
                     if t == 1:
                         f_seg.create_dataset('prob', shape=(num_vol, *prob_map.shape),
                                                          chunks=(1, *prob_map.shape), dtype="float16",

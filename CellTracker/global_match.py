@@ -90,6 +90,8 @@ def iterative_alignment(fpm_models, fpm_models_rot, coords_norm_t1, coords_norm_
     aligned_t1_1, _, pairs_1, _ = affine_align_by_fpm(fpm_models, coords_norm_t1=aligned_t1_rot,
                                                       coords_norm_t2=coords_norm_t2)
     pairs_2, similarity_score = match_by_fpm_prgls(fpm_models, aligned_t1_1, coords_norm_t2)
+    if len(pairs_2) < 10:
+        return pairs_1
     return pairs_2
 
 

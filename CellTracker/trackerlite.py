@@ -261,6 +261,7 @@ class TrackerLite:
                                                               coords_subset_norm_t1,
                                                               (m, n), beta=BETA, lambda_=LAMBDA)
                 updated_pairs_t2_t1 = greedy_match(similarity_scores, threshold=0.4)
+                # if len(updated_pairs_t2_t1) >= 10: # avoid filtering outliers if there are only a few links
                 updated_pairs_t2_t1 = filter_matching_outliers_global(updated_pairs_t2_t1, rigid_aligned_ref_coords,
                                                               coords_subset_norm_t1,
                                                               threshold_mdist=5 ** 2)
@@ -787,20 +788,9 @@ class TrackerLite:
         voxel_size = self.coords2image.voxel_size
         image_size_yxz = self.coords2image.image_size_yxz
 
-        if (self.coords2image.results_folder / 'coords.h5').exists():
-            with h5py.File(str(self.coords2image.results_folder / 'coords.h5'), 'r') as f:
-                combined_coordinates = f[f'combined_coords_{str(t-1).zfill(6)}'][:]
-                num_inliers = f[f'combined_coords_{str(t-1).zfill(6)}'].attrs["num"]
-        else:
-            with h5py.File(str(self.results_dir / "seg.h5"), "r") as seg_file:
-                coordinates_stardist = seg_file[f'coords_{str(t-1).zfill(6)}'][:]
-                prob_map = self.coords2image.load_prob_map(self.grid, t - 1, seg_file, image_size_yxz)
-            extra_coordinates = get_extra_cell_candidates(coordinates_stardist, prob_map)
-            if extra_coordinates.shape[0] != 0:
-                combined_coordinates = np.concatenate((coordinates_stardist, extra_coordinates), axis=0)
-            else:
-                combined_coordinates = coordinates_stardist
-            num_inliers = len(coordinates_stardist)
+        with h5py.File(str(self.coords2image.results_folder / 'coords.h5'), 'r') as f:
+            combined_coordinates = f[f'combined_coords_{str(t-1).zfill(6)}'][:]
+            num_inliers = f[f'combined_coords_{str(t-1).zfill(6)}'].attrs["num"]
 
         pos = Coordinates(combined_coordinates, interpolation_factor=interp_factor, voxel_size=voxel_size, dtype="raw")
         inliers = np.arange(num_inliers)
@@ -1182,3 +1172,4 @@ def matrix2pairs(matches_matrix_ini_to_tgt, num_cells_t0, num_ensemble):
 def clear_memory():
     K.clear_session()
     gc.collect()
+
