@@ -822,7 +822,10 @@ class TrackerLite:
         file_extension = os.path.splitext(self.images_path["h5_file"])[1]
         assert file_extension in [".h5", ".hdf5", ".nwb"], "Currently only TIFF sequences or HDF5/NWB dataset are supported"
 
-        per = (1 - discard_ratio) * 100
+        if discard_ratio is None:
+            per = None
+        else:
+            per = (1 - discard_ratio) * 100
 
         with h5py.File(str(self.results_dir / "tracking_results.h5"), "a") as track_file, \
                         h5py.File(self.images_path["h5_file"], 'r') as f_raw:
@@ -854,9 +857,12 @@ class TrackerLite:
                     bbox = found_bbox[label - 1]
                     if found_bbox[label - 1] is not None:
                         intensity_label_i = raw[bbox][labels_img[bbox] == label]
-                        threshold = np.percentile(intensity_label_i, per)
-                        activities_txn[t - 1, label - 1] = np.mean(
-                            intensity_label_i[intensity_label_i >= threshold])
+                        if per is None:
+                            activities_txn[t - 1, label - 1] = np.mean(intensity_label_i)
+                        else:
+                            threshold = np.percentile(intensity_label_i, per)
+                            activities_txn[t - 1, label - 1] = np.mean(
+                                intensity_label_i[intensity_label_i >= threshold])
                     else:
                         activities_txn[t - 1, label - 1] = np.nan
 
