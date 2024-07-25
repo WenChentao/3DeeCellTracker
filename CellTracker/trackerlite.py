@@ -868,7 +868,7 @@ class TrackerLite:
 
             del_datasets(track_file, ["activities_txn", "coords_txnx3"])
             track_file.create_dataset("activities_txn", data=activities_txn)
-            track_file.create_dataset("coords_txnx3", data=coords_txnx3)
+            track_file.create_dataset("coords_txnx3", data=coords_txnx3) # zyx order
 
         return activities_txn
 

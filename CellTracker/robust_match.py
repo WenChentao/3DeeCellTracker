@@ -2,7 +2,6 @@ from multiprocessing import Pool
 from typing import Tuple, List
 
 import numpy as np
-import pandas as pd
 import scipy.ndimage
 from numpy import ndarray
 from skimage import measure
@@ -83,6 +82,8 @@ def filter_matching_outliers(matched_pairs: List[Tuple[int, int]], coordinates_n
     # Find the corresponding matched pairs for the k nearest neighbors of each point in the first set
     n = coordinates_nx3_t1.shape[0]
     neighbors_of_pairs_nxkp1x2 = np.zeros((n, neighbors + 1, 2), dtype=np.int_)
+
+    import pandas as pd
 
     df_matched_pairs = pd.DataFrame(matched_pairs_array, columns=['key', 'value'])
     dict_matched_pairs = df_matched_pairs.set_index('key')['value'].to_dict()
