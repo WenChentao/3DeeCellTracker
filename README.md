@@ -1,22 +1,14 @@
 # 3DeeCellTracker
-[![PyPI](https://img.shields.io/pypi/v/3DeeCellTracker)](https://pypi.org/project/3DeeCellTracker/) [![PyPI - Downloads](https://img.shields.io/pypi/dm/3DeeCellTracker)](https://pypi.org/project/3DeeCellTracker/) [![GitHub](https://img.shields.io/github/license/WenChentao/3DeeCellTracker)](https://github.com/WenChentao/3DeeCellTracker/blob/master/LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/3DeeCellTracker)](https://pypi.org/project/3DeeCellTracker/)
+[![Downloads](https://pepy.tech/badge/3DeeCellTracker)](https://pepy.tech/project/3DeeCellTracker)
+[![GitHub](https://img.shields.io/github/license/WenChentao/3DeeCellTracker)](https://github.com/WenChentao/3DeeCellTracker/blob/master/LICENSE)
 [![Youtube](https://img.shields.io/badge/YouTube-Demo-red)](https://www.youtube.com/watch?v=ctt6o3DY2bA&list=PLGY0oNQomrHERP08iEj-MsluFW8xQJujP)
 
 **3DeeCellTracker** is a deep-learning based pipeline for tracking cells in 3D time-lapse images of deforming/moving organs ([eLife, 2021](https://elifesciences.org/articles/59187)).
 
 ## Updates:
-**3DeeCellTracker v0.5.2-alpha has been released**
-- fixed a potential bug related to matplotlib
-
-**3DeeCellTracker v0.5.1-alpha has been released**
-- Updated versions of some packages in requirements.txt and setup.cfg
-
-**3DeeCellTracker v0.5.0-alpha has been released**
-- Allows you to use [StarDist3D](https://github.com/stardist/stardist) for segmentation
-- Reduces the requirements for fine-tuning parameters
-- Decouples the code to facilitate reuse by third-party developers.
-
-
+**3DeeCellTracker v1.0.0 has been released**
+- Fixed some bugs in v0.5
 
 ## Installation
 
@@ -44,13 +36,15 @@ To install 3DeeCellTracker, please follow the instructions below:
 3. Install the 3DeeCellTracker package by running the following command in your terminal:
 
    ```console
-   $ pip install 3DeeCellTracker==0.5.2a0
+   $ pip install 3DeeCellTracker==1.0.0
    ```
 4. Once the installation is complete, you can start using 3DeeCellTracker for your 3D cell tracking tasks within the Jupyter notebooks provided in the GitHub repository.
 
 If you encounter any issues or have any questions, please refer to the project's documentation or raise an issue in the GitHub repository.
 
 ## Quick Start
+- **Important**: Please use the notebooks [here](https://github.com/WenChentao/3DeeCellTracker/tree/v1.0.0) if you installed version 1.0.0 from PyPI. If you installed from the source code available at this repository, use the notebooks provided below.
+
 To learn how to track cells using 3DeeCellTracker, please refer to the following notebooks for examples. We recommend using StarDist for segmentation, as we have optimized the StarDist-based tracking programs for more convenient and quick cell tracking. Users can also use the old way with 3D U-Net.
 1. Train a custom deep neural network for segmenting cells in new optical conditions: 
     - [**Train 3D StarDist (notebook with results)**](Examples/use_stardist/train_stardist.ipynb)
@@ -76,14 +70,25 @@ The data and model files for demonstrating above notebooks can be downloaded her
 - [**Data for UNet-based notebooks**](https://osf.io/dt76c/).
 
 
-## Frequently Reported Issue and Solution (for v0.4)
+## Protocols
+Here are two protocols for using 3DeeCellTracker:
+1. **Version 1.0.0**
+
+   Wen, C. (2024). Deep Learning-Based Cell Tracking in Deforming Organs and Moving Animals. In: Wuelfing, C., Murphy, R.F. (eds) Imaging Cell Signaling. Methods in Molecular Biology, vol 2800. Humana, New York, NY. DOI: [10.1007/978-1-0716-3834-7_14](https://doi.org/10.1007/978-1-0716-3834-7_14)
+2. **Version 0.4**
+
+   Wen, C. and Kimura, K.D. (2022). Tracking Moving Cells in 3D Time Lapse Images Using 3DeeCellTracker. Bio-protocol 12(4): e4319. DOI: [10.21769/BioProtoc.4319](https://doi.org/10.21769/BioProtoc.4319)
+
+
+
+### Frequently Reported Issue and Solution (for v0.4)
 
 Multiple users have reported encountering a `ValueError` of shape mismatch when running the `tracker.match()` function. 
 After investigation, it was found that the issue resulted from an incorrect setting of `siz_xyz`, 
 which should be set to the dimensions of the 3D image as (height, width, depth). 
 
 
-## Video Tutorials (for v0.4)
+### Video Tutorials (for v0.4)
 We have made tutorials explaining how to use our software. See links below (videos in Youtube):
 
 [Tutorial 1: Install 3DeeCellTracker and train the 3D U-Net](https://www.youtube.com/watch?v=ctt6o3DY2bA)
@@ -94,8 +99,6 @@ We have made tutorials explaining how to use our software. See links below (vide
 
 [Tutorial 4: Manually correct the cell segmentation](https://www.youtube.com/watch?v=e7xWaccH63o)
 
-## A Text Tutorial (for v0.4)
-We have written a tutorial explaining how to install and use 3DeeCellTracker. See [Bio-protocol, 2022](https://bio-protocol.org/e4319)
 
 ## How it works
 We designed this pipeline for segmenting and tracking cells in 3D + T images in deforming organs. The methods have been explained in [Wen et al. bioRxiv 2018]( https://doi.org/10.1101/385567) and in [Wen et al. eLife, 2021](https://elifesciences.org/articles/59187).
