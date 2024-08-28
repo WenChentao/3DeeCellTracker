@@ -18,7 +18,8 @@ def custom_tab20_cmap(map_index_to_tab20: List[int]):
     return ListedColormap(custom_colors)
 
 
-def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray, t1: int, t2: int, ref_ptrs_confirmed: ndarray=None,
+def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray,
+                          t1_name: int | str, t2_name: int | str, ref_ptrs_confirmed: ndarray=None,
                           fig_height_px=1500, dpi=96, ids_ref=None, ids_tgt=None, show_3d: bool = False, display_fig=True, top_down=True,
                           show_ids=False):
     """Draws the initial matching between two sets of 3D points and their matching relationships.
@@ -39,7 +40,7 @@ def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarr
         return fig
 
     # Plot the scatters of the ref_points and tgt_points
-    ax1, ax2, fig = plot_two_pointset_scatters(dpi, ref_ptrs, tgt_ptrs, t1, t2, ids_ref, ids_tgt, fig_height_px=fig_height_px,
+    ax1, ax2, fig = plot_two_pointset_scatters(dpi, ref_ptrs, tgt_ptrs, t1_name, t2_name, ids_ref, ids_tgt, fig_height_px=fig_height_px,
                                                show_ids=show_ids)
     equal_layout(ax1, ax2)
 
@@ -425,7 +426,8 @@ def plot_predicted_movements_one_panel(ref_ptrs: ndarray, tgt_ptrs: ndarray, pre
     return fig
 
 
-def plot_two_pointset_scatters(dpi: float, ref_ptrs: ndarray, tgt_ptrs: ndarray, t1: int, t2: int,
+def plot_two_pointset_scatters(dpi: float, ref_ptrs: ndarray, tgt_ptrs: ndarray,
+                               t1_name: int | str, t2_name: int | str,
                                ids_ref: list = None, ids_tgt: list = None,
                                fig_height_px: float = 1500, fig_width_px: float = 2000, show_ids=True):
     """
@@ -443,9 +445,9 @@ def plot_two_pointset_scatters(dpi: float, ref_ptrs: ndarray, tgt_ptrs: ndarray,
         A 2D array of shape (n, 3) containing the positions of reference points.
     tgt_ptrs : ndarray
         A 2D array of shape (n, 3) containing the positions of target points.
-    t1 : int
+    t1_name : int
         The time step of the reference points.
-    t2 : int
+    t2_name : int
         The time step of the target points.
     ids_ref : list, optional
         A list of strings containing the IDs of the reference points. Default is None.
@@ -485,7 +487,9 @@ def plot_two_pointset_scatters(dpi: float, ref_ptrs: ndarray, tgt_ptrs: ndarray,
     # Plot the point sets on the respective subplots
     ax1.scatter(ref_ptrs[:, 1], ref_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 1')
     ax1.scatter(tgt_ptrs[:, 1], tgt_ptrs[:, 0], alpha=0)
+    ax1.invert_yaxis()
     ax2.scatter(tgt_ptrs[:, 1], tgt_ptrs[:, 0], facecolors='b', edgecolors='b', label='Set 2')
+    ax2.invert_yaxis()
     if show_ids:
         for i, txt in enumerate(ids_ref):
             ax1.annotate(txt, (ref_ptrs[i, 1], ref_ptrs[i, 0]))
@@ -497,8 +501,8 @@ def plot_two_pointset_scatters(dpi: float, ref_ptrs: ndarray, tgt_ptrs: ndarray,
     plt.subplots_adjust(left=0.02, right=0.99, top=0.99, bottom=0.02)
 
     # Set plot titles or y-axis labels based on the layout
-    ax1.set_ylabel(f"Point Set t={t1}")
-    ax2.set_ylabel(f"Point Set t={t2}")
+    ax1.set_ylabel(f"Point Set t={t1_name}")
+    ax2.set_ylabel(f"Point Set t={t2_name}")
     return ax1, ax2, fig
 
 

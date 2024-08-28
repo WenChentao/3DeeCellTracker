@@ -181,7 +181,7 @@ class CoordsToImageTransformer:
             Voxel size in the format (x, y, z).
         """
         self.voxel_size = voxel_size_yxz
-        self.interpolation_factor = self._cal_interp_factor()
+        self.interpolation_factor = cal_interp_factor(self.voxel_size)
 
         x = load_2d_slices_at_time(images_path=path_raw_images, channel_name="channel_nuclei", t=1)
         print(f"Raw image shape at vol1: {x.shape}", f"Dtype: {x.dtype}")
@@ -189,13 +189,6 @@ class CoordsToImageTransformer:
         self.path_raw_images = path_raw_images
 
         self.results_folder = Path(results_folder)
-
-    def _cal_interp_factor(self):
-        y_siz, x_siz, z_siz = self.voxel_size
-        interpolation_factor = int(np.round(z_siz / (y_siz * x_siz) ** 0.5))
-        if interpolation_factor < 1:
-            interpolation_factor = 1
-        return interpolation_factor
 
     def load_segmentation(self, manual_seg_path: str, proof_vol: int) -> None:
         """
@@ -783,3 +776,11 @@ def add_bbox_with_movements(bbox: Tuple[slice, slice, slice], movements: ndarray
             raise ValueError(f"Slices are out of range for image of size {image_shape}")
 
     return tuple(new_bbox), tuple(partial_bbox)
+
+
+def cal_interp_factor(voxel_size):
+    y_siz, x_siz, z_siz = voxel_size
+    interpolation_factor = int(np.round(z_siz / (y_siz * x_siz) ** 0.5))
+    if interpolation_factor < 1:
+        interpolation_factor = 1
+    return interpolation_factor

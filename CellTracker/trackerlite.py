@@ -465,11 +465,6 @@ class TrackerLite:
             self.save_tracking_results(confirmed_cells_finetuned_pos_tgt, finetuned_labels_image, t=tgt, images_path=self.images_path, step=i+2)
         plt.ion()
 
-    def _num_all_cells(self, t):
-        with h5py.File(str(self.results_dir / 'coords.h5'), 'r') as f:
-            num_inliers_t0 = f[f'combined_coords_{str(t - 1).zfill(6)}'].shape[0]
-        return num_inliers_t0
-
     def save_tracking_results(self, coords: Coordinates, corrected_labels_image: ndarray, t: int,
                               images_path: dict, step: int):
         """
@@ -516,12 +511,6 @@ class TrackerLite:
             tform_tx3x4 = f["tform"][:]
             inv_tform_tx3x4 = f["tform_inv"][:]
         return corresponding_coords_txnx3, tform_tx3x4, inv_tform_tx3x4
-
-    def rigid_align(self, points_nx3: ndarray, t):
-        return rigid_transform(self.tform_tx3x4[t-1], points_nx3)
-
-    def inv_rigid_align(self, points_nx3: ndarray, t):
-        return rigid_transform(self.inv_tform_tx3x4[t-1], points_nx3)
 
     def load_normalized_coords(self, t: int, mean: float = None, scale: float = None):
         segmented_pos, subset = self._get_segmented_pos(t)
@@ -739,8 +728,8 @@ class TrackerLite:
         s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
         title = title + ", zy-view" if zy_view else title
         fig = plot_initial_matching(ref_ptrs=(coords_subset_t1 * scale_t2 + mean_t2)[s_],
-                            tgt_ptrs=(coords_subset_t2 * scale_t2 + mean_t2)[s_],
-                            pairs_px2=_matched_pairs_subset, t1=t1, t2=t2, display_fig=display)
+                                    tgt_ptrs=(coords_subset_t2 * scale_t2 + mean_t2)[s_],
+                                    pairs_px2=_matched_pairs_subset, t1_name=t1, t2_name=t2, display_fig=display)
         fig.suptitle(title, fontsize=20, y=0.99)
         return fig
 
@@ -766,21 +755,6 @@ class TrackerLite:
                         predicted_ref_ptrs=predicted_coords_t1_to_t2[s_] * scale_t2 + mean_t2,
                         t1=t1, t2=t2)
         fig.suptitle(title, fontsize=20, y=0.9)
-
-    @staticmethod
-    def _plot_move_final(title: str, confirmed_coord_t1, segmented_pos_t2, tracked_coords_t2, subset, t1, t2, plot_move, zy_view: bool = False):
-        s_ = np.s_[:, [0,2,1]] if zy_view else np.s_[:, :]
-        title = title + ", zy-view" if zy_view else title
-        fig, _ = plot_move(
-            ref_ptrs=confirmed_coord_t1.real[s_],
-            tgt_ptrs=segmented_pos_t2.real[subset[1]][s_],
-            predicted_ref_ptrs=tracked_coords_t2[s_],
-            t1=t1, t2=t2
-        )
-        fig.suptitle(title, fontsize=20, y=0.9)
-
-    def print_info(self):
-        print(f"Threshold for similarity: {self.similarity_threshold}")
 
     def _get_segmented_pos(self, t: int) -> Tuple[Coordinates, ndarray]:
         """Get segmented positions and extra positions from stardist model"""
@@ -1035,20 +1009,6 @@ class TrackerLite:
                     print(f"dataset max_projection_labels has been deleted")
             raise
 
-def predict_new_positions(matched_pairs, confirmed_coords_norm_t1, segmented_coords_norm_t1, segmented_coords_norm_t2,
-                          post_processing, smoothing: float, similarity_scores_shape: Tuple[int, int], beta=BETA, lambda_=LAMBDA):
-    posterior_mxn = None
-    if post_processing == "tps":
-        tracked_coords_norm_t2 = tps_with_two_ref(matched_pairs, segmented_coords_norm_t2,
-                                                  segmented_coords_norm_t1, confirmed_coords_norm_t1, smoothing)
-    elif post_processing == "prgls":
-        tracked_coords_norm_t2, posterior_mxn = predict_by_prgls(matched_pairs, confirmed_coords_norm_t1,
-                                                                 segmented_coords_norm_t1, segmented_coords_norm_t2,
-                                                                 similarity_scores_shape, beta, lambda_)
-    else:
-        raise ValueError("post_prossing should be either 'tps' or 'prgls'")
-    return tracked_coords_norm_t2, posterior_mxn
-
 
 def predict_by_prgls(matched_pairs, confirmed_coords_norm_t1, segmented_coords_norm_t1, segmented_coords_norm_t2,
                      similarity_scores_shape, beta, lambda_):
@@ -1076,34 +1036,11 @@ def predict_new_positions_knn(pairs_lx2: ndarray, coords_t1: ndarray, coords_t2:
     return tracked_coords_t1
 
 
-def tps_with_two_ref(matched_pairs: List[Tuple[int, int]], ptrs_tgt_mx3: ndarray, ptrs_ref_nx3: ndarray,
-                     tracked_ref_lx3: ndarray, smoothing: float) -> ndarray:
-    matched_pairs_array = np.asarray(matched_pairs)
-    prts_ref_matched_n1x3 = ptrs_ref_nx3[matched_pairs_array[:, 0], :]
-    prts_tgt_matched_m1x3 = ptrs_tgt_mx3[matched_pairs_array[:, 1], :]
-    tps = RBFInterpolator(prts_ref_matched_n1x3, prts_tgt_matched_m1x3, kernel='thin_plate_spline', smoothing=smoothing)
-    # Apply the TPS transformation to the source points
-    return tps(tracked_ref_lx3)
-
-
 def evenly_distributed_volumes(current_vol: int, sampling_number: int) -> List[int]:
     """Get evenly distributed previous volumes"""
     interval = (current_vol - 1) // sampling_number
     start = np.mod(current_vol - 1, sampling_number) + 1
     return list(range(start, current_vol - interval + 1, interval))
-
-
-def get_volumes_list(current_vol: int, skip_volumes: List[int], sampling_number: int = 20, adjacent: bool = False) -> \
-        List[int]:
-    if current_vol - 1 < sampling_number:
-        vols_list = list(range(1, current_vol))
-    else:
-        if adjacent:
-            vols_list = list(range(current_vol - sampling_number, current_vol))
-        else:
-            vols_list = evenly_distributed_volumes(current_vol, sampling_number)
-    vols_list = [vol for vol in vols_list if vol not in skip_volumes]
-    return vols_list
 
 
 def link_pairs(matched_pairs_t2pre_t1, matched_pairs_t2_t2pre):

@@ -5,6 +5,7 @@ import h5py
 import numpy as np
 from numpy import ndarray
 
+from CellTracker.coord_image_transformer import cal_interp_factor
 from CellTracker.fpm import initial_matching_fpm, FPMPart2Model
 from CellTracker.plot import plot_initial_matching, plot_predicted_movements
 from CellTracker.robust_match import add_or_remove_points
@@ -20,22 +21,26 @@ class NeuroPALData:
     neuron_names_n: ndarray # dtype="object"
     neuron_coordinates_nx3: ndarray # dtype=float
     neuropal_rfp_img_yxz: ndarray # shape=(y, x, z)
+    neuropal_rgb_img_yxzc: ndarray # shape=(y, x, z, c)
 
 
-def extract_coordinates_wba(tracking_results_h5: str) -> ndarray:
+def extract_coordinates_wba(tracking_results_h5: str) -> Tuple[ndarray, float]:
     with h5py.File(tracking_results_h5, 'r') as f:
+        interp = cal_interp_factor(f.attrs["voxel_size_yxz"][:])
         center_vol = f.attrs["t_initial"]
         coordinates_zyx_nx3 = f['coords_txnx3'][center_vol - 1, ...]
         print(f"Extracted coordinates from WBA tracking results at volume {center_vol}.")
-    return coordinates_zyx_nx3
+    return coordinates_zyx_nx3[:, [1, 2, 0]], interp
 
 def extract_data_from_neuropal_nwb(path_to_neuropal_nwb: str) -> NeuroPALData:
     with h5py.File(path_to_neuropal_nwb, 'r') as f:
         channel_RFP = f["acquisition/NeuroPALImageRaw/RGBW_channels"][3]
+        channel_RGB = f["acquisition/NeuroPALImageRaw/RGBW_channels"][0:3]
         print(f"channel_RFP: {channel_RFP}")
         neuropal_img = f["acquisition/NeuroPALImageRaw/data"]
         print(f"neuropal_img.shape: {neuropal_img.shape}")
         neuropal_rfp_img_yxz = neuropal_img[..., channel_RFP]
+        neuropal_rgb_img_yxzc = neuropal_img[..., channel_RGB]
 
         id_labels_index = f["processing/NeuroPAL/NeuroPALSegmentation/NeuroPALNeurons/ID_labels_index"]
         id_labels = f["processing/NeuroPAL/NeuroPALSegmentation/NeuroPALNeurons/ID_labels"]
@@ -48,7 +53,8 @@ def extract_data_from_neuropal_nwb(path_to_neuropal_nwb: str) -> NeuroPALData:
                 b"".join(id_labels[i_start:i].tolist()).decode('utf-8')
             ))
             i_start = i
-        neuron_names_n = np.asarray(neuron_names_n, dtype="object")
+        dtype = h5py.string_dtype(encoding='utf-8')
+        neuron_names_n = np.asarray(neuron_names_n, dtype=dtype)
         print(f"Number of identified neurons: {len(neuron_names_n)}")
 
         cell_positions = f["processing/NeuroPAL/NeuroPALSegmentation/NeuroPALNeurons/voxel_mask"][:]
@@ -62,21 +68,34 @@ def extract_data_from_neuropal_nwb(path_to_neuropal_nwb: str) -> NeuroPALData:
         neuropal_cellid_name_pos = np.asarray(
             [(cell_ids_n[i], neuron_names_n[i], cell_positions_yxz_n[i]) for i in range(len(cell_ids_n))],
             dtype=[('id', 'int'), ('name', 'O'), ('position', 'float', (3,))])
-    return NeuroPALData(cell_ids_n, neuron_names_n, cell_positions_yxz_n, neuropal_rfp_img_yxz)
+    return NeuroPALData(cell_ids_n, neuron_names_n, cell_positions_yxz_n, neuropal_rfp_img_yxz, neuropal_rgb_img_yxzc)
+
+
+def extract_data_from_wba(raw_wba_file, tracking_results_h5: str, dset_name="default"):
+    with h5py.File(tracking_results_h5, 'r') as f:
+        rfp_channel = f.attrs["raw_channel_nuclei"]
+        t0_index = f.attrs["t_initial"] - 1
+
+    with h5py.File(raw_wba_file, 'r') as f:
+        rfp_img = f[dset_name][t0_index, :, rfp_channel, :, :]
+    return rfp_img
 
 
 def match_coords_to_ids_by_neuropaldata(neuropal_data: NeuroPALData, tracking_results_h5: str, fpm_model,
                                         fpm_model_rot=None):
     # Extract neuropal coordinates, and wba coordinates at t_initial
-    neuropal_coordinates_yxz_nx3 = neuropal_data.neuron_coordinates_nx3
+    neuropal_coords_voxel_yxz_nx3 = neuropal_data.neuron_coordinates_nx3
     neuronal_names_neuropal = neuropal_data.neuron_names_n
-    coordinates_wba_yxz_nx3 = extract_coordinates_wba(tracking_results_h5)[:, [1, 2, 0]]
+    coords_voxel_wba_yxz_nx3, interp_factor = extract_coordinates_wba(tracking_results_h5)
+
+    coords_real_wba_yxz_nx3 = coords_voxel_wba_yxz_nx3 * np.asarray([[1, 1, interp_factor]])
+    neuropal_coords_real_yxz_nx3 = neuropal_coords_voxel_yxz_nx3 * np.asarray([[1, 1, interp_factor]])
 
     # pre-matching
     fpm_models = fpm_model, FPMPart2Model(fpm_model.comparator)
-    ids_wba = np.asarray([i for i in range(1, coordinates_wba_yxz_nx3.shape[0] + 1)])
+    ids_wba = np.asarray([i for i in range(1, coords_real_wba_yxz_nx3.shape[0] + 1)])
     affine_aligned_coords_t1, match_seg_t1_seg_t2, neuropal_coords_norm_t2 = \
-        _predict_cell_matchings(coordinates_wba_yxz_nx3, neuropal_coordinates_yxz_nx3, fpm_models, ids_wba, neuronal_names_neuropal,
+        _predict_cell_matchings(coords_real_wba_yxz_nx3, neuropal_coords_real_yxz_nx3, fpm_models, ids_wba, neuronal_names_neuropal,
                                 match_method="coherence", lambda_=LAMBDA, beta=BETA,
                                 learning_rate=0.5, similarity_threshold=0.4, verbosity=0)
 
@@ -87,12 +106,18 @@ def match_coords_to_ids_by_neuropaldata(neuropal_data: NeuroPALData, tracking_re
     with h5py.File(tracking_results_h5, 'a') as f:
         if "link_with_Neuropal" in f:
             del f["link_with_Neuropal"]
+        if "confirmed_wba_cells" in f.attrs:
+            del f.attrs["confirmed_wba_cells"]
+        if "confirmed_neuropal_cells" in f.attrs:
+            del f.attrs["confirmed_neuropal_cells"]
         group = f.create_group("link_with_Neuropal")
         group.create_dataset("neuron_ids_n", data=neuropal_data.neuron_ids_n)
         group.create_dataset("neuron_names_n", data=neuropal_data.neuron_names_n)
-        group.create_dataset("neuron_coordinates_yxz_nx3", data=neuropal_coordinates_yxz_nx3)
+        group.create_dataset("neuron_coordinates_yxz_nx3", data=neuropal_coords_voxel_yxz_nx3)
         group.create_dataset("neuropal_rfp_img_yxz", data=neuropal_data.neuropal_rfp_img_yxz)
         group.create_dataset("match_wba_neuropal_mx2", data=match_seg_t1_seg_t2)
+        group.create_dataset("neuropal_rgb_img_yxzc", data=neuropal_data.neuropal_rgb_img_yxzc)
+
 
 def match_coords_to_ids_by_csv(fpm_model, coordinates_nx3: ndarray, path_to_neuropal_csv: str, skiprows: int = 0,
                                ignored_ids_wba: List[int] = None, ignored_ids_neuropal: List[str] = None, verbosity=4, tracking_results_h5=None) -> ndarray:
@@ -279,21 +304,21 @@ def plot_final_matching_results(affine_aligned_coords_t1, ids_neuropal, ids_wba,
     fig = plot_initial_matching(affine_aligned_coords_t1,
                                 neuropal_coords_norm_t2,
                                 match_seg_t1_seg_t2,
-                                t1=1, t2=-1,
+                                t1_name="wba_t0", t2_name="neuropal",
                                 fig_height_px=2400,
                                 ids_tgt=ids_neuropal, ids_ref=ids_wba)
     print("Final matching 2D x-z:")
     fig = plot_initial_matching(affine_aligned_coords_t1[:, [2, 1, 0]],
                                 neuropal_coords_norm_t2[:, [2, 1, 0]],
                                 match_seg_t1_seg_t2,
-                                t1=1, t2=-1,
+                                t1_name="wba_t0", t2_name="neuropal",
                                 fig_height_px=2400,
                                 ids_tgt=ids_neuropal, ids_ref=ids_wba)
     print("Final matching 3D:")
     fig = plot_initial_matching(affine_aligned_coords_t1,
                                 neuropal_coords_norm_t2,
                                 match_seg_t1_seg_t2,
-                                t1=1, t2=-1,
+                                t1_name="wba_t0", t2_name="neuropal",
                                 fig_height_px=2400,
                                 ids_tgt=ids_neuropal, ids_ref=ids_wba, show_3d=True)
 
