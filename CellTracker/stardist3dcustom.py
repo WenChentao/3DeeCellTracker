@@ -12,9 +12,11 @@ import scipy.ndimage as ndi
 from csbdeep.utils import _raise, save_json
 from csbdeep.utils.tf import keras_import
 from scipy.optimize import minimize_scalar
-from stardist.matching import matching_dataset
+from stardist.matching import matching_dataset, relabel_sequential
 from stardist.models import StarDist3D
-from stardist.nms import _ind_prob_thresh
+from stardist.nms import _ind_prob_thresh, non_maximum_suppression_3d_sparse
+from stardist.rays3d import rays_from_json
+from stardist.geometry import polyhedron_to_label
 from tqdm import tqdm
 
 K = keras_import('backend')
@@ -132,14 +134,15 @@ class StarDist3DCustom(StarDist3D):
             res = tuple(res) + (None,)
 
         if self._is_multiclass():
-            prob, dist, prob_class, points, prob_map = res
+            prob_n, dist_nxray, prob_class, points_coords_nx3, prob_map_3d_zyx = res
         else:
-            prob, dist, points, prob_map = res
+            prob_n, dist_nxray, points_coords_nx3, prob_map_3d_zyx = res
+            print(prob_n.shape, dist_nxray.shape, points_coords_nx3.shape, prob_map_3d_zyx.shape)
             prob_class = None
 
         yield 'nms'  # indicate that non-maximum suppression is starting
-        res_instances = self._instances_from_prediction(_shape_inst, prob, dist,
-                                                        points=points,
+        res_instances = self._instances_from_prediction(_shape_inst, prob_n, dist_nxray,
+                                                        points=points_coords_nx3,
                                                         prob_class=prob_class,
                                                         prob_thresh=prob_thresh,
                                                         nms_thresh=nms_thresh,
@@ -151,9 +154,9 @@ class StarDist3DCustom(StarDist3D):
         # last "yield" is the actual output that would have been "return"ed if this was a regular function
         # Note: the size of prob_map is compressed according to the grid parameter. It will be recovered during tracking
         if return_predict:
-            yield res_instances, tuple(res[:-1]), prob_map
+            yield res_instances, tuple(res[:-1]), prob_map_3d_zyx
         else:
-            yield res_instances, prob_map
+            yield res_instances, prob_map_3d_zyx
 
     @functools.wraps(_predict_instances_generator)
     def predict_instances(self, *args, **kwargs):
@@ -167,10 +170,161 @@ class StarDist3DCustom(StarDist3D):
         # 'predict_sparse'.
 
         # return last "yield"ed value of generator
+        warnings.warn(
+            "predict_instances is deprecated and will be removed in future versions.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         r = None
         for r in self._predict_instances_generator(*args, **kwargs):
             pass
         return r
+
+    def _predict_instances_simple(self, img, prob_thresh=None, nms_thresh=None,
+                                  n_tiles=None, show_tile_progress=True):
+        """Predict instance segmentation from input image.
+
+        Parameters
+        ----------
+        img : :class:`numpy.ndarray`
+            Input image
+        prob_thresh : float or None
+            Consider only object candidates from pixels with predicted object probability
+            above this threshold (also see `optimize_thresholds`).
+        nms_thresh : float or None
+            Perform non-maximum suppression that considers two objects to be the same
+            when their area/surface overlap exceeds this threshold (also see `optimize_thresholds`).
+        n_tiles : iterable or None
+            Out of memory (OOM) errors can occur if the input image is too large.
+            To avoid this problem, the input image is broken up into (overlapping) tiles
+            that are processed independently and re-assembled.
+            This parameter denotes a tuple of the number of tiles for every image axis (see ``axes``).
+            ``None`` denotes that no tiling should be used.
+        show_tile_progress: bool
+            Whether to show progress during tiled prediction.
+
+        Returns
+        -------
+        (:class:`numpy.ndarray`, dict), (optional: return tuple of :func:`predict`)
+            Returns a tuple of the label instances image and also
+            a dictionary with the details (coordinates, etc.) of all remaining polygons/polyhedra.
+
+        """
+        _axes         = self._normalize_axes(img, None)
+        _axes_net     = self.config.axes
+        _permute_axes = self._make_permute_axes(_axes, _axes_net)
+        _shape_inst   = tuple(s for s,a in zip(_permute_axes(img).shape, _axes_net) if a != 'C')
+
+        prob_n, dist_nxray, points_coords_nx3, prob_map_3d_zyx = self._predict_sparse(
+            img, n_tiles=n_tiles, prob_thresh=prob_thresh, show_tile_progress=show_tile_progress)
+
+        res_instances = self._instances_from_prediction_simple(
+            _shape_inst,
+            prob_n,
+            dist_nxray,
+            points=points_coords_nx3,
+            nms_thresh=nms_thresh
+        )
+
+        # Note: the size of prob_map is compressed according to the grid parameter. It will be recovered during tracking
+        return res_instances, prob_map_3d_zyx
+
+    def _instances_from_prediction_simple(self, img_shape, prob, dist, points, nms_thresh=None):
+        if nms_thresh  is None:
+            nms_thresh  = self.thresholds.nms
+
+        rays = rays_from_json(self.config.rays_json)
+
+        points, probi, disti, indsi = non_maximum_suppression_3d_sparse(
+            dist, prob, points, rays, nms_thresh=nms_thresh, verbose=False)
+
+        labels = polyhedron_to_label(disti, points, rays=rays, prob=probi,
+                                     shape=img_shape, overlap_label=None, verbose=False)
+        labels, _,_ = relabel_sequential(labels)
+
+        res_dict = dict(dist=disti, points=points, prob=probi, rays=rays,
+                        rays_vertices=rays.vertices, rays_faces=rays.faces)
+        return labels, res_dict
+
+    def _predict_sparse(self, img, prob_thresh=None,
+                        n_tiles=None, show_tile_progress=True, b=2, **predict_kwargs):
+        """ Sparse version of model.predict()
+        Returns
+        -------
+        (prob, dist, [prob_class], points)   flat list of probs, dists, (optional prob_class) and points
+        """
+        if prob_thresh is None: prob_thresh = self.thresholds.prob
+
+        x, axes, axes_net, axes_net_div_by, _permute_axes, resizer, n_tiles, grid, grid_dict, channel, predict_direct, tiling_setup = \
+            self._predict_setup(img, None, None, n_tiles, show_tile_progress, predict_kwargs)
+
+        def _prep(prob, dist):
+            prob = np.take(prob,0,axis=channel)
+            dist = np.moveaxis(dist,channel,-1)
+            dist = np.maximum(1e-3, dist)
+            return prob, dist
+
+        if np.prod(n_tiles) > 1:
+            tile_generator, output_shape, create_empty_output = tiling_setup()
+
+            sh = list(output_shape)
+            sh[channel] = 1
+
+            prob = np.zeros(output_shape[:3])
+            proba, dista, pointsa, prob_classa = [], [], [], []
+
+            for tile, s_src, s_dst in tile_generator:
+
+                results_tile = predict_direct(tile)
+
+                # account for grid
+                s_src = [slice(s.start // grid_dict.get(a, 1), s.stop // grid_dict.get(a, 1)) for s, a in
+                         zip(s_src, axes_net)]
+                s_dst = [slice(s.start // grid_dict.get(a, 1), s.stop // grid_dict.get(a, 1)) for s, a in
+                         zip(s_dst, axes_net)]
+                s_src[channel] = slice(None)
+                s_dst[channel] = slice(None)
+                s_src, s_dst = tuple(s_src), tuple(s_dst)
+
+                prob_tile, dist_tile = results_tile[:2]
+                prob_tile, dist_tile = _prep(prob_tile[s_src], dist_tile[s_src])
+                prob[s_dst[:3]] = prob_tile.copy()
+
+                bs = list((b if s.start == 0 else -1, b if s.stop == _sh else -1) for s, _sh in zip(s_dst, sh))
+                bs.pop(channel)
+                inds = _ind_prob_thresh(prob_tile, prob_thresh, b=bs)
+                proba.extend(prob_tile[inds].copy())
+                dista.extend(dist_tile[inds].copy())
+                _points = np.stack(np.where(inds), axis=1)
+                offset = list(s.start for i, s in enumerate(s_dst))
+                offset.pop(channel)
+                _points = _points + np.array(offset).reshape((1, len(offset)))
+                _points = _points * np.array(self.config.grid).reshape((1, len(self.config.grid)))
+                pointsa.extend(_points)
+        else:
+            # predict_direct -> prob, dist, [prob_class if multi_class]
+            results = predict_direct(x)
+            prob, dist = results[:2]
+            prob, dist = _prep(prob, dist)
+            inds   = _ind_prob_thresh(prob, prob_thresh, b=b)
+            proba = prob[inds].copy()
+            dista = dist[inds].copy()
+            _points = np.stack(np.where(inds), axis=1)
+            pointsa = (_points * np.array(self.config.grid).reshape((1,len(self.config.grid))))
+
+        proba = np.asarray(proba)
+        dista = np.asarray(dista).reshape((-1,self.config.n_rays))
+        pointsa = np.asarray(pointsa).reshape((-1,self.config.n_dim))
+
+        prob_map = resizer.after(prob[:, :, :, None], self.config.axes)[..., 0]
+
+        idx = resizer.filter_points(x.ndim, pointsa, axes_net)
+        proba = proba[idx]
+        dista = dista[idx]
+        pointsa = pointsa[idx]
+
+        return proba, dista, pointsa, prob_map
+
 
     def _predict_sparse_generator(self, img, prob_thresh=None, axes=None, normalizer=None, n_tiles=None, show_tile_progress=True, b=2, **predict_kwargs):
         """ Sparse version of model.predict()

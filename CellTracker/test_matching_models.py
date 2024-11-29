@@ -87,8 +87,8 @@ def match_by_fpm_prgls(fpm_models, coords_norm_t1, coords_norm_t2, similarity_th
 
 def match_by_ffn(ffn_model, points1, points2, similarity_threshold=0.4, match_method='coherence'):
     # Initialize the model
-    coords_norm_t1 = normalize_points(points1)
-    coords_norm_t2 = normalize_points(points2)
+    coords_norm_t1, _ = normalize_points(points1)
+    coords_norm_t2, _ = normalize_points(points2)
     initial_matching = initial_matching_ffn(ffn_model, coords_norm_t1, coords_norm_t2,
                                             K_POINTS)
     updated_matching = initial_matching.copy()

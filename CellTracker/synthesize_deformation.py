@@ -334,16 +334,8 @@ def normalize_x10(points_nx3x10):
     assert points_nx3x10.shape[2]==10
     new_points_nx3x10 = np.zeros_like(points_nx3x10)
     for i in range(10):
-        new_points_nx3x10[..., i] = normalize_points(points_nx3x10[..., i])
+        new_points_nx3x10[..., i], _ = normalize_points(points_nx3x10[..., i])
     return new_points_nx3x10
-
-
-# def rotate(points_nx3: ndarray, rad_mx3: ndarray, num_ptr_set: int) -> ndarray:
-#     new_points_mxnx3 = np.empty((num_ptr_set, points_nx3.shape[0], 3))
-#     for i in range(num_ptr_set):
-#         r = Rotation.from_rotvec(rad_mx3[i, :])
-#         new_points_mxnx3[i, ...] = np.dot(points_nx3, r.as_matrix())
-#     return new_points_mxnx3
 
 
 def rotate_one_point_set(points_nx3: ndarray, rad_3: ndarray) -> ndarray:

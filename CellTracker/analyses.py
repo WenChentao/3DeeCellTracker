@@ -1,10 +1,14 @@
 """
 This module provides tools for analyzing the activities from the tracked cells
 """
+from pathlib import Path
 
+import h5py
 import numpy as np
+from matplotlib.collections import LineCollection
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import matplotlib.colors as mcolors
 import scipy
 from tifffile import imread
 
@@ -152,4 +156,7 @@ def draw_signals(signals_txn, ylim_upper=None, ylim_lower=None, figsize=(20, 10)
             if row<row_n-1:
                 ax.get_xaxis().set_visible(False)
     plt.subplots_adjust(left=0.02, bottom=0.02, right=0.98, top=0.98, wspace=0.2, hspace=0.2)
+
+
+
 

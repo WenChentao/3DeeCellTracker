@@ -1,10 +1,9 @@
 from __future__ import division, absolute_import, print_function, unicode_literals, annotations
 
-from typing import List, Tuple
+from typing import List
 
 import numpy as np
 from matplotlib import pyplot as plt
-from matplotlib.colors import ListedColormap
 from matplotlib.patches import ConnectionPatch
 from numpy import ndarray
 
@@ -13,9 +12,9 @@ def custom_tab20_cmap(map_index_to_tab20: List[int]):
     n = len(map_index_to_tab20)
     x = np.linspace(0, 1, 20)
     x = np.concatenate((x[0:20:2], x[1:20:2]))
-    tab20_colors = plt.cm.tab20(x)
-    custom_colors = [(0, 0, 0)] + [tab20_colors[map_index_to_tab20[i]] for i in range(n)]
-    return ListedColormap(custom_colors)
+    tab20_colors = plt.cm.tab20b(x)
+    custom_colors = [tab20_colors[map_index_to_tab20[i]] for i in range(n)]
+    return custom_colors
 
 
 def plot_initial_matching(ref_ptrs: ndarray, tgt_ptrs: ndarray, pairs_px2: ndarray,

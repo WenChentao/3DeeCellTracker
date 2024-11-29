@@ -62,12 +62,8 @@ def extract_data_from_neuropal_nwb(path_to_neuropal_nwb: str) -> NeuroPALData:
         print(f"cell_positions.shape: {cell_positions_yxz_n.shape}")
 
         cell_ids_n = f["processing/NeuroPAL/NeuroPALSegmentation/NeuroPALNeurons/voxel_mask_index"][:]
-
         assert len(cell_ids_n) == len(neuron_names_n), "Number of cell_ids and neuron_names should be the same."
 
-        neuropal_cellid_name_pos = np.asarray(
-            [(cell_ids_n[i], neuron_names_n[i], cell_positions_yxz_n[i]) for i in range(len(cell_ids_n))],
-            dtype=[('id', 'int'), ('name', 'O'), ('position', 'float', (3,))])
     return NeuroPALData(cell_ids_n, neuron_names_n, cell_positions_yxz_n, neuropal_rfp_img_yxz, neuropal_rgb_img_yxzc)
 
 
@@ -209,8 +205,8 @@ def _predict_cell_matchings(coords_t1, coords_t2, fpm_models, ids_t1, ids_t2, ma
     Return predicted matchings and the aligned/normalized coordinates
     """
     # Load normalized coordinates at t1 and t2: segmented_pos is un-rotated, while other coords are rotated
-    segmented_coords_norm_t1 = normalize_points(coords_t1)
-    segmented_coords_norm_t2 = normalize_points(coords_t2)
+    segmented_coords_norm_t1, _ = normalize_points(coords_t1)
+    segmented_coords_norm_t2, _ = normalize_points(coords_t2)
     subset_t1, subset_t2 = np.arange(len(coords_t1)), np.arange(len(coords_t2))
     subset = (subset_t1, subset_t2)
 

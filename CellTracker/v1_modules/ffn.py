@@ -160,7 +160,7 @@ class TrainFFN:
         self.current_epoch = 1
         self.model = FFN()
         if points1_path is not None:
-            self.points_t1 = normalize_points(np.loadtxt(points1_path))
+            self.points_t1, _ = normalize_points(np.loadtxt(points1_path))
 
         elif segmentation1_path is not None:
             slice_paths = sorted(glob(segmentation1_path))
@@ -176,7 +176,7 @@ class TrainFFN:
                                    proofed_segmentation, range(1, proofed_segmentation.max() + 1)
                                    )
             )
-            self.points_t1 = normalize_points(points_t1 * np.asarray(voxel_size)[None, :])
+            self.points_t1, _ = normalize_points(points_t1 * np.asarray(voxel_size)[None, :])
         else:
             raise ValueError("Either the segmentation1_path or the points1_path should be provided")
         self.optimizer = tf.keras.optimizers.Adam()

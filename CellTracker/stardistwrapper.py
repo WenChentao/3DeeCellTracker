@@ -3,16 +3,14 @@ Module Name: stardistwrapper.py
 Author: Chentao Wen
 Modification Description: This module is a wrapper of 3D StarDist modified according to 2_training.ipynb in GitHub StarDist repository
 """
-
-from __future__ import print_function, unicode_literals, absolute_import, division, annotations
-
 import sys
 from glob import glob
-from typing import List
+from typing import List, TYPE_CHECKING
 import h5py
 
 import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 import numpy as np
 from csbdeep.utils import Path, normalize
 from numpy import ndarray
@@ -28,6 +26,9 @@ from tqdm import tqdm
 from CellTracker.plot import custom_tab20_cmap
 from CellTracker.stardist3dcustom import StarDist3DCustom
 from CellTracker.utils import load_2d_slices_at_time
+if TYPE_CHECKING:
+    from CellTracker.trackerlite import TrackerLite
+
 
 STARDIST_MODELS = "stardist_models"
 
@@ -72,16 +73,7 @@ def calculate_scaling_two_channel(images_path: dict, stardist_model, n_tiles=Non
     return scaling_factor
 
 
-def predict_by_two_channels(images_path: dict, stardist_model, scaling_factor, n_tiles=None, prob_thresh=None, t=1):
-    img_activity = load_2d_slices_at_time(images_path, t=t, channel_name="channel_activity", do_normalize=False)
-    img_nuclei = load_2d_slices_at_time(images_path, t=t, channel_name="channel_nuclei", do_normalize=False)
-    img_combined =  img_nuclei / scaling_factor + img_activity
-    img_combined_norm = normalize(img_combined, axis = (0, 1, 2))
-    return img_combined_norm, stardist_model.predict_instances(
-        img_combined_norm, n_tiles=n_tiles, show_tile_progress=False, prob_thresh=prob_thresh)
-
-
-def predict_by_two_channels_quick(images_path: dict, raw_images, stardist_model, scaling_factor, n_tiles=None, prob_thresh=None, t=1):
+def predict_by_two_channels(images_path: dict, raw_images, stardist_model, scaling_factor, n_tiles=None, prob_thresh=None, t=1):
     img_nuclei = raw_images[t - 1, :, images_path["channel_nuclei"], :, :]
     img_activity = raw_images[t - 1, :, images_path["channel_activity"], :, :]
     img_combined =  img_nuclei / scaling_factor + img_activity
@@ -90,73 +82,72 @@ def predict_by_two_channels_quick(images_path: dict, raw_images, stardist_model,
         img_combined_norm, n_tiles=n_tiles, show_tile_progress=False, prob_thresh=prob_thresh)
 
 
-def fit_linear_model(A, B):
-    """ Fit a linear model to the arrays A and B. Return the slope and intercept. """
-    A_flat = A.flatten()
-    B_flat = B.flatten()
+class Segmentation:
+    def __init__(self, tracker: "TrackerLite", segmentation_param: dict):
+        self.stardist_model: StarDist3DCustom = load_stardist_model(model_name=segmentation_param["stardist_model_name"])
+        self.n_tiles = segmentation_param["n_tiles"]
+        self.prob_thresh = segmentation_param["prob_thresh"]
+        self.cache = tracker.cache
+        self.raw_img_param = tracker.Raw_Img_Param
 
-    X = np.vstack([B_flat, np.ones_like(B_flat)]).T
-    slope, intercept = np.linalg.lstsq(X, A_flat, rcond=None)[0]
+    def segment_sequential(self, t_start: int = None, num_vol: int = None, use_two_channels: bool = False, force_redo=False):
+        """
+        Load 2D slices of a 3D image stack obtained at time t and predict instance coordinates using a trained StarDist3DCustom model.
+        Save the predicted coordinates as numpy arrays in a folder.
 
-    return slope, intercept
+        Args:
+            raw_images (dict): The file path of the 3D image stack with 2D slices at each time point.
+            stardist_model (StarDist3DCustom): A trained StarDist3DCustom model for instance segmentation of 3D image stacks.
+            results_folder (str): The folder path to save the results.
+            t_start (int): When provided, skip the previous time points that have been processed.
+        """
+        if self.cache.should_skip("segmentation", force_redo=force_redo):
+            return
 
+        raw_img_param = self.raw_img_param
+        stardist_model = self.stardist_model
+        n_tiles = self.n_tiles
 
-def predict_and_save(images_path: dict, stardist_model: StarDist3DCustom, results_folder: str,
-                     t_start: int = None,n_tiles: tuple = (1,1,1), prob_thresh: float = None,
-                     use_two_channels: bool = False):
-    """
-    Load 2D slices of a 3D image stack obtained at time t and predict instance coordinates using a trained StarDist3DCustom model.
-    Save the predicted coordinates as numpy arrays in a folder.
+        if isinstance(raw_img_param, dict):
+            if use_two_channels:
+                scaling_factor = calculate_scaling_two_channel(raw_img_param, stardist_model, n_tiles = n_tiles,
+                                                               prob_thresh = self.prob_thresh, t = 1)
 
-    Args:
-        images_path (dict): The file path of the 3D image stack with 2D slices at each time point.
-        stardist_model (StarDist3DCustom): A trained StarDist3DCustom model for instance segmentation of 3D image stacks.
-        results_folder (str): The folder path to save the results.
-        t_start (int): When provided, skip the previous time points that have been processed.
-    """
-    # Check if the folder exists and create it if necessary
-    _results_folder = Path(results_folder)
-    _results_folder.mkdir(parents=True, exist_ok=True)
+            with h5py.File(raw_img_param["h5_file"], 'r+') as f_raw, \
+                    h5py.File(str(self.cache.seg_file), 'a') as f_seg:
+                raw_images = f_raw[raw_img_param["dset"]]
+                _t_start = 1 if t_start is None else t_start
+                if num_vol is None:
+                    num_vol = raw_images.shape[0]
+                with tqdm(total=num_vol, initial=_t_start, desc="Segmenting images", ncols=50) as pbar:
+                    for t in range(_t_start, num_vol + 1):
+                        if use_two_channels:
+                            (_, details), prob_map = predict_by_two_channels(
+                                raw_img_param, raw_images,stardist_model, scaling_factor,
+                                n_tiles=n_tiles, prob_thresh=self.prob_thresh, t=t)
+                        else:
+                            x = raw_images[t - 1, :, raw_img_param["channel_nuclei"], :, :]
+                            x = normalize(x, axis=(0, 1, 2))
+                            (_, details), prob_map = stardist_model.predict_instances(
+                                x, n_tiles=n_tiles, show_tile_progress=False, prob_thresh=self.prob_thresh)
 
-    if isinstance(images_path, dict):
-        if use_two_channels:
-            scaling_factor = calculate_scaling_two_channel(images_path, stardist_model, n_tiles = n_tiles,
-                                                           prob_thresh = prob_thresh, t = 1)
-
-        with h5py.File(images_path["h5_file"], 'r+') as f_raw, h5py.File(str(_results_folder / "seg.h5"), 'a') as f_seg:
-            raw_images = f_raw[images_path["dset"]]
-            _t_start = 1 if t_start is None else t_start
-            num_vol = raw_images.shape[0]
-            with tqdm(total=num_vol, initial=_t_start, desc="Segmenting images", ncols=50) as pbar:
-                for t in range(_t_start, num_vol + 1):
-                    if use_two_channels:
-                        (_, details), prob_map = predict_by_two_channels_quick(
-                            images_path, raw_images,stardist_model, scaling_factor,
-                            n_tiles=n_tiles, prob_thresh=prob_thresh, t=t)
-                    else:
-                        x = raw_images[t - 1, :, images_path["channel_nuclei"], :, :]
-                        x = normalize(x, axis=(0, 1, 2))
-                        (_, details), prob_map = stardist_model.predict_instances(
-                            x, n_tiles=n_tiles, show_tile_progress=False, prob_thresh=prob_thresh)
-
-                    if t == 1:
-                        f_seg.create_dataset('prob', shape=(num_vol, *prob_map.shape),
-                                                         chunks=(1, *prob_map.shape), dtype="float16",
-                                                         compression="lzf")
-                    f_seg["prob"][t - 1, ...] = prob_map
-                    f_seg.create_dataset(f'coords_{str(t - 1).zfill(6)}',
-                                         data=details["points"][:, [1, 2, 0]])
-                    pbar.update(1)
-            print(f"All images from t={1} to t={num_vol} have been Segmented")
-    else:
-        raise ValueError("images_path should be of str or dict type")
+                        if t == 1:
+                            f_seg.create_dataset('prob', shape=(num_vol, *prob_map.shape),
+                                                             chunks=(1, *prob_map.shape), dtype="float16",
+                                                             compression="lzf")
+                        f_seg["prob"][t - 1, ...] = prob_map
+                        f_seg.create_dataset(f'coords_{str(t - 1).zfill(6)}',
+                                             data=details["points"][:, [1, 2, 0]])
+                        pbar.update(1)
+                print(f"All images from t={1} to t={num_vol} have been Segmented")
+                self.cache.task_done("segmentation", self.cache.seg_file)
+        else:
+            raise ValueError("images_path should be of str or dict type")
 
 
-def save_auto_seg(labels_xyz, results_folder: str, vol: int):
-    _results_folder = Path(results_folder)
-    _results_folder.mkdir(parents=True, exist_ok=True)
+def save_auto_seg(labels_xyz, image_path: Path):
     dtype = np.uint8 if labels_xyz.max() <= 255 else np.uint16
-    imwrite(str(_results_folder / f"auto_vol_{vol}.tif"), labels_xyz.astype(dtype))
+    imwrite(str(image_path), labels_xyz.astype(dtype))
 
 
 def load_training_images(path_train_images: str, path_train_labels: str, max_projection: bool):
@@ -197,11 +188,13 @@ def load_training_images(path_train_images: str, path_train_labels: str, max_pro
     assert img.ndim in (3, 4)
     img = img if img.ndim == 3 else img[..., :3]
 
-    cmap = create_cmap(lbl, max_color=20)
+    from skimage.segmentation import relabel_sequential
+    _lbl, _, _ = relabel_sequential(lbl)
+    cmap = create_cmap(_lbl, max_color=20)
     if max_projection:
-        plot_img_label_max_projection(img, lbl, cmap)
+        plot_img_label_max_projection(img, _lbl, cmap)
     else:
-        plot_img_label_center_slice(img, lbl, cmap)
+        plot_img_label_center_slice(img, _lbl, cmap)
 
     return X, Y, X_trn, Y_trn, X_val, Y_val, n_channel
 
@@ -294,7 +287,8 @@ def plot_img_label_center_slice(img, lbl, img_title="image (XY slice)", lbl_titl
     plt.tight_layout()
 
 
-def create_cmap(label_image_3d: ndarray, voxel_size_yxz: tuple = (1,1,1), max_color=20, dist_type="2d_projection"):
+def create_cmap(label_image_3d: ndarray, voxel_size_yxz: tuple = (1,1,1), max_color=20, dist_type="2d_projection",
+                is_transparent: bool = False):
     """
     Create a cmap for label_image_3d, so that the neighboring cells will have different colors
 
@@ -312,14 +306,18 @@ def create_cmap(label_image_3d: ndarray, voxel_size_yxz: tuple = (1,1,1), max_co
     )
     coords_nx3 = coords_nx3 * np.asarray(voxel_size_yxz).reshape((1,3))
 
+    return create_cmap_by_coords(coords_nx3, dist_type, max_color, is_transparent)
+
+
+def create_cmap_by_coords(coords_nx3: ndarray, dist_type="2d_projection", max_color=20, is_transparent: bool=False):
+    n = coords_nx3.shape[0]
     if dist_type == "2d_projection":
-        dist_nxk, indices_nxk = kneighbors_2d_projections(coords_nx3, max_color)
+        dist_nxk, indices_nxk = _kneighbors_2d_projections(coords_nx3, max_color)
     else:
-        dist_nxk, indices_nxk = kneighbors_3d(coords_nx3, max_color)
+        dist_nxk, indices_nxk = _kneighbors_3d(coords_nx3, max_color)
     dist_nxn = np.full((n, n), np.inf)
     for i, indices_i in enumerate(indices_nxk):
         dist_nxn[i, indices_i[1:]] = dist_nxk[i, 1:]
-
     colors = np.full((n), -1, dtype=int)
     colored_cell = []
     available_colors = np.arange(n, dtype=int)
@@ -333,13 +331,17 @@ def create_cmap(label_image_3d: ndarray, voxel_size_yxz: tuple = (1,1,1), max_co
                     dist_nxn[ind, np.asarray(colored_cell)] = np.inf
                     dist_nxn[np.asarray(colored_cell), ind] = np.inf
                 colored_cell.append(ind)
-        if len(colored_cell)==n:
+        if len(colored_cell) == n:
             break
+    if is_transparent:
+        bg = [(0, 0, 0, 0)]
+    else:
+        bg = [(0, 0, 0, 1)]
+    color_map = bg + custom_tab20_cmap(colors.tolist())
+    return ListedColormap(color_map)
 
-    return custom_tab20_cmap(colors.tolist())
 
-
-def kneighbors_2d_projections(coords_nx3, k):
+def _kneighbors_2d_projections(coords_nx3, k):
     dist_nxn_xy = cdist(coords_nx3[:, [0, 1]], coords_nx3[:, [0, 1]], metric='euclidean')
     dist_nxn_xz = cdist(coords_nx3[:, [2, 1]], coords_nx3[:, [2, 1]], metric='euclidean')
     dist_nxn = np.minimum(dist_nxn_xy, dist_nxn_xz)
@@ -354,7 +356,7 @@ def kneighbors_2d_projections(coords_nx3, k):
     return dist_nxk, indices_nxk
 
 
-def kneighbors_3d(coords_nx3, k):
+def _kneighbors_3d(coords_nx3, k):
     nbrs = NearestNeighbors(n_neighbors=k, algorithm='auto').fit(coords_nx3)
     dist_nxk, indices_nxk = nbrs.kneighbors(coords_nx3)
     return dist_nxk, indices_nxk

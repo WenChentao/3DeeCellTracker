@@ -17,8 +17,8 @@ K_POINTS = 20
 def pre_alignment(coords_t1: ndarray, coords_t2: ndarray, match_model: Model, predict_method: Callable, match_method: str,
                   similarity_threshold: float, ttype: str = "euclidean"):
     print(f"Pre-alignment by FPM + {ttype} Transformation")
-    coords_norm_t2, _ = normalize_points(coords_t2, return_para=True)
-    coords_norm_t1, _ = normalize_points(coords_t1, return_para=True)
+    coords_norm_t2, _ = normalize_points(coords_t2)
+    coords_norm_t1, _ = normalize_points(coords_t1)
 
     similarity_scores = predict_method(match_model, coords_norm_t1, coords_norm_t2, K_POINTS)
 
@@ -33,8 +33,8 @@ def pre_alignment(coords_t1: ndarray, coords_t2: ndarray, match_model: Model, pr
 
 def get_transform(coords_t1: ndarray, coords_t2: ndarray, match_model: Model, predict_method: Callable, match_method: str,
                   similarity_threshold: float, ttype: str = "affine"):
-    coords_norm_t2, _ = normalize_points(coords_t2, return_para=True)
-    coords_norm_t1, _ = normalize_points(coords_t1, return_para=True)
+    coords_norm_t2, _ = normalize_points(coords_t2)
+    coords_norm_t1, _ = normalize_points(coords_t1)
 
     similarity_scores = predict_method(match_model, coords_norm_t1, coords_norm_t2, K_POINTS)
 
