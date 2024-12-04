@@ -210,24 +210,30 @@ class StarDist3DCustom(StarDist3D):
             a dictionary with the details (coordinates, etc.) of all remaining polygons/polyhedra.
 
         """
-        _axes         = self._normalize_axes(img, None)
-        _axes_net     = self.config.axes
-        _permute_axes = self._make_permute_axes(_axes, _axes_net)
-        _shape_inst   = tuple(s for s,a in zip(_permute_axes(img).shape, _axes_net) if a != 'C')
+        _shape_inst = self._get_image_shape(img)
 
-        prob_n, dist_nxray, points_coords_nx3, prob_map_3d_zyx = self._predict_sparse(
+        prob_n, dist_nxray, points_coords_nx3, prob_map_reduced_zyx, dist_map_reduced_zyxr = self._predict_sparse(
             img, n_tiles=n_tiles, prob_thresh=prob_thresh, show_tile_progress=show_tile_progress)
 
-        res_instances = self._instances_from_prediction_simple(
+        labels, res_dict = self._instances_from_prediction_simple(
             _shape_inst,
             prob_n,
             dist_nxray,
             points=points_coords_nx3,
             nms_thresh=nms_thresh
         )
+        res_dict["img_shape"] = _shape_inst
 
         # Note: the size of prob_map is compressed according to the grid parameter. It will be recovered during tracking
-        return res_instances, prob_map_3d_zyx
+        return labels, res_dict, prob_map_reduced_zyx, dist_map_reduced_zyxr
+
+
+    def _get_image_shape(self, img):
+        _axes = self._normalize_axes(img, None)
+        _axes_net = self.config.axes
+        _permute_axes = self._make_permute_axes(_axes, _axes_net)
+        _shape_inst = tuple(s for s, a in zip(_permute_axes(img).shape, _axes_net) if a != 'C')
+        return _shape_inst
 
     def _instances_from_prediction_simple(self, img_shape, prob, dist, points, nms_thresh=None):
         if nms_thresh  is None:
@@ -247,7 +253,7 @@ class StarDist3DCustom(StarDist3D):
         return labels, res_dict
 
     def _predict_sparse(self, img, prob_thresh=None,
-                        n_tiles=None, show_tile_progress=True, b=2, **predict_kwargs):
+                        n_tiles=None, show_tile_progress=True, bound=0, **predict_kwargs):
         """ Sparse version of model.predict()
         Returns
         -------
@@ -255,8 +261,10 @@ class StarDist3DCustom(StarDist3D):
         """
         if prob_thresh is None: prob_thresh = self.thresholds.prob
 
-        x, axes, axes_net, axes_net_div_by, _permute_axes, resizer, n_tiles, grid, grid_dict, channel, predict_direct, tiling_setup = \
-            self._predict_setup(img, None, None, n_tiles, show_tile_progress, predict_kwargs)
+        (x, axes, axes_net, axes_net_div_by, _permute_axes, resizer, n_tiles,
+         grid, grid_dict, channel, predict_direct, tiling_setup) = \
+            self._predict_setup(img, None, None, n_tiles,
+                                show_tile_progress, predict_kwargs)
 
         def _prep(prob, dist):
             prob = np.take(prob,0,axis=channel)
@@ -271,6 +279,7 @@ class StarDist3DCustom(StarDist3D):
             sh[channel] = 1
 
             prob = np.zeros(output_shape[:3])
+            dist = np.zeros(output_shape[:3] + self.config.n_rays)
             proba, dista, pointsa, prob_classa = [], [], [], []
 
             for tile, s_src, s_dst in tile_generator:
@@ -289,8 +298,9 @@ class StarDist3DCustom(StarDist3D):
                 prob_tile, dist_tile = results_tile[:2]
                 prob_tile, dist_tile = _prep(prob_tile[s_src], dist_tile[s_src])
                 prob[s_dst[:3]] = prob_tile.copy()
+                dist[s_dst[:3]] = dist_tile.copy() #TODO: many may incorrect here when use tiles
 
-                bs = list((b if s.start == 0 else -1, b if s.stop == _sh else -1) for s, _sh in zip(s_dst, sh))
+                bs = list((bound if s.start == 0 else -1, bound if s.stop == _sh else -1) for s, _sh in zip(s_dst, sh))
                 bs.pop(channel)
                 inds = _ind_prob_thresh(prob_tile, prob_thresh, b=bs)
                 proba.extend(prob_tile[inds].copy())
@@ -306,7 +316,7 @@ class StarDist3DCustom(StarDist3D):
             results = predict_direct(x)
             prob, dist = results[:2]
             prob, dist = _prep(prob, dist)
-            inds   = _ind_prob_thresh(prob, prob_thresh, b=b)
+            inds   = _ind_prob_thresh(prob, prob_thresh, b=bound)
             proba = prob[inds].copy()
             dista = dist[inds].copy()
             _points = np.stack(np.where(inds), axis=1)
@@ -316,14 +326,16 @@ class StarDist3DCustom(StarDist3D):
         dista = np.asarray(dista).reshape((-1,self.config.n_rays))
         pointsa = np.asarray(pointsa).reshape((-1,self.config.n_dim))
 
-        prob_map = resizer.after(prob[:, :, :, None], self.config.axes)[..., 0]
+        prob_map_reduced = resizer.after(prob[:, :, :, None], self.config.axes)[..., 0]
+        dist_map_reduced = resizer.after(dist, self.config.axes)
 
         idx = resizer.filter_points(x.ndim, pointsa, axes_net)
+        print(idx[0].shape, len(proba))
         proba = proba[idx]
         dista = dista[idx]
         pointsa = pointsa[idx]
 
-        return proba, dista, pointsa, prob_map
+        return proba, dista, pointsa, prob_map_reduced, dist_map_reduced
 
 
     def _predict_sparse_generator(self, img, prob_thresh=None, axes=None, normalizer=None, n_tiles=None, show_tile_progress=True, b=2, **predict_kwargs):
