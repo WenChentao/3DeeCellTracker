@@ -1080,7 +1080,8 @@ class Tracker(Segmentation, Draw):
         """Interpolate/smoothen a 3D image"""
         seg_cells_interpolated, seg_cell_or_bg = gaussian_filter(
             self.segmentation_manual_relabels, z_scaling=self.z_scaling, smooth_sigma=2.5)
-        seg_cells_interpolated_corrected = recalculate_cell_boundaries(seg_cells_interpolated, seg_cell_or_bg)
+        seg_cells_interpolated_corrected = recalculate_cell_boundaries(
+            seg_cells_interpolated, seg_cell_or_bg)
         return seg_cells_interpolated_corrected[5:self.x_siz + 5,
                5:self.y_siz + 5, 5:self.z_siz * self.z_scaling + 5]
 

@@ -1,6 +1,7 @@
 from __future__ import division, absolute_import, print_function, unicode_literals, annotations
 
 import os
+import time
 from typing import Tuple
 
 import h5py
@@ -10,6 +11,8 @@ from numpy import ndarray
 from scipy.ndimage import distance_transform_edt
 from skimage.segmentation import watershed
 from sklearn.decomposition import PCA
+
+from CellTracker.experiment import _recalculate_cell_boundaries_threadpool
 
 
 def load_2d_slices_at_time(images_path: dict, t: int, channel_name: str, do_normalize: bool = True):
@@ -55,11 +58,17 @@ def normalize_points(points_nx3: ndarray) -> Tuple[ndarray, Tuple[ndarray, float
     return norm_points, (mean, 3 * std)
 
 
+def recalculate_cell_boundaries(segmentation_xyz: ndarray, cell_overlaps_mask: ndarray,
+                                sampling_xy: tuple = (1, 1)):
+    results =  _recalculate_cell_boundaries_threadpool(
+        segmentation_xyz, cell_overlaps_mask, sampling_xy)
+    return results
 
-def recalculate_cell_boundaries(segmentation_xyz: ndarray, cell_overlaps_mask: ndarray, sampling_xy: tuple = (1, 1),
-                                print_message: bool = True):
+
+def _recalculate_cell_boundaries(segmentation_xyz: ndarray, cell_overlaps_mask: ndarray,
+                                sampling_xy: tuple = (1, 1)):
     """
-    Recalculate cell boundaries when cell regions are overlapping
+    (Deprecated / slow) Recalculate cell boundaries when cell regions are overlapping
 
     Parameters
     ----------
@@ -80,8 +89,6 @@ def recalculate_cell_boundaries(segmentation_xyz: ndarray, cell_overlaps_mask: n
 
     # Loop over each z-slice of the label image
     for z in range(segmentation_xyz.shape[2]):
-        if print_message:
-            print(f"Recalculating... cell boundary at z = {z + 1}", end="\r")
         # Create a binary image indicating the presence of cells or overlapping regions
         mask_image = np.logical_or(segmentation_xyz[:, :, z] > 0, cell_overlaps_mask[:, :, z] > 1)
 
@@ -94,7 +101,6 @@ def recalculate_cell_boundaries(segmentation_xyz: ndarray, cell_overlaps_mask: n
 
         # Perform the watershed segmentation and store the result in the output array
         recalculated_labels[:, :, z] = watershed(distance_map, markers, mask=mask_image)
-
     # Return the recalculated label image
     return recalculated_labels
 

@@ -8,7 +8,8 @@ from scipy.spatial.distance import cdist
 from sklearn.manifold import MDS
 from tqdm import tqdm
 
-from CellTracker.test_matching_models import rotation_align_by_fpm, affine_align_by_fpm, match_by_fpm_prgls
+from CellTracker.test_matching_models import rotation_align_by_fpm, affine_align_by_fpm, match_by_prgls, \
+    _match_pure_fpm
 
 
 def ensemble_match_initial_20_volumes(cell_num_list: List[int], path_pairwise_match_initialx_h5: str):
@@ -89,7 +90,10 @@ def iterative_alignment(fpm_models, fpm_models_rot, coords_norm_t1, coords_norm_
                                                                     coords_norm_t2=coords_norm_t2)
     aligned_t1_1, _, pairs_1, _ = affine_align_by_fpm(fpm_models, coords_norm_t1=aligned_t1_rot,
                                                       coords_norm_t2=coords_norm_t2)
-    pairs_2, similarity_score = match_by_fpm_prgls(fpm_models, aligned_t1_1, coords_norm_t2)
+    _pairs_px2 = _match_pure_fpm(
+        coords_norm_t1, coords_norm_t2, fpm_models, similarity_threshold=0.4)
+    pairs_2, similarity_score = match_by_prgls(
+        _pairs_px2, aligned_t1_1, coords_norm_t2)
     if len(pairs_2) < 10:
         return pairs_1
     return pairs_2

@@ -1,5 +1,6 @@
 from glob import glob
 from pathlib import Path
+from typing import Tuple
 
 import numpy as np
 import tensorflow as tf
@@ -315,7 +316,7 @@ def initial_matching_fpm_(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarra
     return similarity_scores
 
 
-def initial_matching_fpm(fpm_models, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
+def initial_matching_fpm(fpm_models: Tuple[Model, FPMPart2Model], ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int) -> ndarray:
     """
     This function compute initial matching between all pairs of points in reference and target points set.
 
@@ -351,14 +352,15 @@ def initial_matching_fpm(fpm_models, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarra
 
     feature_shape = expanded_feature_tgt.shape
     axes = [1, 0] + list(range(2, 1 + len(feature_shape)))
+
     expanded_feature_ref_meshgrid = tf.reshape(tf.tile(tf.expand_dims(
         expanded_feature_ref, axis=0), [m, 1, 1, 1]), [n * m, *feature_shape[1:]])
     expanded_feature_tgt_meshgrid = tf.reshape(tf.transpose(
             tf.tile(tf.expand_dims(expanded_feature_tgt, axis=0), (n, 1, 1, 1)), perm=axes), (n * m, *feature_shape[1:]))
+
     features_ref_tgt = tf.stack((expanded_feature_ref_meshgrid, expanded_feature_tgt_meshgrid), axis=-1)
 
-    similarity_scores = fpm_part2.predict(features_ref_tgt, batch_size=256).reshape((m, n))
-
+    similarity_scores = fpm_part2.predict(features_ref_tgt, batch_size=256, verbose=0).reshape((m, n))
     return similarity_scores
 
 
@@ -413,7 +415,8 @@ def initial_matching_fpm_local_search(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt
 
     # Calculate the similarity in selected pairs
     features_ref_tgt_selected = features_ref_tgt[one_dim_indices]
-    similarity_scores[one_dim_indices] = fpm_model.predict(features_ref_tgt_selected, batch_size=256)[:, 0]
+    similarity_scores[one_dim_indices] = fpm_model.predict(features_ref_tgt_selected, batch_size=256,
+                                                           verbose=0)[:, 0]
     similarity_scores = similarity_scores.reshape((m, n))
 
     return similarity_scores

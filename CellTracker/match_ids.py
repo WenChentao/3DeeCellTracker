@@ -219,13 +219,18 @@ def _predict_cell_matchings(coords_t1, coords_t2, fpm_models, ids_t1, ids_t2, ma
 
     iter = 3
     for i in range(iter):
-        similarity_scores = initial_matching_fpm(fpm_models, aligned_coords_subset_norm_t1, coords_subset_norm_t2, K_POINTS)
-        _matched_pairs_subset = get_match_pairs(similarity_scores, aligned_coords_subset_norm_t1, coords_subset_norm_t2,
+        similarity_scores = initial_matching_fpm(
+            fpm_models, aligned_coords_subset_norm_t1,
+            coords_subset_norm_t2, K_POINTS)
+        _matched_pairs_subset = get_match_pairs(similarity_scores,
+                                                aligned_coords_subset_norm_t1,
+                                                coords_subset_norm_t2,
                                         threshold=similarity_threshold, method=match_method)
         matched_pairs = np.column_stack(
             (subset[0][_matched_pairs_subset[:, 0]], subset[1][_matched_pairs_subset[:, 1]]))
 
-        print_and_plot_matching(aligned_coords_subset_norm_t1, coords_subset_norm_t2, i, ids_t2, ids_t1,
+        print_and_plot_matching(aligned_coords_subset_norm_t1,
+                                coords_subset_norm_t2, i, ids_t2, ids_t1,
                                 subset, _matched_pairs_subset, verbosity)
 
         if i == iter - 1:

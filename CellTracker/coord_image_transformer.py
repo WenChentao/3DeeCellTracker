@@ -9,12 +9,13 @@ import skimage.measure as skm
 from PIL import Image
 from numpy import ndarray
 from skimage.segmentation import relabel_sequential
-from tifffile import imread
 
+from CellTracker.experiment import tf_center_of_mass
 from CellTracker.stardistwrapper import create_cmap
 if TYPE_CHECKING:
     from CellTracker.trackerlite import TrackerLite
-from CellTracker.utils import load_2d_slices_at_time, recalculate_cell_boundaries, debug_print
+from CellTracker.utils import load_2d_slices_at_time, debug_print, del_datasets, \
+    recalculate_cell_boundaries
 
 PAD_WIDTH = 3
 
@@ -175,23 +176,24 @@ class CoordsToImageTransformer:
         self.Grid = tracker.seg.stardist_model.config.grid
         self.tracker = tracker
 
-    def load_segmentation(self, manual_seg_path: str) -> None:
+    def load_segmentation(self, seg_h5_path: str) -> None:
         """
         Load the proofed segmentation from a single tif file.
 
         Parameters
         ----------
-        manual_seg_path : str
+        seg_h5_path : str
             The path to the tif file of manually corrected segmentation.
         """
         # Load the proofed segmentation and relabel it to sequential integers
-        proofed_segmentation = imread(manual_seg_path).transpose((1, 2, 0))
-        self.Proofed_Segmentation, _, _ = relabel_sequential(proofed_segmentation)
+        with h5py.File(seg_h5_path, "r") as file:
+            proofed_segmentation_yxz = file["seg_labels_zyx"][:].transpose((1, 2, 0))
+        self.Proofed_Segmentation, _, _ = relabel_sequential(proofed_segmentation_yxz)
         self.Z_Slice_Original_Labels = slice(self.Interp_Factor // 2,
                                              self.Interp_Factor * self.Proofed_Segmentation.shape[2],
                                              self.Interp_Factor)
         print(
-            f"Loaded the proofed segmentations with {np.count_nonzero(np.unique(proofed_segmentation))} cells")
+            f"Loaded the proofed segmentations with {np.count_nonzero(np.unique(proofed_segmentation_yxz))} cells")
 
     def cal_filtered_subregions(self, filtered_ids) -> list:
         filtered_subregions = []
@@ -230,25 +232,23 @@ class CoordsToImageTransformer:
         self.Coord_Filtered_T0 = Coordinates(coord_proof_filtered,
                                              self.Interp_Factor, self.Voxel_Size, dtype="raw")
         h, w, z = self.tracker.Image_Size_YXZ
-        with h5py.File(images_path["h5_file"], 'r+') as f_raw:
-            t = f_raw[images_path["dset"]].shape[0]
+        with h5py.File(self.tracker.cache.seg_file, 'r+') as f_seg:
+            t = f_seg["prob"].shape[0]
         resolution_h, resolution_w, resolution_z = self.Voxel_Size
         dtype = np.uint8 if filtered_segmentation.max() <= 255 else np.uint16
         with h5py.File(str(self.tracker.tracking_results_file), 'a') as f:
-            if 'tracked_labels' not in f:
-                f.create_dataset('tracked_labels', (t, z, 1, h, w), chunks=(1, z, 1, h, w),
-                    compression="gzip", dtype=dtype, compression_opts=1)  # "lzf" compression can cause error in Fiji
-                f.attrs["last_step"] = 1
+            del_datasets(f, ['tracked_labels', 'tracked_coordinates'])
+            f.create_dataset('tracked_labels', (t, z, 1, h, w), chunks=(1, z, 1, h, w),
+                compression="gzip", dtype=dtype, compression_opts=1)  # "lzf" compression can cause error in Fiji
+            f.attrs["last_step"] = 1
             f["tracked_labels"].attrs['element_size_um'] = (resolution_z, resolution_h, resolution_w)
-            if 'tracked_coordinates' not in f:
-                f.create_dataset('tracked_coordinates', (t, *self.Coord_Filtered_T0.real.shape),
-                                 compression="gzip", compression_opts=1)
+            f.create_dataset('tracked_coordinates', (t, *self.Coord_Filtered_T0.real.shape),
+                             compression="gzip", compression_opts=1)
             assert f["tracked_labels"].shape == (t, z, 1, h, w)
             assert f["tracked_coordinates"].shape == (t, *self.Coord_Filtered_T0.real.shape)
-
-        with h5py.File(str(self.tracker.tracking_results_file), 'a') as f:
             f["tracked_labels"][t_initial - 1, :, 0, :, :] = filtered_segmentation.transpose((2, 0, 1)).astype(dtype)
             f["tracked_coordinates"][t_initial - 1, :, :] = self.Coord_Filtered_T0.real
+
 
         cmap = create_cmap(filtered_segmentation, self.Voxel_Size, max_color=20, dist_type="2d_projection")
         cmap_colors = np.zeros((len(cmap.colors), 3))
@@ -317,7 +317,7 @@ class CoordsToImageTransformer:
         return recalculate_cell_boundaries(
             interpolated_labels[:, :, self.Z_Slice_Original_Labels],
             cell_overlaps_mask[:, :, self.Z_Slice_Original_Labels],
-            sampling_xy=self.Voxel_Size[:2], print_message=False)
+            sampling_xy=self.Voxel_Size[:2])
 
     def move_cells(self, subregions: list=None, movements_nx3: ndarray = None, cells_missed: Set[int] = None):
         if subregions is None:
@@ -447,9 +447,8 @@ class CoordsToImageTransformer:
 
         # remove the overlapped regions from each label (marker for watershed)
         labels_image[mask_image > 1] = 0
-        positions_of_new_centers = ndm.center_of_mass(prob_img, labels_image,
+        positions_of_new_centers = tf_center_of_mass(prob_img, labels_image,
                                                       range(1, coords.real.shape[0] + 1))
-        positions_of_new_centers = np.asarray(positions_of_new_centers)
 
         lost_cells = np.isnan(positions_of_new_centers[:, 0])
         positions_of_new_centers[lost_cells, :] = coords.raw[lost_cells, :]
@@ -615,7 +614,7 @@ def move_cells(
         cells_missed = set()
 
     # Initialize output images
-    output_img = np.repeat(np.zeros(img_shape), interpolation_factor, axis=2)
+    output_img = np.repeat(np.zeros(img_shape, dtype=np.uint16), interpolation_factor, axis=2)
     mask = output_img.copy()
 
     # Calculate interpolated shape

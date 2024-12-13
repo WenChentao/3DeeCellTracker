@@ -460,7 +460,7 @@ class TrackerLite:
         _fpm_model = load_fpm(fpm_model_path=fpm_model["path"],
                                match_model=fpm_model["architecture"])
         self.Fpm_Models = (_fpm_model, FPMPart2Model(_fpm_model.comparator))
-        self.coords2image = CoordsToImageTransformer(self)
+        self.coords2image: CoordsToImageTransformer = CoordsToImageTransformer(self)
         self.Image_Size_YXZ = self._get_image_size()
 
     def _get_image_size(self):
@@ -477,6 +477,8 @@ class TrackerLite:
         if self.cache.should_skip("get_segmented_coords", force_redo=force_redo):
             return
 
+        if self.cache.coords_file.exists():
+            self.cache.coords_file.unlink()
         with h5py.File(str(self.cache.seg_file), "r") as seg_file, \
               h5py.File(str(self.cache.coords_file), 'a') as coords_file:
             for t in tqdm(range(self.Vol_Num)):
@@ -530,6 +532,8 @@ class TrackerLite:
         else:
             fpm_models_rot = (fpm_model_rot, FPMPart2Model(fpm_model_rot.comparator))
 
+        if self.cache.align_file.exists():
+            self.cache.align_file.unlink()
         with h5py.File(str(self.cache.align_file), "a") as rigid_align_file:
             rigid_h5 = RigidAlignH5(rigid_align_file)
             rigid_h5.initialize_align_file(
@@ -712,26 +716,32 @@ class TrackerLite:
                 ax.cla()
         plt.close(fig)
 
-    def segment_reference_volume(self, force_redo: bool = False):
+    def segment_reference_volume(self, force_include_bright: bool = False, force_redo: bool = False):
+
         self.AutoSegPath = self.Results_Dir / f'segmentation_vol_{self.T_Initial}.h5'
         if self.cache.should_skip('segment_ref_volume', force_redo):
             print(f"Saved auto-segmentation as {self.AutoSegPath}")
             return
         x = load_2d_slices_at_time(images_path=self.Raw_Img_Param, channel_name="channel_nuclei", t=self.T_Initial)
-        (labels_zyx, details), prob_map_zyx = self.seg.stardist_model._predict_instances_simple(
-            x, n_tiles=self.seg.n_tiles, prob_thresh=self.seg.prob_thresh)
+        labels_zyx, details, prob_map_reduced_zyx, dist_map_reduced_zyxr = (
+            self.seg.stardist_model._predict_instances_simple(
+            x, n_tiles=self.seg.n_tiles, prob_thresh=self.seg.prob_thresh))
         grid_zyx = self.seg.stardist_model.config.grid
         prob_map_zyx = np.repeat(np.repeat(np.repeat(
-            prob_map_zyx, grid_zyx[0], axis=0),
+            prob_map_reduced_zyx, grid_zyx[0], axis=0),
             grid_zyx[1], axis=1),
             grid_zyx[2], axis=2)
         with h5py.File(str(self.AutoSegPath), "w") as f:
             f.attrs["raw_dset"] = self.Raw_Img_Param["dset"]
             f.attrs["raw_channel_nuclei"] = self.Raw_Img_Param["channel_nuclei"]
             f.attrs["t_initial"] = self.T_Initial
-            del_datasets(f, ["seg_labels_zyx",])
             f.create_dataset("seg_labels_zyx", data=labels_zyx, compression="lzf")
+            f.create_dataset("dist_map_reduced_zyxr", data=dist_map_reduced_zyxr, compression="lzf")
             f.create_dataset("prob_map_zyx", data=prob_map_zyx, compression="lzf")
+            f.create_dataset("img_shape", data=details["img_shape"])
+            f.create_dataset("prob_n", data=details["prob"])
+            f.create_dataset("dist_n", data=details["dist"])
+            f.create_dataset("coords_nx3", data=details["points"])
         print(f"Saved auto-segmentation as {self.AutoSegPath}")
         self.cache.task_done('segment_ref_volume', self.AutoSegPath)
 
@@ -746,24 +756,25 @@ class TrackerLite:
             image, labels_zyx, cmap, lbl_title="label pred (projection)", fig_width_px=2000,
             scale_z=self.coords2image.Interp_Factor)
 
-    def modify_reference_segmentation(self):
+    def modify_reference_segmentation(self, neuropal_loader_type: str = "none", neuropal_file_path: str = None):
         from .segmentation_inspector import SegmentationInspector
-        inspector = SegmentationInspector()
-        inspector.load_segmentation_results(path=self.AutoSegPath)
+        inspector = SegmentationInspector(self, neuropal_loader_type)
+        inspector.load_segmentation_results(tracking_result_path=self.AutoSegPath, neuropal_image_path=neuropal_file_path)
         inspector.load_raw_t0(path=self.Raw_Img_Param["h5_file"])
 
-    def load_segmentation(self, manual_seg_path: str = None, force_redo: bool = False):
+    def load_segmentation(self, force_redo: bool = False):
         if self.cache.should_skip('interpolate_segmentation', force_redo=force_redo):
-            return
-        seg_path = str(self.AutoSegPath) if manual_seg_path is None else manual_seg_path
-        self.coords2image.load_segmentation(seg_path)
-        x = load_2d_slices_at_time(images_path=self.Raw_Img_Param, channel_name="channel_nuclei", t=self.T_Initial)
-        cmap = create_cmap(self.coords2image.Proofed_Segmentation, self.coords2image.Voxel_Size)
-        plot_img_label_max_projection(x, self.coords2image.Proofed_Segmentation.transpose(2, 0, 1),
-                                      cmap, lbl_title="label proofed (projection)", fig_width_px=2000)
-        plot_img_label_max_projection_xz(x, self.coords2image.Proofed_Segmentation.transpose(2, 0, 1),
-                                         cmap, lbl_title="label proofed (projection)",
-                                         fig_width_px=2000, scale_z=self.coords2image.Interp_Factor)
+            pass
+        else:
+            self.coords2image.load_segmentation(str(self.AutoSegPath))
+            x = load_2d_slices_at_time(images_path=self.Raw_Img_Param, channel_name="channel_nuclei", t=self.T_Initial)
+            cmap = create_cmap(self.coords2image.Proofed_Segmentation, self.coords2image.Voxel_Size)
+            plot_img_label_max_projection(x, self.coords2image.Proofed_Segmentation.transpose(2, 0, 1),
+                                          cmap, lbl_title="label proofed (projection)", fig_width_px=2000)
+            plot_img_label_max_projection_xz(x, self.coords2image.Proofed_Segmentation.transpose(2, 0, 1),
+                                             cmap, lbl_title="label proofed (projection)",
+                                             fig_width_px=2000, scale_z=self.coords2image.Interp_Factor)
+        self._interpolate_segmentation(force_redo=force_redo)
 
     def load_unfiltered_subregions(self):
         with h5py.File(str(self.cache.subregion_file), "r") as subregion_file:
@@ -791,7 +802,7 @@ class TrackerLite:
                                            slices_xyz[1].start, slices_xyz[1].stop,
                                            slices_xyz[2].start, slices_xyz[2].stop)
 
-    def interpolate_segmentation(self, force_redo: bool = False):
+    def _interpolate_segmentation(self, force_redo: bool = False):
         if self.cache.should_skip('interpolate_segmentation', force_redo=force_redo):
             self.coords2image.Sub_Regions = self.load_unfiltered_subregions()
             with h5py.File(str(self.cache.auto_corrected_seg_file), "r") as file:
@@ -827,7 +838,7 @@ class TrackerLite:
                                        str(self.cache.subregion_file),
                                        str(self.cache.coords_t_initial_file)]))
 
-    def predict_cell_positions(self, t1: int, t2: int, confirmed_coord_t1: ndarray = None, subset_confirmed = None,
+    def predict_cell_positions(self, t1: int, t2: int, pairs_init: ndarray = None,
                                beta: float = BETA, lambda_: float = LAMBDA, verbosity: int = 0,
                                learning_rate: float = 0.5) -> ndarray:
         """
@@ -839,10 +850,8 @@ class TrackerLite:
             The time step t1.
         t2:
             The time step t2.
-        confirmed_coord_t1:
-            The confirmed cell positions at time step t1.
-        match_confirmed_t1_and_seg_t1: ndarray, shape (n, 2)
-            The matching between the confirmed cell positions at time step t1 and the segmentation at time step t1.
+        pairs_init:
+            if not None, use it to restrict the search region in FPM matching
         beta:
             The beta parameter for the prgls model.
         lambda_:
@@ -859,20 +868,23 @@ class TrackerLite:
             The matching between the segmentation at time step t1 and the segmentation at time step t2, including these "weak" cells
         """
         # Load normalized coordinates at t1 and t2: segmented_pos is un-rotated, while other coords are rotated
-        coords_subset_norm_t1, segmented_coords_norm_t1, segmented_pos_t1, subset_t1 = self.load_rotated_normalized_coords(t1)
-        coords_subset_norm_t2, segmented_coords_norm_t2, segmented_pos_t2, subset_t2 = self.load_rotated_normalized_coords(t2)
+        coords_subset_norm_t1, segmented_coords_norm_t1, segmented_pos_t1, subset_t1 = (
+            self.load_rotated_normalized_coords(t1)
+        )
+        coords_subset_norm_t2, segmented_coords_norm_t2, segmented_pos_t2, subset_t2 = (
+            self.load_rotated_normalized_coords(t2)
+        )
         subset = (subset_t1, subset_t2)
 
-        if confirmed_coord_t1 is None:
-            confirmed_coords_norm_t1 = coords_subset_norm_t1.copy()
-            subset_confirmed = subset_t1
-        else:
-            confirmed_coords_norm_t1 = (confirmed_coord_t1 - self.Mean_Vol1) / self.Scale_Vol1
+        confirmed_coords_norm_t1 = coords_subset_norm_t1.copy()
+        subset_confirmed = subset_t1
 
         n, m = segmented_coords_norm_t1.shape[0], segmented_coords_norm_t2.shape[0]
-        aligned_coords_subset_norm_t1, coords_subset_norm_t2, _, affine_tform = affine_align_by_fpm(self.Fpm_Models,
-                                                                                                    coords_norm_t1=coords_subset_norm_t1,
-                                                                                                    coords_norm_t2=coords_subset_norm_t2)
+        aligned_coords_subset_norm_t1, coords_subset_norm_t2, _, affine_tform = affine_align_by_fpm(
+            self.Fpm_Models,
+            coords_norm_t1=coords_subset_norm_t1,
+            coords_norm_t2=coords_subset_norm_t2
+        )
         aligned_segmented_coords_norm_t1 = affine_tform(segmented_coords_norm_t1)
         aligned_confirmed_coords_norm_t1 = affine_tform(confirmed_coords_norm_t1)
         moved_seg_coords_t1 = aligned_segmented_coords_norm_t1.copy()
@@ -888,12 +900,12 @@ class TrackerLite:
                                          t1, t2, verbosity)
 
         similarity_subset = None
-
         iteration = 3
         # Iterative matching by FPM + PRGLS
         for i in range(iteration):
-            _matched_pairs_subset = _match_pure_fpm(aligned_coords_subset_norm_t1, coords_subset_norm_t2, self.Fpm_Models,
-                                                    similarity_threshold=0.4, prob_mxn_initial=similarity_subset)
+            _matched_pairs_subset = _match_pure_fpm(
+                aligned_coords_subset_norm_t1, coords_subset_norm_t2,
+                self.Fpm_Models, similarity_threshold=0.4, prob_mxn_initial=similarity_subset)
             self.matching_fig.display_initial_matching(_matched_pairs_subset,
                                                        aligned_coords_subset_norm_t1,
                                                        coords_subset_norm_t2,
@@ -960,7 +972,7 @@ class TrackerLite:
                     f.create_dataset(f"{i + 1}_{j + 1}", data=pairs)
         self.cache.task_done('match_first_20_volumes', str(self.cache.matches_1_to_20_file))
 
-    def filter_proofed_cells(self, threshold: int = 15, force_redo: bool = False):
+    def _filter_proofed_cells(self, skip: bool=False, threshold: int = 15, force_redo: bool = False):
         """Remove cells that were not detected by stardist or the ones not exist in most of the other intial_x_volumes"""
         if self.cache.should_skip('filter_proofed_cells', force_redo=force_redo):
             self.coords2image.Filtered_Subregions = self.load_filtered_subregions()
@@ -972,25 +984,32 @@ class TrackerLite:
             self.Common_Ids_In_Coords = np.load(str(self.cache.common_ids_file))
             return
 
-        x_vols = 20
-        threshold_out_of_19_volumes = threshold - 1
-
-        segmented_pos_t1, _ = self._get_segmented_pos(self.T_Initial)
-        cum_match_counts = np.zeros((segmented_pos_t1.real.shape[0]), dtype=int)
-        for i in tqdm(range(1, x_vols)):
-            with h5py.File(str(self.cache.matches_1_to_20_file), "r") as f:
-                pairs = f[f"1_{i+1}"][:]
-            for ref, _ in pairs:
-                cum_match_counts[ref] += 1
-        self.Common_Ids_In_Coords, common_ids_in_proof = self.get_common_ids(cum_match_counts, threshold_out_of_19_volumes)
-        print(f"Choose {len(self.Common_Ids_In_Coords)} cells from {segmented_pos_t1.real.shape[0]} proofed cells, "
-              f"with matches in {threshold * 100 // x_vols}% volumes of initial {x_vols} volumes")
+        self.Common_Ids_In_Coords, common_ids_in_proof = self._extract_common_ids(threshold,skip)
         np.save(str(self.cache.common_ids_file), self.Common_Ids_In_Coords)
 
         self.coords2image.filter_segmentation_vol0(common_ids_in_proof + 1,
                                                    self.Raw_Img_Param, self.T_Initial)
         self.save_filtered_subregions()
         self.cache.task_done('filter_proofed_cells', str(self.cache.filtered_coords_t0_file))
+
+    def _extract_common_ids(self, threshold, skip: bool):
+        x_vols = 20
+        threshold_out_of_19_volumes = threshold - 1
+        segmented_pos_t1, _ = self._get_segmented_pos(self.T_Initial)
+
+        if skip:
+            cum_match_counts = np.full((segmented_pos_t1.real.shape[0]), np.inf)
+        else:
+            cum_match_counts = np.zeros((segmented_pos_t1.real.shape[0]), dtype=int)
+            for i in tqdm(range(1, x_vols)):
+                with h5py.File(str(self.cache.matches_1_to_20_file), "r") as f:
+                    pairs = f[f"1_{i + 1}"][:]
+                for ref, _ in pairs:
+                    cum_match_counts[ref] += 1
+        Common_Ids_In_Coords, common_ids_in_proof = self.get_common_ids(cum_match_counts,
+                                                                             threshold_out_of_19_volumes)
+        print(f"Choose {len(Common_Ids_In_Coords)} cells from {segmented_pos_t1.real.shape[0]} proofed cells")
+        return Common_Ids_In_Coords, common_ids_in_proof
 
     def pairs_t1_to_t20_list(self):
         cell_num_list = self.get_cell_num_initial_20_vols()
@@ -1008,39 +1027,41 @@ class TrackerLite:
 
     def save_optimized_matches_in_first_20_volumes(self, max_repetition=2, force_redo: bool = False):
         """Predict the cell positions, and then save the predicted positions and pairs"""
+        self._filter_proofed_cells(skip=True)
         if self.cache.should_skip('optimize_matches_20vols', force_redo=force_redo):
-            return
-        t1 = self.T_Initial # initial volume of the confirmed segmentation
-        self.cache.matchings_folder.mkdir(exist_ok=True, parents=True)
-        plt.ioff()
-        pairs_t1_to_t20_list = self.pairs_t1_to_t20_list()
-        for t_target in tqdm(range(1, 20)):
-            t2 = self.order_list[t_target - 1][1]
-            _, segmented_coords_norm_t1, _, _ = self.load_rotated_normalized_coords(t1)
-            _, segmented_coords_norm_t2, _, _ = self.load_rotated_normalized_coords(t2)
-            pairs = pairs_t1_to_t20_list[t_target]
+            pass
+        else:
+            t1 = self.T_Initial # initial volume of the confirmed segmentation
+            self.cache.matchings_folder.mkdir(exist_ok=True, parents=True)
+            plt.ioff()
+            pairs_t1_to_t20_list = self.pairs_t1_to_t20_list()
+            for t_target in tqdm(range(1, 20)):
+                t2 = self.order_list[t_target - 1][1]
+                _, segmented_coords_norm_t1, _, _ = self.load_rotated_normalized_coords(t1)
+                _, segmented_coords_norm_t2, _, _ = self.load_rotated_normalized_coords(t2)
+                pairs = pairs_t1_to_t20_list[t_target]
 
-            ref_ptrs_confirmed, ref_ptrs_tracked_t2 = self.predict_pos_all_cells(
-                pairs, segmented_coords_norm_t1,
-                segmented_coords_norm_t2)
+                ref_ptrs_confirmed, ref_ptrs_tracked_t2 = self.predict_pos_all_cells(
+                    pairs, segmented_coords_norm_t1,
+                    segmented_coords_norm_t2)
 
-            confirmed_coord, corrected_labels_image = self.finetune_positions_in_image(
-                ref_ptrs_tracked_t2, t2, max_repetition=max_repetition)
+                confirmed_coord, corrected_labels_image = self.finetune_positions_in_image(
+                    ref_ptrs_tracked_t2, t2, max_repetition=max_repetition)
 
-            segmented_coords_norm_t1, segmented_coords_norm_t2, ref_ptrs_confirmed, _ref_ptrs_tracked_t2 = rotate_for_visualization(
-                self.rotation_matrix,
-                (segmented_coords_norm_t1, segmented_coords_norm_t2, ref_ptrs_confirmed, ref_ptrs_tracked_t2))
-            fig = plot_pairs_and_movements(
-                segmented_coords_norm_t1, segmented_coords_norm_t2, t1, t2,
-                ref_ptrs_confirmed, _ref_ptrs_tracked_t2, display_fig=False, show_ids=False)
-            self.save_tracking_results(
-                confirmed_coord, corrected_labels_image,
-                t=t2, images_path=self.Raw_Img_Param, step=t_target + 1)
-            fig.savefig(str(self.cache.matchings_folder / f"matching_t{t2:06d}.png"), dpi=90, facecolor='white')
-            plt.close(fig)
+                segmented_coords_norm_t1, segmented_coords_norm_t2, ref_ptrs_confirmed, _ref_ptrs_tracked_t2 = rotate_for_visualization(
+                    self.rotation_matrix,
+                    (segmented_coords_norm_t1, segmented_coords_norm_t2, ref_ptrs_confirmed, ref_ptrs_tracked_t2))
+                fig = plot_pairs_and_movements(
+                    segmented_coords_norm_t1, segmented_coords_norm_t2, t1, t2,
+                    ref_ptrs_confirmed, _ref_ptrs_tracked_t2, display_fig=False, show_ids=False)
+                self.save_tracking_results(
+                    confirmed_coord, corrected_labels_image,
+                    t=t2, images_path=self.Raw_Img_Param, step=t_target + 1)
+                fig.savefig(str(self.cache.matchings_folder / f"matching_t{t2:06d}.png"), dpi=90, facecolor='white')
+                plt.close(fig)
 
-        plt.ion()
-        self.cache.task_done('optimize_matches_20vols', str(self.cache.matchings_folder))
+            plt.ion()
+            self.cache.task_done('optimize_matches_20vols', str(self.cache.matchings_folder))
 
     def get_restart_time(self, restart_from_breakpoint):
         if restart_from_breakpoint:
@@ -1054,6 +1075,7 @@ class TrackerLite:
         return restart_timing
 
     def get_initial_pairs(self, num_cells_t0, num_cells_tgt, num_ensemble, ref_list, tgt):
+        # TODO: slow, need optimization
         matches_matrix_t0_to_tgt = np.zeros((num_cells_t0, num_cells_tgt), dtype=int)
         for ref in ref_list[:num_ensemble]:
             pairs_ref_tgt = self.predict_cell_positions(ref, tgt)

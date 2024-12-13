@@ -181,7 +181,7 @@ class StarDist3DCustom(StarDist3D):
         return r
 
     def _predict_instances_simple(self, img, prob_thresh=None, nms_thresh=None,
-                                  n_tiles=None, show_tile_progress=True):
+                                  n_tiles=None, show_tile_progress=True, force_include_bright: bool = False):
         """Predict instance segmentation from input image.
 
         Parameters
@@ -212,7 +212,7 @@ class StarDist3DCustom(StarDist3D):
         """
         _shape_inst = self._get_image_shape(img)
 
-        prob_n, dist_nxray, points_coords_nx3, prob_map_reduced_zyx, dist_map_reduced_zyxr = self._predict_sparse(
+        prob_n, dist_nxray, points_coords_nx3, prob_map_reduced_zyx, dist_map_reduced_zyxr = self._predict_sparse_custom(
             img, n_tiles=n_tiles, prob_thresh=prob_thresh, show_tile_progress=show_tile_progress)
 
         labels, res_dict = self._instances_from_prediction_simple(
@@ -252,16 +252,16 @@ class StarDist3DCustom(StarDist3D):
                         rays_vertices=rays.vertices, rays_faces=rays.faces)
         return labels, res_dict
 
-    def _predict_sparse(self, img, prob_thresh=None,
-                        n_tiles=None, show_tile_progress=True, bound=0, **predict_kwargs):
+    def _predict_sparse_custom(self, img, prob_thresh=None,
+                               n_tiles=None, show_tile_progress=True, **predict_kwargs):
         """ Sparse version of model.predict()
         Returns
         -------
         (prob, dist, [prob_class], points)   flat list of probs, dists, (optional prob_class) and points
         """
         if prob_thresh is None: prob_thresh = self.thresholds.prob
-
-        (x, axes, axes_net, axes_net_div_by, _permute_axes, resizer, n_tiles,
+        predict_kwargs["verbose"] = False
+        (cell_image_zyx, axes, axes_net, axes_net_div_by, _permute_axes, resizer, n_tiles,
          grid, grid_dict, channel, predict_direct, tiling_setup) = \
             self._predict_setup(img, None, None, n_tiles,
                                 show_tile_progress, predict_kwargs)
@@ -300,9 +300,7 @@ class StarDist3DCustom(StarDist3D):
                 prob[s_dst[:3]] = prob_tile.copy()
                 dist[s_dst[:3]] = dist_tile.copy() #TODO: many may incorrect here when use tiles
 
-                bs = list((bound if s.start == 0 else -1, bound if s.stop == _sh else -1) for s, _sh in zip(s_dst, sh))
-                bs.pop(channel)
-                inds = _ind_prob_thresh(prob_tile, prob_thresh, b=bs)
+                inds = self._ind_prob_raw_thresh_(prob_tile, prob_thresh)
                 proba.extend(prob_tile[inds].copy())
                 dista.extend(dist_tile[inds].copy())
                 _points = np.stack(np.where(inds), axis=1)
@@ -313,10 +311,12 @@ class StarDist3DCustom(StarDist3D):
                 pointsa.extend(_points)
         else:
             # predict_direct -> prob, dist, [prob_class if multi_class]
-            results = predict_direct(x)
+            results = predict_direct(cell_image_zyx)
             prob, dist = results[:2]
             prob, dist = _prep(prob, dist)
-            inds   = _ind_prob_thresh(prob, prob_thresh, b=bound)
+            # grid_zyx = self.config.grid
+            # x_resized = cell_image_zyx[::grid_zyx[0], ::grid_zyx[1], ::grid_zyx[2], 0]
+            inds   = self._ind_prob_raw_thresh_(prob, prob_thresh)
             proba = prob[inds].copy()
             dista = dist[inds].copy()
             _points = np.stack(np.where(inds), axis=1)
@@ -329,16 +329,24 @@ class StarDist3DCustom(StarDist3D):
         prob_map_reduced = resizer.after(prob[:, :, :, None], self.config.axes)[..., 0]
         dist_map_reduced = resizer.after(dist, self.config.axes)
 
-        idx = resizer.filter_points(x.ndim, pointsa, axes_net)
-        print(idx[0].shape, len(proba))
+        idx = resizer.filter_points(cell_image_zyx.ndim, pointsa, axes_net)
         proba = proba[idx]
         dista = dista[idx]
         pointsa = pointsa[idx]
 
         return proba, dista, pointsa, prob_map_reduced, dist_map_reduced
 
+    @staticmethod
+    def _ind_prob_raw_thresh_(prob, prob_thresh, raw=None):
+        ind_thresh = prob > prob_thresh
+        if raw is not None:
+            median_intensity = np.percentile(raw[ind_thresh], 95)
+            ind_thresh = np.logical_or(ind_thresh, raw > median_intensity)
+        return ind_thresh
 
-    def _predict_sparse_generator(self, img, prob_thresh=None, axes=None, normalizer=None, n_tiles=None, show_tile_progress=True, b=2, **predict_kwargs):
+    def _predict_sparse_generator(self, img,
+                                  prob_thresh=None, axes=None, normalizer=None, n_tiles=None,
+                                  show_tile_progress=True, b=2, **predict_kwargs):
         """ Sparse version of model.predict()
         Returns
         -------

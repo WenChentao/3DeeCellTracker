@@ -25,7 +25,8 @@ from tqdm import tqdm
 
 from CellTracker.plot import custom_tab20_cmap
 from CellTracker.stardist3dcustom import StarDist3DCustom
-from CellTracker.utils import load_2d_slices_at_time
+from CellTracker.utils import load_2d_slices_at_time, del_datasets
+
 if TYPE_CHECKING:
     from CellTracker.trackerlite import TrackerLite
 
@@ -47,7 +48,7 @@ def load_stardist_model(model_name: str = "stardist", basedir: str = STARDIST_MO
 
 def calculate_scaling_two_channel(images_path: dict, stardist_model, n_tiles=None, prob_thresh=None, t=1):
     img_nuclei_norm = load_2d_slices_at_time(images_path, t=t, channel_name="channel_nuclei", do_normalize= True)
-    (labels, _), _ = stardist_model.predict_instances(img_nuclei_norm, n_tiles=n_tiles, prob_thresh=prob_thresh)
+    labels, _, _, _ = stardist_model._predict_instances_simple(img_nuclei_norm, n_tiles=n_tiles, prob_thresh=prob_thresh)
     per = np.sum(labels > 0) / labels.size
     print(f"Percentage of nuclei pixels in the image: {per:.2f}")
 
@@ -78,7 +79,7 @@ def predict_by_two_channels(images_path: dict, raw_images, stardist_model, scali
     img_activity = raw_images[t - 1, :, images_path["channel_activity"], :, :]
     img_combined =  img_nuclei / scaling_factor + img_activity
     img_combined_norm = normalize(img_combined, axis = (0, 1, 2))
-    return stardist_model.predict_instances(
+    return stardist_model._predict_instances_simple(
         img_combined_norm, n_tiles=n_tiles, show_tile_progress=False, prob_thresh=prob_thresh)
 
 
@@ -112,7 +113,8 @@ class Segmentation:
             if use_two_channels:
                 scaling_factor = calculate_scaling_two_channel(raw_img_param, stardist_model, n_tiles = n_tiles,
                                                                prob_thresh = self.prob_thresh, t = 1)
-
+            if self.cache.seg_file.exists():
+                self.cache.seg_file.unlink()
             with h5py.File(raw_img_param["h5_file"], 'r+') as f_raw, \
                     h5py.File(str(self.cache.seg_file), 'a') as f_seg:
                 raw_images = f_raw[raw_img_param["dset"]]
@@ -122,16 +124,17 @@ class Segmentation:
                 with tqdm(total=num_vol, initial=_t_start, desc="Segmenting images", ncols=50) as pbar:
                     for t in range(_t_start, num_vol + 1):
                         if use_two_channels:
-                            (_, details), prob_map = predict_by_two_channels(
+                            _, details, prob_map, _ = predict_by_two_channels(
                                 raw_img_param, raw_images,stardist_model, scaling_factor,
                                 n_tiles=n_tiles, prob_thresh=self.prob_thresh, t=t)
                         else:
                             x = raw_images[t - 1, :, raw_img_param["channel_nuclei"], :, :]
                             x = normalize(x, axis=(0, 1, 2))
-                            (_, details), prob_map = stardist_model.predict_instances(
+                            _, details, prob_map, _ = stardist_model._predict_instances_simple(
                                 x, n_tiles=n_tiles, show_tile_progress=False, prob_thresh=self.prob_thresh)
 
                         if t == 1:
+                            del_datasets(f_seg, ["prob"])
                             f_seg.create_dataset('prob', shape=(num_vol, *prob_map.shape),
                                                              chunks=(1, *prob_map.shape), dtype="float16",
                                                              compression="lzf")
@@ -311,6 +314,8 @@ def create_cmap(label_image_3d: ndarray, voxel_size_yxz: tuple = (1,1,1), max_co
 
 def create_cmap_by_coords(coords_nx3: ndarray, dist_type="2d_projection", max_color=20, is_transparent: bool=False):
     n = coords_nx3.shape[0]
+    if max_color > n - 1:
+        max_color = n - 1
     if dist_type == "2d_projection":
         dist_nxk, indices_nxk = _kneighbors_2d_projections(coords_nx3, max_color)
     else:
