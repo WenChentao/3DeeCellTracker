@@ -10,7 +10,7 @@ from CellTracker.fpm import initial_matching_fpm, FPMPart2Model
 from CellTracker.plot import plot_initial_matching, plot_predicted_movements
 from CellTracker.robust_match import add_or_remove_points
 from CellTracker.simple_alignment import greedy_match, get_match_pairs, K_POINTS
-from CellTracker.test_matching_models import affine_align_by_fpm
+from CellTracker.test_matching_models import affine_align
 from CellTracker.trackerlite import BETA, LAMBDA, predict_by_prgls
 from CellTracker.utils import normalize_points
 
@@ -211,9 +211,9 @@ def _predict_cell_matchings(coords_t1, coords_t2, fpm_models, ids_t1, ids_t2, ma
     subset = (subset_t1, subset_t2)
 
     n, m = segmented_coords_norm_t1.shape[0], segmented_coords_norm_t2.shape[0]
-    aligned_coords_subset_norm_t1, coords_subset_norm_t2, _, affine_tform = affine_align_by_fpm(fpm_models,
-                                                                                                coords_norm_t1=segmented_coords_norm_t1,
-                                                                                                coords_norm_t2=segmented_coords_norm_t2)
+    aligned_coords_subset_norm_t1, coords_subset_norm_t2, _, affine_tform = affine_align(fpm_models,
+                                                                                         coords_norm_t1=segmented_coords_norm_t1,
+                                                                                         coords_norm_t2=segmented_coords_norm_t2)
     aligned_segmented_coords_norm_t1 = affine_tform(segmented_coords_norm_t1)
     moved_seg_coords_t1 = aligned_segmented_coords_norm_t1.copy()
 

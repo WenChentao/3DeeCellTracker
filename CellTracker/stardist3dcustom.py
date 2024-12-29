@@ -279,7 +279,7 @@ class StarDist3DCustom(StarDist3D):
             sh[channel] = 1
 
             prob = np.zeros(output_shape[:3])
-            dist = np.zeros(output_shape[:3] + self.config.n_rays)
+            dist = np.zeros(output_shape[:3] + (self.config.n_rays,))
             proba, dista, pointsa, prob_classa = [], [], [], []
 
             for tile, s_src, s_dst in tile_generator:
@@ -334,7 +334,7 @@ class StarDist3DCustom(StarDist3D):
         dista = dista[idx]
         pointsa = pointsa[idx]
 
-        return proba, dista, pointsa, prob_map_reduced, dist_map_reduced
+        return proba, dista, pointsa, prob_map_reduced, dist_map_reduced.astype(np.float16)
 
     @staticmethod
     def _ind_prob_raw_thresh_(prob, prob_thresh, raw=None):

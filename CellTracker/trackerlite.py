@@ -20,7 +20,7 @@ from tqdm import tqdm
 
 from CellTracker.analyses import draw_signals
 from CellTracker.coord_image_transformer import Coordinates, CoordsToImageTransformer
-from CellTracker.fpm import FPMPart2Model
+from CellTracker.fpm import FPMPart2Model, load_fpm
 from CellTracker.global_match import iterative_alignment, pairwise_pointsets_distances, rigid_transform, \
     ensemble_match_initial_20_volumes, get_reference_target_vols_list, get_mds_2d_projection, \
     visualize_pairwise_distances
@@ -30,8 +30,8 @@ from CellTracker.robust_match import add_or_remove_points, get_extra_cell_candid
 from CellTracker.simple_alignment import align_by_control_points, greedy_match
 from CellTracker.stardistwrapper import Segmentation, create_cmap, plot_img_label_max_projection, \
     plot_img_label_max_projection_xz
-from CellTracker.test_matching_models import BETA, LAMBDA, load_fpm
-from CellTracker.test_matching_models import cal_norm_prob, prgls_with_two_ref, affine_align_by_fpm, \
+from CellTracker.test_matching_models import BETA, LAMBDA
+from CellTracker.test_matching_models import cal_norm_prob, prgls_with_two_ref, affine_align, \
     predict_matching_prgls, _match_pure_fpm
 from CellTracker.utils import load_2d_slices_at_time, normalize_points, del_datasets
 
@@ -414,10 +414,10 @@ def match_by_prgls(coords_t2, coords_t1, initial_pairs_t2_t1):
 
 def match_manual_ref0(pos_segmented: ndarray, pos_proofed: ndarray):
     """Remove cells whose centers are not included in the stardist predictions (including the weak cells)"""
-    dist_rxr = cdist(pos_segmented, pos_segmented)
+    dist_pxp = cdist(pos_proofed, pos_proofed)
     dist_pxr = cdist(pos_proofed, pos_segmented)
-    np.fill_diagonal(dist_rxr, np.inf)
-    threshold = dist_rxr.min()
+    np.fill_diagonal(dist_pxp, np.inf)
+    threshold = dist_pxp.min()
     matched_ind = []
     matched_ind_in_proof = []
     for pair_number in range(dist_pxr.shape[0]):
@@ -431,6 +431,49 @@ def match_manual_ref0(pos_segmented: ndarray, pos_proofed: ndarray):
         dist_pxr[proof_index, :] = np.inf
         dist_pxr[:, ref0_index] = np.inf
     return np.asarray(matched_ind), np.asarray(matched_ind_in_proof)
+
+
+class CachedLinks:
+    def __init__(self, tracker: TrackerLite, num_cells_t0: int, num_cells_tgt: int):
+        self.tracker = tracker
+        self.T_Initial = tracker.T_Initial
+        self.n_t0 = num_cells_t0
+        self.is_linked = False
+        self.matches_matrix_t0_to_t2 = np.zeros((num_cells_t0, num_cells_tgt), dtype=int)
+
+    def _get_links_t0_t1(self, t1):
+        if self.T_Initial == t1:
+            pairs_t0_t1 = None
+        else:
+            with h5py.File(str(self.tracker.cache.matching_file), "r") as f:
+                pairs_t0_t1 = f[f"pairs_initial_to_{t1}"][:]
+        return pairs_t0_t1
+
+    def combine_links_t0_t2(self, pairs_t1_t2, t1):
+        pairs_t0_t1 = self._get_links_t0_t1(t1)
+        combine_links(self.matches_matrix_t0_to_t2, pairs_t0_t1, pairs_t1_t2)
+        self.is_linked = True
+
+    def get_links_t0_t2(self, n_ensemble: int):
+        if self.is_linked:
+            pairs_t0_t2 = matrix2pairs(
+                self.matches_matrix_t0_to_t2, self.n_t0, n_ensemble)
+        else:
+            pairs_t0_t2 = None
+        return pairs_t0_t2
+
+    def _get_links_t1_t2(self, t1, n_ensemble: int):
+        if self.is_linked:
+            pairs_t0_t1 = self._get_links_t0_t1(t1)
+            pairs_t0_t2 = self.get_links_t0_t2(n_ensemble=n_ensemble)
+            pairs_t1_t2 = []
+            common_mid_values, pos1, pos2 = np.intersect1d(pairs_t0_t1[:, 0], pairs_t0_t2[:, 0],
+                                                           return_indices=True)
+            for value, p1, p2 in zip(common_mid_values, pos1, pos2):
+                pairs_t1_t2.append([pairs_t0_t1[p1, 1], pairs_t0_t2[p2, 1]])
+            return np.asarray(pairs_t1_t2)
+        else:
+            return None
 
 
 class TrackerLite:
@@ -838,7 +881,7 @@ class TrackerLite:
                                        str(self.cache.subregion_file),
                                        str(self.cache.coords_t_initial_file)]))
 
-    def predict_cell_positions(self, t1: int, t2: int, pairs_init: ndarray = None,
+    def predict_cell_positions(self, t1: int, t2: int, pairs_init_t1_t2: ndarray = None,
                                beta: float = BETA, lambda_: float = LAMBDA, verbosity: int = 0,
                                learning_rate: float = 0.5) -> ndarray:
         """
@@ -850,7 +893,7 @@ class TrackerLite:
             The time step t1.
         t2:
             The time step t2.
-        pairs_init:
+        pairs_init_t1_t2:
             if not None, use it to restrict the search region in FPM matching
         beta:
             The beta parameter for the prgls model.
@@ -880,10 +923,15 @@ class TrackerLite:
         subset_confirmed = subset_t1
 
         n, m = segmented_coords_norm_t1.shape[0], segmented_coords_norm_t2.shape[0]
-        aligned_coords_subset_norm_t1, coords_subset_norm_t2, _, affine_tform = affine_align_by_fpm(
+        if pairs_init_t1_t2 is not None:
+            pairs_subset_t1_t2 = np.asarray([(i, j) for i, j in pairs_init_t1_t2 if i in subset_t1 and j in subset_t2])
+        else:
+            pairs_subset_t1_t2 = None
+        aligned_coords_subset_norm_t1, coords_subset_norm_t2, pairs_init_t1_t2, affine_tform = affine_align(
             self.Fpm_Models,
             coords_norm_t1=coords_subset_norm_t1,
-            coords_norm_t2=coords_subset_norm_t2
+            coords_norm_t2=coords_subset_norm_t2,
+            pairs_px2=pairs_subset_t1_t2,
         )
         aligned_segmented_coords_norm_t1 = affine_tform(segmented_coords_norm_t1)
         aligned_confirmed_coords_norm_t1 = affine_tform(confirmed_coords_norm_t1)
@@ -898,8 +946,12 @@ class TrackerLite:
                                          segmented_pos_t2,
                                          rotpca_t1, self.Mean_Vol1, self.Scale_Vol1,
                                          t1, t2, verbosity)
+        similarity_subset = self._cal_similarity(aligned_confirmed_coords_norm_t1,
+                                                 aligned_segmented_coords_norm_t1,
+                                                 beta, lambda_, m, n, pairs_init_t1_t2,
+                                                 segmented_coords_norm_t2,
+                                                 subset)
 
-        similarity_subset = None
         iteration = 3
         # Iterative matching by FPM + PRGLS
         for i in range(iteration):
@@ -918,7 +970,9 @@ class TrackerLite:
 
             # Predict the corresponding positions in t2 of all the segmented cells in t1
             predicted_coords_t1_to_t2, similarity_mxn = predict_by_prgls(
-                matched_pairs, aligned_segmented_coords_norm_t1, aligned_segmented_coords_norm_t1, segmented_coords_norm_t2,
+                matched_pairs, aligned_segmented_coords_norm_t1,
+                aligned_segmented_coords_norm_t1,
+                segmented_coords_norm_t2,
                 (m, n), beta, lambda_)
 
             self.matching_fig.display_predicted_movements(moved_seg_coords_t1,
@@ -942,7 +996,8 @@ class TrackerLite:
 
         # Final prediction of cell positions by PRGLS
         tracked_coords_norm_t2, similarity_mxn = predict_by_prgls(
-            matched_pairs, aligned_confirmed_coords_norm_t1, aligned_segmented_coords_norm_t1, segmented_coords_norm_t2,
+            matched_pairs, aligned_confirmed_coords_norm_t1,
+            aligned_segmented_coords_norm_t1, segmented_coords_norm_t2,
             (m, n), beta, lambda_)
 
         pairs_seg_t1_seg_t2 = greedy_match(similarity_mxn, threshold=0.5)
@@ -953,6 +1008,18 @@ class TrackerLite:
 
         self.matching_fig.display_final_matching(pairs_seg_t1_seg_t2)
         return pairs_seg_t1_seg_t2
+
+    def _cal_similarity(self, confirmed_coords_norm_t1, segmented_coords_norm_t1, beta, lambda_, m, n,
+                        pairs_init_t1_t2, segmented_coords_norm_t2, subset):
+        if pairs_init_t1_t2 is None:
+            similarity_subset = None
+        else:
+            tracked_coords_norm_t2, similarity_mxn = predict_by_prgls(
+                pairs_init_t1_t2, confirmed_coords_norm_t1,
+                segmented_coords_norm_t1, segmented_coords_norm_t2,
+                (m, n), beta, lambda_)
+            similarity_subset = similarity_mxn[np.ix_(subset[1], subset[0])]
+        return similarity_subset
 
     def match_first_20_volumes(self, force_redo: bool = False):
         if self.cache.should_skip('match_first_20_volumes', force_redo=force_redo):
@@ -972,7 +1039,7 @@ class TrackerLite:
                     f.create_dataset(f"{i + 1}_{j + 1}", data=pairs)
         self.cache.task_done('match_first_20_volumes', str(self.cache.matches_1_to_20_file))
 
-    def _filter_proofed_cells(self, skip: bool=False, threshold: int = 15, force_redo: bool = False):
+    def _filter_proofed_cells(self, force_redo: bool = False):
         """Remove cells that were not detected by stardist or the ones not exist in most of the other intial_x_volumes"""
         if self.cache.should_skip('filter_proofed_cells', force_redo=force_redo):
             self.coords2image.Filtered_Subregions = self.load_filtered_subregions()
@@ -984,7 +1051,7 @@ class TrackerLite:
             self.Common_Ids_In_Coords = np.load(str(self.cache.common_ids_file))
             return
 
-        self.Common_Ids_In_Coords, common_ids_in_proof = self._extract_common_ids(threshold,skip)
+        self.Common_Ids_In_Coords, common_ids_in_proof = self._extract_common_ids()
         np.save(str(self.cache.common_ids_file), self.Common_Ids_In_Coords)
 
         self.coords2image.filter_segmentation_vol0(common_ids_in_proof + 1,
@@ -992,23 +1059,11 @@ class TrackerLite:
         self.save_filtered_subregions()
         self.cache.task_done('filter_proofed_cells', str(self.cache.filtered_coords_t0_file))
 
-    def _extract_common_ids(self, threshold, skip: bool):
-        x_vols = 20
-        threshold_out_of_19_volumes = threshold - 1
-        segmented_pos_t1, _ = self._get_segmented_pos(self.T_Initial)
-
-        if skip:
-            cum_match_counts = np.full((segmented_pos_t1.real.shape[0]), np.inf)
-        else:
-            cum_match_counts = np.zeros((segmented_pos_t1.real.shape[0]), dtype=int)
-            for i in tqdm(range(1, x_vols)):
-                with h5py.File(str(self.cache.matches_1_to_20_file), "r") as f:
-                    pairs = f[f"1_{i + 1}"][:]
-                for ref, _ in pairs:
-                    cum_match_counts[ref] += 1
-        Common_Ids_In_Coords, common_ids_in_proof = self.get_common_ids(cum_match_counts,
-                                                                             threshold_out_of_19_volumes)
-        print(f"Choose {len(Common_Ids_In_Coords)} cells from {segmented_pos_t1.real.shape[0]} proofed cells")
+    def _extract_common_ids(self):
+        segmented_pos_t0, _ = self._get_segmented_pos(self.T_Initial)
+        n_seg_cells_t0 = segmented_pos_t0.real.shape[0]
+        Common_Ids_In_Coords, common_ids_in_proof = self.get_common_ids_no_threshold(n_seg_cells_t0)
+        print(f"Choose {len(Common_Ids_In_Coords)} cells from {segmented_pos_t0.real.shape[0]} proofed cells")
         return Common_Ids_In_Coords, common_ids_in_proof
 
     def pairs_t1_to_t20_list(self):
@@ -1027,7 +1082,7 @@ class TrackerLite:
 
     def save_optimized_matches_in_first_20_volumes(self, max_repetition=2, force_redo: bool = False):
         """Predict the cell positions, and then save the predicted positions and pairs"""
-        self._filter_proofed_cells(skip=True)
+        self._filter_proofed_cells(force_redo=force_redo)
         if self.cache.should_skip('optimize_matches_20vols', force_redo=force_redo):
             pass
         else:
@@ -1075,20 +1130,14 @@ class TrackerLite:
         return restart_timing
 
     def get_initial_pairs(self, num_cells_t0, num_cells_tgt, num_ensemble, ref_list, tgt):
-        # TODO: slow, need optimization
-        matches_matrix_t0_to_tgt = np.zeros((num_cells_t0, num_cells_tgt), dtype=int)
-        for ref in ref_list[:num_ensemble]:
-            pairs_ref_tgt = self.predict_cell_positions(ref, tgt)
+        self.cached_links = CachedLinks(self, num_cells_t0,
+                                        num_cells_tgt)
+        for i, ref in enumerate(ref_list[:num_ensemble]):
+            pairs_ref_tgt_init = self.cached_links._get_links_t1_t2(t1=ref, n_ensemble=i+1)
+            pairs_ref_tgt = self.predict_cell_positions(ref, tgt, pairs_ref_tgt_init)
             clear_memory()
-            if self.T_Initial == ref:
-                pairs_t0_ref = None
-            else:
-                with h5py.File(str(self.cache.matching_file), "r") as f:
-                    pairs_t0_ref = f[f"pairs_initial_to_{ref}"][:]
-            combine_links(matches_matrix_t0_to_tgt, pairs_t0_ref, pairs_ref_tgt)
-        pairs_t0_tgt = matrix2pairs(
-            matches_matrix_t0_to_tgt, num_cells_t0, num_ensemble)
-        return pairs_t0_tgt
+            self.cached_links.combine_links_t0_t2(pairs_ref_tgt, ref)
+        return self.cached_links.get_links_t0_t2(n_ensemble=num_ensemble)
 
     def track_vols_after20(self, restart_from_breakpoint: bool = True, num_ensemble: int = None, max_repetition=2,
                            force_redo: bool = False):
@@ -1263,10 +1312,21 @@ class TrackerLite:
     def get_common_ids(self, cum_match_counts, threshold: int):
         pos_ref0_segmented = self._get_segmented_pos(self.T_Initial)[0].real
         pos_ref0_proofed = self.coords2image.Coord_Proof.real
-        matched_ind_in_ref, matched_ind_in_proof = match_manual_ref0(pos_ref0_segmented, pos_ref0_proofed)
+        matched_ind_in_ref, matched_ind_in_proof = match_manual_ref0(
+            pos_ref0_segmented, pos_ref0_proofed)
         top_indices = np.nonzero(cum_match_counts>=threshold)
         _, ind_ref, _ = np.intersect1d(matched_ind_in_ref, top_indices, return_indices=True)
         return matched_ind_in_ref[ind_ref], matched_ind_in_proof[ind_ref]
+
+    def get_common_ids_no_threshold(self, num_cells_t0):
+        pos_ref0_segmented = self._get_segmented_pos(self.T_Initial)[0].real
+        pos_ref0_proofed = self.coords2image.Coord_Proof.real
+        matched_ind_in_ref, matched_ind_in_proof = match_manual_ref0(
+            pos_ref0_segmented, pos_ref0_proofed)
+        top_indices = np.arange(num_cells_t0)
+        _, ind_ref, _ = np.intersect1d(matched_ind_in_ref, top_indices, return_indices=True)
+        return matched_ind_in_ref[ind_ref], matched_ind_in_proof[ind_ref]
+
 
     def finetune_positions_in_image(self, ref_ptrs_tracked_t2, t2, max_repetition: int):
         tracked_coords_t2 = rigid_transform(self.Inv_Tform_Tx3x4[t2 - 1, ...],
@@ -1423,15 +1483,16 @@ def combine_links(matches_matrix_ini_to_tgt: ndarray, pairs_t0_ref: ndarray, pai
 
 
 def matrix2pairs(matches_matrix_ini_to_tgt, num_cells_t0, num_ensemble):
+    _matches_matrix_ini_to_tgt = matches_matrix_ini_to_tgt.copy()
     pairs_t0_tgt = []
     for i in range(num_cells_t0):
-        ref, tgt = np.unravel_index(np.argmax(matches_matrix_ini_to_tgt, axis=None),
-                                    matches_matrix_ini_to_tgt.shape)
-        if matches_matrix_ini_to_tgt[ref, tgt] < int(np.ceil(num_ensemble * 0.75)):
+        ref, tgt = np.unravel_index(np.argmax(_matches_matrix_ini_to_tgt, axis=None),
+                                    _matches_matrix_ini_to_tgt.shape)
+        if _matches_matrix_ini_to_tgt[ref, tgt] < int(np.floor(num_ensemble * 0.75)):
             break
         pairs_t0_tgt.append((ref, tgt))
-        matches_matrix_ini_to_tgt[ref, :] = 0
-        matches_matrix_ini_to_tgt[:, tgt] = 0
+        _matches_matrix_ini_to_tgt[ref, :] = 0
+        _matches_matrix_ini_to_tgt[:, tgt] = 0
     pairs_t0_tgt = np.asarray(pairs_t0_tgt)
     return pairs_t0_tgt
 

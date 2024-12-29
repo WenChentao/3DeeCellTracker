@@ -21,20 +21,17 @@ def rotation_align_by_fpm(fpm_models_rot, coords_norm_t1, coords_norm_t2, simila
         threshold_mdist, pairs_px2)
 
 
-def affine_align_by_fpm(fpm_models, coords_norm_t1, coords_norm_t2, similarity_threshold=0.4, threshold_mdist=5 ** 2):
-    _pairs_px2 = _match_pure_fpm(
-        coords_norm_t1, coords_norm_t2,
-        fpm_models, similarity_threshold)
-    pairs_px2, similarity_scores = match_by_prgls(
-        _pairs_px2, coords_norm_t1, coords_norm_t2)
+def affine_align(fpm_models, coords_norm_t1, coords_norm_t2, similarity_threshold=0.4,
+                 threshold_mdist=5 ** 2, pairs_px2=None):
+    if pairs_px2 is None:
+        _pairs_px2 = _match_pure_fpm(
+            coords_norm_t1, coords_norm_t2,
+            fpm_models, similarity_threshold)
+        pairs_px2, similarity_scores = match_by_prgls(
+            _pairs_px2, coords_norm_t1, coords_norm_t2)
     return _transform_by_control_points(
         coords_norm_t1, coords_norm_t2,
         "affine", threshold_mdist, pairs_px2)
-
-
-# def local_affine_align_by_fpm(fpm_model, coords_norm_t1, coords_norm_t2, similarity_threshold=0.3, threshold_mdist=5 ** 2):
-#     pairs_px2 = match_by_fpm_prgls(fpm_model, coords_norm_t1, coords_norm_t2, similarity_threshold=similarity_threshold)
-#     return _transform_by_control_points(coords_norm_t1, coords_norm_t2, "affine", threshold_mdist, pairs_px2, local_cal=True)
 
 
 def _transform_by_control_points(coords_norm_t1, coords_norm_t2, method_transform: str, threshold_mdist: float,
@@ -105,17 +102,6 @@ def match_by_ffn(ffn_model, points1, points2, similarity_threshold=0.4, match_me
     pairs_px2 = get_match_pairs(updated_matching, coords_norm_t1, coords_norm_t2,
                                 threshold=similarity_threshold, method=match_method)
     return pairs_px2
-
-
-def load_fpm(fpm_model_path, match_model):
-    fpm_model = match_model
-    dummy_input = np.random.random((1, 22, 4, 2))
-    try:
-        _ = fpm_model(dummy_input)
-        fpm_model.load_weights(fpm_model_path)
-    except (OSError, ValueError) as e:
-        raise ValueError(f"Failed to load the match model from {fpm_model_path}: {e}") from e
-    return fpm_model
 
 
 def ids_to_pairs(ids_1: np.ndarray, ids_2: np.ndarray) -> np.ndarray:

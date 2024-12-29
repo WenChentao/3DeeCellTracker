@@ -365,7 +365,7 @@ def initial_matching_fpm(fpm_models: Tuple[Model, FPMPart2Model], ptrs_ref_nx3: 
 
 
 def initial_matching_fpm_local_search(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt_mx3: ndarray, k_neighbors: int,
-                                      prob_mxn_initial: ndarray, threshold: float = 1e-6) -> ndarray:
+                                      similarity_mxn_initial: ndarray, threshold: float = 1e-6) -> ndarray:
     """
     This function search for matches from paris that with higher probabilities.
 
@@ -379,14 +379,14 @@ def initial_matching_fpm_local_search(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt
         The positions of the cells in the second volume
     k_ptrs :
         The number of neighboring points used for FPM
-    prob_mxn_initial:
+    similarity_mxn_initial:
         The pre-computed probability-matrix between points in reference and target volumes
     threshold:
         Only the points pairs with prob_mxn_initial>threshold will be calculated by the fpm_model
 
     Returns
     -------
-    similarity_scores :
+    similarity_mxn_updated :
         The correspondence matrix between two point sets
     """
     knn_model_ref = NearestNeighbors(n_neighbors=k_neighbors + 1).fit(ptrs_ref_nx3)
@@ -409,14 +409,25 @@ def initial_matching_fpm_local_search(fpm_model, ptrs_ref_nx3: ndarray, ptrs_tgt
         (ref_x_flat_batch_meshgrid[:, :, :, None], tgt_x_flat_batch_meshgrid[:, :, :, None]), axis=3)
 
     # Find the pairs to calculate similarity
-    indices_cal = np.nonzero(prob_mxn_initial > threshold)
-    one_dim_indices = np.ravel_multi_index(indices_cal, prob_mxn_initial.shape)
-    similarity_scores = np.zeros((m*n))
+    indices_cal = np.nonzero(similarity_mxn_initial > threshold)
+    one_dim_indices = np.ravel_multi_index(indices_cal, similarity_mxn_initial.shape)
+    similarity_mxn_updated = np.zeros((m*n))
 
     # Calculate the similarity in selected pairs
     features_ref_tgt_selected = features_ref_tgt[one_dim_indices]
-    similarity_scores[one_dim_indices] = fpm_model.predict(features_ref_tgt_selected, batch_size=256,
+    similarity_mxn_updated[one_dim_indices] = fpm_model.predict(features_ref_tgt_selected, batch_size=256,
                                                            verbose=0)[:, 0]
-    similarity_scores = similarity_scores.reshape((m, n))
+    similarity_mxn_updated = similarity_mxn_updated.reshape((m, n))
 
-    return similarity_scores
+    return similarity_mxn_updated
+
+
+def load_fpm(fpm_model_path, match_model):
+    fpm_model = match_model
+    dummy_input = np.random.random((1, 22, 4, 2))
+    try:
+        _ = fpm_model(dummy_input)
+        fpm_model.load_weights(fpm_model_path)
+    except (OSError, ValueError) as e:
+        raise ValueError(f"Failed to load the match model from {fpm_model_path}: {e}") from e
+    return fpm_model
