@@ -1,0 +1,5 @@
+libhdf5-dev
+libglib2.0-0
+libgl1
+libopenblas-dev
+ffmpeg
