@@ -3,17 +3,17 @@ channels:
   - conda-forge
 dependencies:
   - python=3.9
-  - numpy=1.22
-  - h5py=3.1
-  - tensorflow=2.10
-  - scikit-learn=1.1
-  - tifffile
-  - tqdm
-  - matplotlib=3.5
-  - scipy=1.8
-  - pillow=9.1
+  - numpy=1.23.5
+  - scipy=1.9
   - scikit-image=0.19
+  - scikit-learn=1.1
+  - h5py=3.7
+  - tensorflow=2.10
   - pip
   - pip:
       - csbdeep==0.7.3
       - stardist==0.8.3
+      - tifffile
+      - tqdm
+      - pillow==9.1.0
+      - 3DeeCellTracker==1.0
