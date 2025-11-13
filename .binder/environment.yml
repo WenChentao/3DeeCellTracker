@@ -2,18 +2,13 @@ name: 3DeeCellTracker-binder
 channels:
   - conda-forge
 dependencies:
-  - python=3.9
-  - numpy=1.23.5
-  - scipy=1.9
-  - scikit-image=0.19
-  - scikit-learn=1.1
-  - h5py=3.7
-  - tensorflow=2.10
+  - python=3.10
+  - tensorflow=2.11
   - pip
   - pip:
-      - csbdeep==0.7.3
+      - 3DeeCellTracker==1.0.1
+      - csbdeep==0.8.1
       - stardist==0.8.3
-      - tifffile
-      - tqdm
-      - pillow==9.1.0
-      - 3DeeCellTracker==1.0
+      - matplotlib~=3.8.4
+
+

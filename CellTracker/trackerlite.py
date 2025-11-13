@@ -9,7 +9,6 @@ import numpy as np
 import scipy
 from matplotlib.patches import ConnectionPatch
 from numpy import ndarray
-from scipy.special import softmax
 from scipy.stats import trim_mean
 from scipy import ndimage
 

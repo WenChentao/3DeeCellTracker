@@ -1,0 +1,34 @@
+[[tool.poetry.source]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+
+[tool.poetry]
+name = "3DeeCellTracker"
+version = "1.0.1"
+description = "A 3D cell tracking tool for deforming organs or moving animals"
+authors = ["Chentao Wen <chintou.on@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+packages = [
+    { include = "CellTracker" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.11"
+
+numpy = "^1.22"
+scikit-learn = "^1.5.2"
+scikit-image = "^0.22"
+h5py = "^3.12.1"
+tifffile= "^2024.9.20"
+tqdm= "^4.67.1"
+scipy= "^1.11.4"
+pillow= "^11.0"
+
+[tool.poetry.group.dev.dependencies]
+line-profiler = "^4.2.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
