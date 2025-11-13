@@ -1,5 +1,5 @@
 matplotlib~=3.8.4
 csbdeep~=0.8.1
 stardist~=0.8.3
-tensorflow ~= 2.11
-notebook ~= 7.2.2
+tensorflow==2.11
+notebook~=7.2.2
